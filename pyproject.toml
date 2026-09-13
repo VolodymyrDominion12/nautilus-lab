@@ -1,0 +1,76 @@
+[project]
+name = "nautilus-lab"
+version = "0.1.0"
+description = "Research-first trading robots on NautilusTrader (paper/live fail closed)"
+requires-python = ">=3.12"
+dependencies = [
+    "nautilus-trader>=1.231.0",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.14",
+    "pandas-stubs>=2.2",
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.11",
+]
+
+[project.scripts]
+lab = "nautilus_lab.interfaces.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q --strict-markers"
+markers = [
+    "integration: local engine I/O, no network",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "ANN", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ANN"]
+"src/nautilus_lab/domain/errors.py" = ["N818"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["nautilus_lab"]
+pretty = true
+
+[[tool.mypy.overrides]]
+module = ["nautilus_trader.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["src/nautilus_lab"]
+branch = true
+omit = [
+    "src/nautilus_lab/infrastructure/nautilus/backtest_runner.py",
+    "src/nautilus_lab/infrastructure/nautilus/instrument.py",
+    "src/nautilus_lab/infrastructure/nautilus/signal_strategy.py",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

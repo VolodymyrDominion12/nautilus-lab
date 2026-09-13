@@ -4,6 +4,7 @@ import pytest
 
 from nautilus_lab.application.dtos import BacktestRequest
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
+from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.risk import RiskLimits
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
@@ -22,11 +23,10 @@ def test_research_backtest_runs_locally_without_network() -> None:
         BacktestRequest(
             mode=TradingMode.RESEARCH,
             instrument_id="ETH/USDT.SIM",
-            bar_count=400,
+            bar_count=900,
             starting_equity=Decimal("100000"),
             risk=limits,
-            fast_ema=10,
-            slow_ema=20,
+            robot=RobotName.REGIME,
             seed=7,
         ),
     )
@@ -34,3 +34,4 @@ def test_research_backtest_runs_locally_without_network() -> None:
     assert report.fills >= 0
     assert report.positions >= 0
     assert "fees" in report.notes
+    assert "regime" in report.notes

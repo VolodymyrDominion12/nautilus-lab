@@ -11,9 +11,13 @@ from nautilus_trader.model.identifiers import TraderId, Venue
 from nautilus_trader.model.objects import Money, Price, Quantity
 
 from nautilus_lab.application.dtos import BacktestReport, BacktestRequest
+from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.infrastructure.nautilus.instrument import eth_usdt_sim
 from nautilus_lab.infrastructure.nautilus.signal_strategy import SignalRobot, SignalRobotConfig
-from nautilus_lab.infrastructure.nautilus.synthetic_bars import synthetic_ohlcv
+from nautilus_lab.infrastructure.nautilus.synthetic_bars import (
+    synthetic_ohlcv,
+    synthetic_regime_ohlcv,
+)
 
 
 class NautilusResearchBacktest:
@@ -25,11 +29,18 @@ class NautilusResearchBacktest:
             raise ValueError(f"unsupported instrument_id: {request.instrument_id}")
 
         bar_type = BarType.from_str("ETH/USDT.SIM-1-MINUTE-LAST-EXTERNAL")
-        domain_bars = synthetic_ohlcv(
-            instrument_id=request.instrument_id,
-            count=request.bar_count,
-            seed=request.seed,
-        )
+        if request.robot is RobotName.REGIME:
+            domain_bars = synthetic_regime_ohlcv(
+                instrument_id=request.instrument_id,
+                count=request.bar_count,
+                seed=request.seed,
+            )
+        else:
+            domain_bars = synthetic_ohlcv(
+                instrument_id=request.instrument_id,
+                count=request.bar_count,
+                seed=request.seed,
+            )
         engine_bars = [
             Bar(
                 bar_type=bar_type,
@@ -76,8 +87,17 @@ class NautilusResearchBacktest:
                     SignalRobotConfig(
                         instrument_id=instrument.id,
                         bar_type=bar_type,
+                        robot=request.robot.value,
                         fast_period=request.fast_ema,
                         slow_period=request.slow_ema,
+                        er_period=request.regime.er_period,
+                        trend_ema_period=request.regime.trend_ema_period,
+                        slope_lookback=request.regime.slope_lookback,
+                        enter_trend_er=request.regime.enter_trend_er,
+                        exit_trend_er=request.regime.exit_trend_er,
+                        donchian_period=request.regime.donchian_period,
+                        bb_period=request.regime.bb_period,
+                        bb_k=request.regime.bb_k,
                         risk_per_trade=request.risk.risk_per_trade,
                         stop_pct=request.risk.stop_pct,
                         max_daily_loss=request.risk.max_daily_loss,
@@ -95,7 +115,10 @@ class NautilusResearchBacktest:
                 fills=len(fills),
                 positions=len(positions),
                 ending_balance=ending,
-                notes="research backtest with fees, 50ms latency, 25% one-tick slippage",
+                notes=(
+                    f"{request.robot.value} research backtest with fees, "
+                    "50ms latency, 25% one-tick slippage"
+                ),
             )
         finally:
             engine.dispose()

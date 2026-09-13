@@ -1,6 +1,9 @@
 import pytest
 
-from nautilus_lab.infrastructure.nautilus.synthetic_bars import synthetic_ohlcv
+from nautilus_lab.infrastructure.nautilus.synthetic_bars import (
+    synthetic_ohlcv,
+    synthetic_regime_ohlcv,
+)
 
 
 def test_synthetic_bars_are_validated_and_deterministic() -> None:
@@ -21,3 +24,14 @@ def test_negative_volume_is_rejected_by_generator_contract() -> None:
     bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=5, seed=3)
     assert all(bar.volume >= 0 for bar in bars)
     assert all(bar.high >= max(bar.open, bar.close) for bar in bars)
+
+
+def test_regime_bars_have_three_segments() -> None:
+    bars = synthetic_regime_ohlcv(instrument_id="ETH/USDT.SIM", count=90, seed=4)
+    first = bars[10].close
+    mid = bars[45].close
+    last = bars[-1].close
+
+    assert len(bars) == 90
+    assert mid > first
+    assert last < mid

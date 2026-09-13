@@ -13,6 +13,8 @@ from nautilus_trader.trading.strategy import Strategy
 from nautilus_lab.application.risk import evaluate_entry, size_position
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
+from nautilus_lab.domain.regime import RegimeParams, RobotName
+from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.signals import SignalSide
 
@@ -20,8 +22,17 @@ from nautilus_lab.domain.signals import SignalSide
 class SignalRobotConfig(StrategyConfig, frozen=True):
     instrument_id: InstrumentId
     bar_type: BarType
+    robot: str = "regime"
     fast_period: int = 10
     slow_period: int = 20
+    er_period: int = 20
+    trend_ema_period: int = 40
+    slope_lookback: int = 10
+    enter_trend_er: Decimal = Decimal("0.30")
+    exit_trend_er: Decimal = Decimal("0.20")
+    donchian_period: int = 20
+    bb_period: int = 20
+    bb_k: Decimal = Decimal("2")
     risk_per_trade: Decimal = Decimal("0.005")
     stop_pct: Decimal = Decimal("0.01")
     max_daily_loss: Decimal = Decimal("0.02")
@@ -36,11 +47,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]  # nautilus Strategy is untyp
 
     def __init__(self, config: SignalRobotConfig) -> None:
         super().__init__(config)
-        self._robot = EmaCrossover(
-            instrument_id=str(config.instrument_id),
-            fast_period=config.fast_period,
-            slow_period=config.slow_period,
-        )
+        self._robot = _build_robot(config)
         self._limits = RiskLimits(
             risk_per_trade=config.risk_per_trade,
             stop_pct=config.stop_pct,
@@ -61,8 +68,11 @@ class SignalRobot(Strategy):  # type: ignore[misc]  # nautilus Strategy is untyp
         validate_bar(domain_bar, previous_ts=self._previous_ts, now=domain_bar.ts_utc)
         self._previous_ts = domain_bar.ts_utc
 
-        signal = self._robot.on_close(close=domain_bar.close, bar_ts_utc=domain_bar.ts_utc)
+        signal = self._robot.on_bar(domain_bar)
         if signal is None:
+            return
+        if signal.side is SignalSide.FLAT:
+            self._flatten()
             return
 
         equity = self._equity()
@@ -119,6 +129,10 @@ class SignalRobot(Strategy):  # type: ignore[misc]  # nautilus Strategy is untyp
     def on_stop(self) -> None:
         self.close_all_positions(self.config.instrument_id)
 
+    def _flatten(self) -> None:
+        if not self._is_flat():
+            self.close_all_positions(self.config.instrument_id)
+
     def _is_flat(self) -> bool:
         return bool(self.portfolio.is_flat(self.config.instrument_id))
 
@@ -139,6 +153,29 @@ class SignalRobot(Strategy):  # type: ignore[misc]  # nautilus Strategy is untyp
             self._day_start_equity = equity
         if self._peak_equity is None or equity > self._peak_equity:
             self._peak_equity = equity
+
+
+def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter:
+    robot = RobotName(config.robot)
+    if robot is RobotName.EMA:
+        return EmaCrossover(
+            instrument_id=str(config.instrument_id),
+            fast_period=config.fast_period,
+            slow_period=config.slow_period,
+        )
+    return RegimeRouter(
+        instrument_id=str(config.instrument_id),
+        params=RegimeParams(
+            er_period=config.er_period,
+            trend_ema_period=config.trend_ema_period,
+            slope_lookback=config.slope_lookback,
+            enter_trend_er=config.enter_trend_er,
+            exit_trend_er=config.exit_trend_er,
+            donchian_period=config.donchian_period,
+            bb_period=config.bb_period,
+            bb_k=config.bb_k,
+        ),
+    )
 
 
 def _to_domain_bar(bar: Bar, instrument_id: str) -> OhlcvBar:

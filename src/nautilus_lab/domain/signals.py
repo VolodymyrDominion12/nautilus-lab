@@ -4,10 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+from nautilus_lab.domain.regime import MarketRegime
+
 
 class SignalSide(StrEnum):
     BUY = "buy"
     SELL = "sell"
+    FLAT = "flat"
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,3 +21,4 @@ class Signal:
     side: SignalSide
     bar_ts_utc: datetime
     reason: str
+    regime: MarketRegime | None = None

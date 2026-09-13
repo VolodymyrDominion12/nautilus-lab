@@ -199,7 +199,7 @@ def test_research_use_case_delegates_to_port(limits: RiskLimits) -> None:
     request = BacktestRequest(
         mode=TradingMode.RESEARCH,
         instrument_id="ETH/USDT.SIM",
-        bar_count=50,
+        bar_count=150,
         starting_equity=Decimal("100000"),
         risk=limits,
         fast_ema=10,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
+from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.ema import ExponentialMovingAverage
 from nautilus_lab.domain.signals import Signal, SignalSide
 
@@ -16,6 +17,9 @@ class EmaCrossover:
         self._instrument_id = instrument_id
         self._fast = ExponentialMovingAverage(fast_period)
         self._slow = ExponentialMovingAverage(slow_period)
+
+    def on_bar(self, bar: OhlcvBar) -> Signal | None:
+        return self.on_close(close=bar.close, bar_ts_utc=bar.ts_utc)
 
     def on_close(self, *, close: Decimal, bar_ts_utc: datetime) -> Signal | None:
         """Update on a closed bar. Returns a signal only after both EMAs are warm."""

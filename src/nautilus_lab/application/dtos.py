@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
 
+from nautilus_lab.domain.regime import RegimeParams, RobotName
 from nautilus_lab.domain.risk import RiskLimits
 from nautilus_lab.domain.trading_mode import TradingMode
 
@@ -15,8 +16,10 @@ class BacktestRequest:
     bar_count: int
     starting_equity: Decimal
     risk: RiskLimits
-    fast_ema: int
-    slow_ema: int
+    robot: RobotName = RobotName.REGIME
+    fast_ema: int = 10
+    slow_ema: int = 20
+    regime: RegimeParams = field(default_factory=RegimeParams)
     seed: int = 42
 
 

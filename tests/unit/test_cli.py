@@ -1,5 +1,6 @@
 import pytest
 
+from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.cli import main
@@ -30,4 +31,5 @@ def test_research_request_uses_settings_risk() -> None:
 
     assert request.instrument_id == "ETH/USDT.SIM"
     assert request.bar_count == 100
+    assert request.robot is RobotName.REGIME
     assert request.fast_ema == cfg.fast_ema

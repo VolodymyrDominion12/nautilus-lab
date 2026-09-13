@@ -8,10 +8,11 @@ def egarch_forecast_volatility(returns: tuple[float, ...]) -> Decimal | None:
     if len(returns) < 60:
         return None
     try:
-        from arch import arch_model  # type: ignore[import-not-found]
+        import numpy as np
+        from arch import arch_model
     except ImportError:
         return None
-    model = arch_model(list(returns), vol="EGARCH", p=1, q=1, rescale=False)
+    model = arch_model(np.asarray(returns, dtype=np.float64), vol="EGARCH", p=1, q=1, rescale=False)
     fit = model.fit(disp="off")
     forecast = fit.forecast(horizon=1)
     variance = float(forecast.variance.values[-1][0])

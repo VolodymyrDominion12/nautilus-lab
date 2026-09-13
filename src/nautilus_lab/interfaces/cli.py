@@ -24,6 +24,7 @@ from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.composition import (
     ingest_request,
     ingest_use_case,
+    notifier,
     research_request,
     research_use_case,
     settings,
@@ -101,6 +102,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Enable bar-level VPIN regime filter (regime robot)",
     )
+    research.add_argument(
+        "--tearsheet",
+        help="Path to save interactive HTML tearsheet (e.g. reports/tearsheet.html)",
+    )
+    research.add_argument(
+        "--optuna",
+        action="store_true",
+        help="Use Bayesian hyperparameter optimization (Optuna) on in-sample",
+    )
+    research.add_argument(
+        "--trials",
+        type=int,
+        default=20,
+        help="Number of Optuna trials (default: 20)",
+    )
+    research.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send notification on completion via Telegram/Webhook",
+    )
 
     paper = sub.add_parser("paper", help="Paper trading: log hypothetical orders only")
     paper.add_argument("--bars", type=int, default=500, help="Synthetic bar count")
@@ -172,7 +193,36 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
 
 def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
     robot = RobotName(args.robot) if args.robot is not None else None
+    tearsheet = getattr(args, "tearsheet", None)
+    optuna_enabled = getattr(args, "optuna", False)
+    trials = getattr(args, "trials", 20)
+    should_notify = getattr(args, "notify", False)
+
     if args.synthetic:
+        if getattr(args, "walk_forward", False) or optuna_enabled:
+            window = _optional_window(args)
+            wf = walk_forward_use_case(cfg).execute(
+                walk_forward_request(
+                    cfg,
+                    robot=robot,
+                    source=BarOrigin.SYNTHETIC,
+                    bar_count=args.bars,
+                    window=window,
+                    in_sample_fraction=args.is_fraction,
+                    stress_slice=args.slice,
+                    tearsheet_path=tearsheet,
+                    use_optuna=optuna_enabled,
+                    optuna_trials=trials,
+                )
+            )
+            _print_walk_forward(wf)
+            if should_notify:
+                notifier(cfg).notify(
+                    f"Synthetic walk-forward complete: IS={wf.in_sample.ending_balance} "
+                    f"OOS={wf.out_of_sample.ending_balance}"
+                )
+            return 0
+
         report = research_use_case(cfg).execute(
             research_request(
                 cfg,
@@ -180,10 +230,16 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                 robot=robot,
                 source=BarOrigin.SYNTHETIC,
                 stress_slice=args.slice,
+                tearsheet_path=tearsheet,
             )
         )
         _print_backtest(report)
+        if should_notify:
+            notifier(cfg).notify(
+                f"Synthetic backtest complete: fills={report.fills} ending={report.ending_balance}"
+            )
         return 0
+
     walk_forward = True if args.walk_forward else not args.full_sample
     if args.full_sample:
         walk_forward = False
@@ -196,10 +252,19 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                 window=window,
                 in_sample_fraction=args.is_fraction,
                 stress_slice=args.slice,
+                tearsheet_path=tearsheet,
+                use_optuna=optuna_enabled,
+                optuna_trials=trials,
             )
         )
         _print_walk_forward(wf)
+        if should_notify:
+            notifier(cfg).notify(
+                f"Catalog walk-forward complete: IS={wf.in_sample.ending_balance} "
+                f"OOS={wf.out_of_sample.ending_balance}"
+            )
         return 0
+
     report = research_use_case(cfg).execute(
         research_request(
             cfg,
@@ -207,10 +272,15 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
             robot=robot,
             source=BarOrigin.CATALOG,
             stress_slice=args.slice,
+            tearsheet_path=tearsheet,
         )
     )
     print("full-sample catalog run (in-sample only; not an out-of-sample report)")
     _print_backtest(report)
+    if should_notify:
+        notifier(cfg).notify(
+            f"Full-sample backtest complete: fills={report.fills} ending={report.ending_balance}"
+        )
     return 0
 
 
@@ -277,6 +347,8 @@ def _print_backtest(report: BacktestReport) -> None:
             f"fees_paid={report.metrics.fees_paid} max_dd={report.metrics.max_drawdown} "
             f"turnover={report.metrics.turnover} sharpe_like={report.metrics.sharpe_like}"
         )
+    if report.tearsheet_path:
+        print(f"tearsheet_saved={report.tearsheet_path}")
     print(report.notes)
 
 
@@ -290,6 +362,8 @@ def _print_walk_forward(report: WalkForwardReport) -> None:
         "out-of-sample (report this) "
         f"fills={report.out_of_sample.fills} ending={report.out_of_sample.ending_balance}"
     )
+    if report.out_of_sample.tearsheet_path:
+        print(f"tearsheet_saved={report.out_of_sample.tearsheet_path}")
 
 
 if __name__ == "__main__":

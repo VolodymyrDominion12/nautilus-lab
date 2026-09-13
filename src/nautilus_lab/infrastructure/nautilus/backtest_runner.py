@@ -153,6 +153,35 @@ class NautilusResearchBacktest:
                 fees_paid=fees_paid,
                 turnover=turnover,
             )
+            saved_tearsheet: str | None = None
+            if request.tearsheet_path:
+                try:
+                    from pathlib import Path
+
+                    from nautilus_trader.analysis.tearsheet import (
+                        PLOTLY_AVAILABLE,
+                        create_tearsheet,
+                    )
+
+                    if PLOTLY_AVAILABLE:
+                        Path(request.tearsheet_path).parent.mkdir(parents=True, exist_ok=True)
+                        create_tearsheet(
+                            engine,
+                            output_path=request.tearsheet_path,
+                            title=f"nautilus-lab {request.robot.value} Backtest Results",
+                        )
+                        saved_tearsheet = request.tearsheet_path
+                    else:
+                        import logging
+
+                        logging.getLogger(__name__).warning(
+                            "Cannot generate tearsheet: plotly is missing."
+                        )
+                except Exception as exc:
+                    import logging
+
+                    logging.getLogger(__name__).warning("Failed to generate tearsheet: %s", exc)
+
             return BacktestReport(
                 fills=len(fills_report),
                 positions=len(positions),
@@ -163,6 +192,7 @@ class NautilusResearchBacktest:
                     "50ms latency, 25% one-tick slippage"
                 ),
                 metrics=metrics,
+                tearsheet_path=saved_tearsheet,
             )
         finally:
             engine.dispose()

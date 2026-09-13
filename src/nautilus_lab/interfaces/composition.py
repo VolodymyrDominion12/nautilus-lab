@@ -12,6 +12,7 @@ from nautilus_lab.application.run_walk_forward import RunWalkForward
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
+from nautilus_lab.infrastructure.alerts import AlertNotifier, build_notifier
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
 from nautilus_lab.infrastructure.nautilus.bar_feed import ResearchBarFeed
@@ -27,6 +28,15 @@ def settings() -> Settings:
 
 def catalog(cfg: Settings, *, path: str | None = None) -> NautilusParquetCatalog:
     return NautilusParquetCatalog(Path(path or cfg.catalog_path), fees=cfg.fee_schedule())
+
+
+def notifier(cfg: Settings | None = None) -> AlertNotifier:
+    resolved = cfg or settings()
+    return build_notifier(
+        telegram_token=resolved.telegram_bot_token,
+        telegram_chat_id=resolved.telegram_chat_id,
+        webhook_url=resolved.alert_webhook_url,
+    )
 
 
 def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
@@ -58,6 +68,7 @@ def research_request(
     start: datetime | None = None,
     end: datetime | None = None,
     stress_slice: str | None = None,
+    tearsheet_path: str | None = None,
 ) -> BacktestRequest:
     require_simulated_mode(cfg.trading_mode)
     resolved_robot = robot or cfg.robot
@@ -95,6 +106,7 @@ def research_request(
         use_bar_vpin=cfg.use_bar_vpin,
         vpin_bucket_volume=cfg.vpin_bucket_volume,
         vpin_toxic_threshold=cfg.vpin_toxic_threshold,
+        tearsheet_path=tearsheet_path,
     )
 
 
@@ -123,24 +135,33 @@ def walk_forward_request(
     cfg: Settings,
     *,
     robot: RobotName | None = None,
+    source: BarOrigin = BarOrigin.CATALOG,
+    bar_count: int = 0,
     window: WalkForwardWindow | None = None,
     in_sample_fraction: Decimal | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
     stress_slice: str | None = None,
+    tearsheet_path: str | None = None,
+    use_optuna: bool = False,
+    optuna_trials: int = 20,
 ) -> WalkForwardRequest:
     backtest = research_request(
         cfg,
-        bar_count=0,
+        bar_count=bar_count,
         robot=robot,
-        source=BarOrigin.CATALOG,
+        source=source,
         start=start,
         end=end,
         stress_slice=stress_slice,
+        tearsheet_path=tearsheet_path,
     )
     return WalkForwardRequest(
         backtest=backtest,
         window=window,
         in_sample_fraction=in_sample_fraction or Decimal("0.7"),
         embargo_bars=cfg.embargo_bars,
+        use_optuna=use_optuna,
+        optuna_trials=optuna_trials,
+        tearsheet_path=tearsheet_path,
     )

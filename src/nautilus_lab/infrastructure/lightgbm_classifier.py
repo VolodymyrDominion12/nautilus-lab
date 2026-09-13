@@ -32,7 +32,7 @@ class LightGBMDirectionClassifier:
 
     def __init__(self, model_path: str) -> None:
         try:
-            import lightgbm as lgb  # type: ignore[import-not-found]
+            import lightgbm as lgb
         except ImportError as exc:
             raise RuntimeError(
                 "lightgbm extra not installed; use HeuristicDirectionClassifier"

@@ -25,6 +25,16 @@ ml = [
 ]
 research = [
     "arch>=7.0",
+    "optuna>=4.0",
+    "polars>=1.0",
+]
+visualization = [
+    "kaleido>=1.0",
+    "plotly>=6.0",
+    "simplejson>=3.20",
+]
+alerts = [
+    "httpx>=0.27",
 ]
 
 [project.scripts]

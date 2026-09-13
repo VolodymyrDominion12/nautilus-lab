@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     binance_symbols: list[str] = Field(default_factory=lambda: ["ETHUSDT", "BTCUSDT"])
     maker_fee: Decimal = Decimal("0.001")
     taker_fee: Decimal = Decimal("0.001")
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    alert_webhook_url: str | None = None
 
     def risk_limits(self) -> RiskLimits:
         return RiskLimits(

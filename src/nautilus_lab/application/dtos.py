@@ -40,6 +40,7 @@ class BacktestRequest:
     use_bar_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    tearsheet_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,7 @@ class BacktestReport:
     ending_balance: Decimal | None
     notes: str
     metrics: BacktestMetrics | None = None
+    tearsheet_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +80,9 @@ class WalkForwardRequest:
     window: WalkForwardWindow | None = None
     in_sample_fraction: Decimal = Decimal("0.7")
     embargo_bars: int = 0
+    use_optuna: bool = False
+    optuna_trials: int = 20
+    tearsheet_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

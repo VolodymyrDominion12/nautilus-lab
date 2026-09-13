@@ -43,6 +43,8 @@ logs/
 *.log
 catalog/
 data/
+reports/
+*.html
 *.sqlite
 *.db
 

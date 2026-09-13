@@ -46,3 +46,39 @@ def test_parse_utc_date_is_midnight_utc() -> None:
 
 def test_cli_walk_forward_dates_must_be_complete() -> None:
     assert main(["research", "--is-start", "2024-01-01"]) == 1
+
+
+def test_cli_research_synthetic_runs() -> None:
+    assert main(["research", "--synthetic", "--bars", "200"]) == 0
+
+
+def test_cli_research_synthetic_tearsheet(tmp_path: pytest.TempPathFactory) -> None:
+    t_path = str(tmp_path) + "/tearsheet.html"
+    assert main(["research", "--synthetic", "--bars", "200", "--tearsheet", t_path]) == 0
+
+
+def test_cli_research_synthetic_optuna() -> None:
+    assert (
+        main(
+            [
+                "research",
+                "--synthetic",
+                "--bars",
+                "800",
+                "--walk-forward",
+                "--optuna",
+                "--trials",
+                "2",
+                "--notify",
+            ]
+        )
+        == 0
+    )
+
+
+def test_cli_scan_triangular() -> None:
+    assert main(["scan", "--triangular"]) == 0
+
+
+def test_cli_scan_missing_flag_fails() -> None:
+    assert main(["scan"]) == 1

@@ -249,3 +249,55 @@ def test_vol_scaled_risk_fraction() -> None:
         target_vol=Decimal("0.02"),
     )
     assert scaled < Decimal("0.01")
+
+
+def test_noop_kill_switch() -> None:
+    from nautilus_lab.domain.kill_switch import NoOpKillSwitch
+
+    ks = NoOpKillSwitch()
+    assert not ks.is_active()
+    ks.trigger("drawdown limit reached")
+    assert ks.is_active()
+    assert ks.last_reason == "drawdown limit reached"
+
+
+def test_ml_obi_strategy() -> None:
+    from nautilus_lab.domain.ml_obi_strategy import MlObiStrategy
+    from nautilus_lab.domain.signals import SignalSide
+
+    strategy = MlObiStrategy(
+        instrument_id="ETH/USDT.SIM",
+        classifier=HeuristicDirectionClassifier(),
+        threshold=Decimal("0.5"),
+    )
+    origin = datetime(2024, 1, 1, tzinfo=UTC)
+    snap1 = OrderBookSnapshot(
+        instrument_id="ETH/USDT.SIM",
+        ts_utc=origin,
+        bids=(BookLevel(Decimal("3000"), Decimal("10")),),
+        asks=(BookLevel(Decimal("3001"), Decimal("10")),),
+    )
+    snap2 = OrderBookSnapshot(
+        instrument_id="ETH/USDT.SIM",
+        ts_utc=origin + timedelta(seconds=1),
+        bids=(BookLevel(Decimal("3000"), Decimal("20")),),
+        asks=(BookLevel(Decimal("3001"), Decimal("5")),),
+    )
+    sig1 = strategy.on_book(snap1)
+    assert sig1 is None  # warmup first book
+    sig2 = strategy.on_book(snap2)
+    assert sig2 is not None
+    assert sig2.side == SignalSide.BUY
+
+
+def test_egarch_forecast_volatility() -> None:
+    from nautilus_lab.infrastructure.egarch_forecast import egarch_forecast_volatility
+
+    # Below minimum length
+    assert egarch_forecast_volatility((0.01, -0.01)) is None
+
+    # Realistic return series >= 60
+    returns = tuple(0.005 * ((-1) ** i) for i in range(70))
+    vol = egarch_forecast_volatility(returns)
+    assert vol is not None
+    assert vol > 0

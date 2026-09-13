@@ -34,7 +34,13 @@ def test_ingest_writes_validated_public_bars() -> None:
             self.written: list[OhlcvBar] = []
             self.bar_type: str | None = None
 
-        def write(self, payload: Sequence[OhlcvBar], *, bar_type: str) -> int:
+        def write(
+            self,
+            payload: Sequence[OhlcvBar],
+            *,
+            bar_type: str,
+            instrument_id: str = "",
+        ) -> int:
             self.written = list(payload)
             self.bar_type = bar_type
             return len(payload)
@@ -66,7 +72,13 @@ def test_ingest_rejects_empty_feed() -> None:
             return []
 
     class UnusedCatalog:
-        def write(self, bars: Sequence[OhlcvBar], *, bar_type: str) -> int:
+        def write(
+            self,
+            bars: Sequence[OhlcvBar],
+            *,
+            bar_type: str,
+            instrument_id: str = "",
+        ) -> int:
             raise AssertionError("must not write")
 
         def load(self, **kwargs: object) -> list[OhlcvBar]:

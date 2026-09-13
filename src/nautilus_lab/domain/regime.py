@@ -18,6 +18,11 @@ class MarketRegime(StrEnum):
 class RobotName(StrEnum):
     REGIME = "regime"
     EMA = "ema"
+    PAIRS = "pairs"
+    FUNDING = "funding"
+    ML_OBI = "ml_obi"
+    GLFT = "glft"
+    TRI_SCAN = "tri_scan"
 
 
 @dataclass(frozen=True, slots=True)

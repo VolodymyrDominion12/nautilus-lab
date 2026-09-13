@@ -15,6 +15,7 @@ from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
 from nautilus_lab.infrastructure.nautilus.bar_feed import ResearchBarFeed
+from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
@@ -25,7 +26,7 @@ def settings() -> Settings:
 
 
 def catalog(cfg: Settings, *, path: str | None = None) -> NautilusParquetCatalog:
-    return NautilusParquetCatalog(Path(path or cfg.catalog_path))
+    return NautilusParquetCatalog(Path(path or cfg.catalog_path), fees=cfg.fee_schedule())
 
 
 def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
@@ -56,27 +57,44 @@ def research_request(
     source: BarOrigin = BarOrigin.CATALOG,
     start: datetime | None = None,
     end: datetime | None = None,
+    stress_slice: str | None = None,
 ) -> BacktestRequest:
     require_simulated_mode(cfg.trading_mode)
+    resolved_robot = robot or cfg.robot
     bar_type = (
         "ETH/USDT.SIM-1-MINUTE-LAST-EXTERNAL"
         if source is BarOrigin.SYNTHETIC
         else nautilus_bar_type(cfg.instrument_id, cfg.bar_interval)
     )
+    pairs = cfg.pairs_params()
+    instrument_ids: tuple[str, ...] = ()
+    if resolved_robot is RobotName.PAIRS:
+        instrument_ids = (pairs.leg_a, pairs.leg_b)
     return BacktestRequest(
         mode=cfg.trading_mode,
         instrument_id=cfg.instrument_id,
         bar_count=bar_count,
         starting_equity=cfg.starting_equity,
         risk=cfg.risk_limits(),
-        robot=robot or cfg.robot,
+        robot=resolved_robot,
         fast_ema=cfg.fast_ema,
         slow_ema=cfg.slow_ema,
         regime=cfg.regime_params(),
+        pairs=pairs,
         source=source,
         bar_type=bar_type,
+        bar_types=tuple(
+            nautilus_bar_type(instrument_id, cfg.bar_interval) for instrument_id in instrument_ids
+        ),
+        instrument_ids=instrument_ids,
         start=start,
         end=end,
+        fee_schedule=cfg.fee_schedule(),
+        embargo_bars=cfg.embargo_bars,
+        stress_slice=stress_slice,
+        use_bar_vpin=cfg.use_bar_vpin,
+        vpin_bucket_volume=cfg.vpin_bucket_volume,
+        vpin_toxic_threshold=cfg.vpin_toxic_threshold,
     )
 
 
@@ -85,14 +103,17 @@ def ingest_request(
     *,
     start: datetime,
     end: datetime,
+    symbol: str | None = None,
 ) -> IngestRequest:
     require_simulated_mode(cfg.trading_mode)
+    resolved_symbol = symbol or cfg.binance_symbol
+    instrument_id = binance_symbol_to_instrument_id(resolved_symbol)
     return IngestRequest(
         mode=cfg.trading_mode,
-        symbol=cfg.binance_symbol,
+        symbol=resolved_symbol,
         interval=cfg.bar_interval,
-        instrument_id=cfg.instrument_id,
-        bar_type=nautilus_bar_type(cfg.instrument_id, cfg.bar_interval),
+        instrument_id=instrument_id,
+        bar_type=nautilus_bar_type(instrument_id, cfg.bar_interval),
         start=start,
         end=end,
     )
@@ -106,6 +127,7 @@ def walk_forward_request(
     in_sample_fraction: Decimal | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
+    stress_slice: str | None = None,
 ) -> WalkForwardRequest:
     backtest = research_request(
         cfg,
@@ -114,9 +136,11 @@ def walk_forward_request(
         source=BarOrigin.CATALOG,
         start=start,
         end=end,
+        stress_slice=stress_slice,
     )
     return WalkForwardRequest(
         backtest=backtest,
         window=window,
         in_sample_fraction=in_sample_fraction or Decimal("0.7"),
+        embargo_bars=cfg.embargo_bars,
     )

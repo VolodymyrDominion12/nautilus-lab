@@ -10,13 +10,20 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.strategy import Strategy
 
-from nautilus_lab.application.risk import evaluate_entry, size_position
+from nautilus_lab.application.risk import (
+    effective_risk_fraction,
+    evaluate_entry,
+    size_position,
+    stop_distance,
+)
+from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.regime import RegimeParams, RobotName
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.signals import SignalSide
+from nautilus_lab.domain.vpin import BarVpin
 
 
 class SignalRobotConfig(StrategyConfig, frozen=True):
@@ -40,9 +47,12 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     max_open_positions: int = 1
     quote_currency: str = "USDT"
     qty_step: Decimal = Decimal("0.001")
+    use_bar_vpin: bool = False
+    vpin_bucket_volume: Decimal = Decimal("1000")
+    vpin_toxic_threshold: Decimal = Decimal("0.7")
 
 
-class SignalRobot(Strategy):  # type: ignore[misc]  # nautilus Strategy is untyped
+class SignalRobot(Strategy):  # type: ignore[misc]
     """Thin Nautilus adapter: domain signal -> risk -> sized order."""
 
     def __init__(self, config: SignalRobotConfig) -> None:
@@ -59,6 +69,11 @@ class SignalRobot(Strategy):  # type: ignore[misc]  # nautilus Strategy is untyp
         self._day_start_equity: Decimal | None = None
         self._peak_equity: Decimal | None = None
         self._day: date | None = None
+        self._equity_curve: list[Decimal] = []
+        self._turnover: Decimal = Decimal("0")
+        self._returns: list[Decimal] = []
+        self._previous_equity: Decimal | None = None
+        self._atr = AverageTrueRange(14)
 
     def on_start(self) -> None:
         self.subscribe_bars(self.config.bar_type)
@@ -67,25 +82,33 @@ class SignalRobot(Strategy):  # type: ignore[misc]  # nautilus Strategy is untyp
         domain_bar = _to_domain_bar(bar, str(self.config.instrument_id))
         validate_bar(domain_bar, previous_ts=self._previous_ts, now=domain_bar.ts_utc)
         self._previous_ts = domain_bar.ts_utc
+        self._atr.update(domain_bar)
 
         signal = self._robot.on_bar(domain_bar)
+        equity = self._equity()
+        if equity is not None:
+            self._update_equity_path(domain_bar.ts_utc, equity)
+            self._equity_curve.append(equity)
+            if self._previous_equity is not None and self._previous_equity > 0:
+                self._returns.append((equity - self._previous_equity) / self._previous_equity)
+            self._previous_equity = equity
+
         if signal is None:
             return
         if signal.side is SignalSide.FLAT:
             self._flatten()
             return
 
-        equity = self._equity()
         if equity is None:
             self.log.error("No account equity; skip order (fail closed)")
             return
-        self._update_equity_path(domain_bar.ts_utc, equity)
 
         snapshot = AccountSnapshot(
             equity=equity,
             peak_equity=self._peak_equity or equity,
             day_start_equity=self._day_start_equity or equity,
             open_positions=0 if self._is_flat() else 1,
+            recent_returns=tuple(self._returns[-30:]),
         )
         decision = evaluate_entry(snapshot, self._limits)
         if not decision.allowed:
@@ -98,12 +121,13 @@ class SignalRobot(Strategy):  # type: ignore[misc]  # nautilus Strategy is untyp
         if not desired_buy and self.portfolio.is_net_short(self.config.instrument_id):
             return
 
-        stop_distance = domain_bar.close * self._limits.stop_pct
+        distance = stop_distance(domain_bar.close, self._limits, atr=self._atr.value)
+        risk_fraction = effective_risk_fraction(self._limits)
         qty = size_position(
             equity=equity,
             price=domain_bar.close,
-            stop_distance=stop_distance,
-            risk_fraction=self._limits.risk_per_trade,
+            stop_distance=distance,
+            risk_fraction=risk_fraction,
             qty_step=self.config.qty_step,
         )
         if qty <= 0:
@@ -125,9 +149,18 @@ class SignalRobot(Strategy):  # type: ignore[misc]  # nautilus Strategy is untyp
             instrument.make_qty(qty),
         )
         self.submit_order(order)
+        self._turnover += domain_bar.close * qty
 
     def on_stop(self) -> None:
         self.close_all_positions(self.config.instrument_id)
+
+    @property
+    def equity_curve(self) -> tuple[Decimal, ...]:
+        return tuple(self._equity_curve)
+
+    @property
+    def turnover(self) -> Decimal:
+        return self._turnover
 
     def _flatten(self) -> None:
         if not self._is_flat():
@@ -163,6 +196,12 @@ def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter:
             fast_period=config.fast_period,
             slow_period=config.slow_period,
         )
+    vpin = None
+    if config.use_bar_vpin:
+        vpin = BarVpin(
+            bucket_volume=config.vpin_bucket_volume,
+            toxic_threshold=config.vpin_toxic_threshold,
+        )
     return RegimeRouter(
         instrument_id=str(config.instrument_id),
         params=RegimeParams(
@@ -175,6 +214,7 @@ def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter:
             bb_period=config.bb_period,
             bb_k=config.bb_k,
         ),
+        vpin=vpin,
     )
 
 

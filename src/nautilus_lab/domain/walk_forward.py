@@ -73,21 +73,25 @@ def anchored_window(
     bars: Sequence[OhlcvBar],
     *,
     in_sample_fraction: Decimal,
+    embargo_bars: int = 0,
 ) -> WalkForwardWindow:
-    """First `in_sample_fraction` of bars for selection, remainder for the report."""
+    """First `in_sample_fraction` for selection; remainder for OOS after embargo gap."""
     if in_sample_fraction <= 0 or in_sample_fraction >= 1:
         raise InvalidWindowError("in_sample_fraction must be in (0, 1)")
+    if embargo_bars < 0:
+        raise InvalidWindowError("embargo_bars must be >= 0")
     if len(bars) < 2:
         raise InvalidWindowError("need at least 2 bars to split")
     split_at = int((Decimal(len(bars)) * in_sample_fraction).to_integral_value(rounding=ROUND_DOWN))
-    if split_at < 1 or split_at >= len(bars):
-        raise InvalidWindowError("anchored split leaves an empty fold")
+    oos_start_at = split_at + embargo_bars
+    if split_at < 1 or oos_start_at >= len(bars):
+        raise InvalidWindowError("anchored split leaves an empty fold (check embargo_bars)")
     ordered = tuple(bars)
     last = ordered[-1]
     return WalkForwardWindow(
         in_sample_start=ordered[0].ts_utc,
         in_sample_end=ordered[split_at].ts_utc,
-        out_of_sample_start=ordered[split_at].ts_utc,
+        out_of_sample_start=ordered[oos_start_at].ts_utc,
         out_of_sample_end=last.ts_utc + timedelta(microseconds=1),
     )
 

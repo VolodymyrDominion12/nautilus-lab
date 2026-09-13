@@ -9,7 +9,6 @@ from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import (
     InvalidRiskError,
     LiveTradingDisabledError,
-    PaperTradingNotReadyError,
 )
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.trading_mode import TradingMode
@@ -183,11 +182,13 @@ def test_invalid_risk_limits_are_rejected() -> None:
         )
 
 
-@pytest.mark.parametrize("mode", [TradingMode.LIVE, TradingMode.PAPER])
-def test_require_simulated_mode_blocks_non_research(mode: TradingMode) -> None:
-    expected = LiveTradingDisabledError if mode is TradingMode.LIVE else PaperTradingNotReadyError
-    with pytest.raises(expected):
-        require_simulated_mode(mode)
+def test_require_simulated_mode_blocks_live() -> None:
+    with pytest.raises(LiveTradingDisabledError):
+        require_simulated_mode(TradingMode.LIVE)
+
+
+def test_require_simulated_mode_allows_paper() -> None:
+    require_simulated_mode(TradingMode.PAPER)
 
 
 def test_research_use_case_delegates_to_port(limits: RiskLimits) -> None:
@@ -197,6 +198,13 @@ def test_research_use_case_delegates_to_port(limits: RiskLimits) -> None:
             return BacktestReport(
                 fills=3, positions=2, ending_balance=Decimal("100100"), notes="ok"
             )
+
+        def run_spread(
+            self,
+            request: BacktestRequest,
+            bars_by_instrument: dict[str, list[OhlcvBar]],
+        ) -> BacktestReport:
+            raise AssertionError("spread engine must not run")
 
     use_case = RunResearchBacktest(FakeEngine(), _CountFeed())
     request = BacktestRequest(
@@ -224,6 +232,13 @@ def test_research_use_case_rejects_short_history(limits: RiskLimits) -> None:
         def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
             raise AssertionError("engine must not run")
 
+        def run_spread(
+            self,
+            request: BacktestRequest,
+            bars_by_instrument: dict[str, list[OhlcvBar]],
+        ) -> BacktestReport:
+            raise AssertionError("engine must not run")
+
     use_case = RunResearchBacktest(FakeEngine(), _CountFeed())
     request = BacktestRequest(
         mode=TradingMode.RESEARCH,
@@ -242,6 +257,13 @@ def test_research_use_case_rejects_short_history(limits: RiskLimits) -> None:
 def test_research_use_case_rejects_live(limits: RiskLimits) -> None:
     class FakeEngine:
         def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
+            raise AssertionError("engine must not run")
+
+        def run_spread(
+            self,
+            request: BacktestRequest,
+            bars_by_instrument: dict[str, list[OhlcvBar]],
+        ) -> BacktestReport:
             raise AssertionError("engine must not run")
 
     use_case = RunResearchBacktest(FakeEngine(), _CountFeed())
@@ -266,3 +288,6 @@ class _CountFeed:
             count=max(request.bar_count, 1),
             seed=1,
         )
+
+    def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
+        return {request.instrument_id: self.load(request)}

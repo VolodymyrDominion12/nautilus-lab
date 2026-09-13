@@ -9,35 +9,36 @@ from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.errors import CatalogEmptyError
+from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.infrastructure.nautilus.bar_convert import (
     datetime_to_nanos,
     to_domain_bar,
     to_engine_bars,
 )
-from nautilus_lab.infrastructure.nautilus.instrument import eth_usdt_sim
+from nautilus_lab.infrastructure.nautilus.instrument import resolve_instrument
 
 
 class NautilusParquetCatalog:
     """Adapter over Nautilus `ParquetDataCatalog`. Stores closed bars only."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, fees: FeeSchedule | None = None) -> None:
         self._path = path.expanduser().resolve()
         self._path.mkdir(parents=True, exist_ok=True)
-        self._instrument = eth_usdt_sim()
+        self._fees = fees or FeeSchedule.binance_spot_vip0()
 
     @property
     def path(self) -> Path:
         return self._path
 
-    def write(self, bars: Sequence[OhlcvBar], *, bar_type: str) -> int:
+    def write(self, bars: Sequence[OhlcvBar], *, bar_type: str, instrument_id: str = "") -> int:
         if not bars:
             raise CatalogEmptyError("cannot write an empty bar series")
+        resolved_id = instrument_id or bars[0].instrument_id
+        instrument = resolve_instrument(resolved_id, fees=self._fees)
         nautilus_type = BarType.from_str(bar_type)
-        engine_bars = to_engine_bars(
-            list(bars), bar_type=nautilus_type, instrument=self._instrument
-        )
+        engine_bars = to_engine_bars(list(bars), bar_type=nautilus_type, instrument=instrument)
         catalog = self._catalog()
-        catalog.write_data([self._instrument], skip_disjoint_check=True)
+        catalog.write_data([instrument], skip_disjoint_check=True)
         catalog.write_data(engine_bars, skip_disjoint_check=True)
         return len(engine_bars)
 
@@ -58,7 +59,7 @@ class NautilusParquetCatalog:
             raise CatalogEmptyError(
                 f"no bars in catalog {self._path} for {bar_type}. Run `lab ingest` first."
             )
-        instrument_id = str(self._instrument.id)
+        instrument_id = str(raw[0].bar_type.instrument_id)
         domain: list[OhlcvBar] = []
         previous_ts: datetime | None = None
         for item in raw:

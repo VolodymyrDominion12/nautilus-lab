@@ -22,8 +22,8 @@ def test_cli_live_fails_closed() -> None:
     assert main(["live"]) == 1
 
 
-def test_cli_paper_is_not_wired() -> None:
-    assert main(["paper"]) == 1
+def test_cli_paper_logs_hypothetical_orders() -> None:
+    assert main(["paper", "--bars", "200"]) == 0
 
 
 def test_research_request_uses_settings_risk() -> None:

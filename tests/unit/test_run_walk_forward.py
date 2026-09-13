@@ -44,9 +44,19 @@ def test_walk_forward_selects_on_in_sample_and_reports_out_of_sample() -> None:
                 balance = Decimal("100000")
             return BacktestReport(fills=1, positions=1, ending_balance=balance, notes="fake")
 
+        def run_spread(
+            self,
+            request: BacktestRequest,
+            bars_by_instrument: dict[str, list[OhlcvBar]],
+        ) -> BacktestReport:
+            raise AssertionError("spread engine must not run")
+
     class FixedFeed:
         def load(self, request: BacktestRequest) -> list[OhlcvBar]:
             return bars
+
+        def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
+            return {request.instrument_id: bars}
 
     engine = RecordingEngine()
     request = BacktestRequest(

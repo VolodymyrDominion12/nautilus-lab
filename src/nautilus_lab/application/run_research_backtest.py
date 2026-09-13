@@ -17,8 +17,22 @@ class RunResearchBacktest:
 
     def execute(self, request: BacktestRequest) -> BacktestReport:
         require_simulated_mode(request.mode)
+        minimum = _minimum_bars(request.robot)
+        if request.robot is RobotName.PAIRS:
+            bars_by_instrument = self._feed.load_multi(request)
+            count = min(len(series) for series in bars_by_instrument.values())
+            if count < minimum:
+                raise ValueError(f"bar_count must be >= {minimum} so indicators can warm up")
+            return self._engine.run_spread(request, bars_by_instrument)
         bars = self._feed.load(request)
-        minimum = 150 if request.robot is RobotName.REGIME else 50
         if len(bars) < minimum:
             raise ValueError(f"bar_count must be >= {minimum} so indicators can warm up")
         return self._engine.run(request, bars)
+
+
+def _minimum_bars(robot: RobotName) -> int:
+    if robot is RobotName.REGIME:
+        return 150
+    if robot is RobotName.PAIRS:
+        return 200
+    return 50

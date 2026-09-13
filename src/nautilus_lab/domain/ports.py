@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import Protocol
 
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.funding import FundingSnapshot
+from nautilus_lab.domain.order_book import OrderBookSnapshot
 
 
 class PublicBarFeed(Protocol):
@@ -24,7 +26,7 @@ class PublicBarFeed(Protocol):
 class BarCatalog(Protocol):
     """Nautilus Parquet catalog of closed bars."""
 
-    def write(self, bars: Sequence[OhlcvBar], *, bar_type: str) -> int: ...
+    def write(self, bars: Sequence[OhlcvBar], *, bar_type: str, instrument_id: str) -> int: ...
 
     def load(
         self,
@@ -39,3 +41,17 @@ class JsonHttpClient(Protocol):
     """GET JSON. Used by public market-data adapters."""
 
     def get_json(self, url: str, params: Mapping[str, str]) -> object: ...
+
+
+class FundingRateFeed(Protocol):
+    def fetch_history(
+        self,
+        *,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[FundingSnapshot]: ...
+
+
+class OrderBookSnapshotFeed(Protocol):
+    def fetch_snapshot(self, *, symbol: str) -> OrderBookSnapshot: ...

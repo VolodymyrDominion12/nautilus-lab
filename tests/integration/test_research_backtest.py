@@ -32,7 +32,13 @@ def _limits() -> RiskLimits:
 @pytest.mark.integration
 def test_research_backtest_runs_locally_without_network() -> None:
     class UnusedCatalog:
-        def write(self, bars: Sequence[OhlcvBar], *, bar_type: str) -> int:
+        def write(
+            self,
+            bars: Sequence[OhlcvBar],
+            *,
+            bar_type: str,
+            instrument_id: str = "",
+        ) -> int:
             raise AssertionError("synthetic path must not touch catalog")
 
         def load(
@@ -42,6 +48,9 @@ def test_research_backtest_runs_locally_without_network() -> None:
             start: datetime | None = None,
             end: datetime | None = None,
         ) -> list[OhlcvBar]:
+            raise AssertionError("synthetic path must not load catalog")
+
+        def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
             raise AssertionError("synthetic path must not load catalog")
 
     use_case = RunResearchBacktest(NautilusResearchBacktest(), ResearchBarFeed(UnusedCatalog()))
@@ -93,6 +102,41 @@ def test_parquet_catalog_roundtrip_and_backtest(tmp_path: Path) -> None:
     )
     assert report.fills >= 0
     assert "catalog" in report.notes
+
+
+@pytest.mark.integration
+def test_pairs_synthetic_backtest_runs() -> None:
+    class UnusedCatalog:
+        def write(
+            self,
+            bars: Sequence[OhlcvBar],
+            *,
+            bar_type: str,
+            instrument_id: str = "",
+        ) -> int:
+            raise AssertionError("synthetic path must not touch catalog")
+
+        def load(self, **kwargs: object) -> list[OhlcvBar]:
+            raise AssertionError("synthetic path must not load catalog")
+
+        def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
+            raise AssertionError("synthetic path must not load catalog")
+
+    use_case = RunResearchBacktest(NautilusResearchBacktest(), ResearchBarFeed(UnusedCatalog()))
+    report = use_case.execute(
+        BacktestRequest(
+            mode=TradingMode.RESEARCH,
+            instrument_id="ETH/USDT.SIM",
+            bar_count=300,
+            starting_equity=Decimal("100000"),
+            risk=_limits(),
+            robot=RobotName.PAIRS,
+            seed=5,
+            source=BarOrigin.SYNTHETIC,
+        ),
+    )
+    assert report.fills >= 0
+    assert "pairs" in report.notes
 
 
 @pytest.mark.integration

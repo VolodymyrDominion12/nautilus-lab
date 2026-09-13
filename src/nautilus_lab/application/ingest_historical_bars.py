@@ -28,7 +28,11 @@ class IngestHistoricalBars:
                 f"no public klines for {request.symbol} {request.interval} "
                 f"in [{request.start.isoformat()}, {request.end.isoformat()})"
             )
-        written = self._catalog.write(bars, bar_type=request.bar_type)
+        written = self._catalog.write(
+            bars,
+            bar_type=request.bar_type,
+            instrument_id=request.instrument_id,
+        )
         return IngestReport(
             bars_written=written,
             first_ts=bars[0].ts_utc,

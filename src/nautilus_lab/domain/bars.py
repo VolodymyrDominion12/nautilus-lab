@@ -3,8 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from enum import StrEnum
 
 from nautilus_lab.domain.errors import InvalidBarError
+
+
+class BarOrigin(StrEnum):
+    """Where research bars come from. Catalog is real history; synthetic is for tests."""
+
+    CATALOG = "catalog"
+    SYNTHETIC = "synthetic"
 
 
 @dataclass(frozen=True, slots=True)

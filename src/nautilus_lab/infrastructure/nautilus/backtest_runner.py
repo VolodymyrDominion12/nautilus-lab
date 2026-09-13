@@ -5,55 +5,28 @@ from decimal import Decimal
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.backtest.models import FillModel, LatencyModel, MakerTakerFeeModel
 from nautilus_trader.config import BacktestEngineConfig, LoggingConfig, RiskEngineConfig
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import AccountType, OmsType
 from nautilus_trader.model.identifiers import TraderId, Venue
-from nautilus_trader.model.objects import Money, Price, Quantity
+from nautilus_trader.model.objects import Money
 
 from nautilus_lab.application.dtos import BacktestReport, BacktestRequest
-from nautilus_lab.domain.regime import RobotName
+from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.infrastructure.nautilus.bar_convert import to_engine_bars
 from nautilus_lab.infrastructure.nautilus.instrument import eth_usdt_sim
 from nautilus_lab.infrastructure.nautilus.signal_strategy import SignalRobot, SignalRobotConfig
-from nautilus_lab.infrastructure.nautilus.synthetic_bars import (
-    synthetic_ohlcv,
-    synthetic_regime_ohlcv,
-)
 
 
 class NautilusResearchBacktest:
     """Low-level BacktestEngine with fees, latency, and slippage."""
 
-    def run(self, request: BacktestRequest) -> BacktestReport:
+    def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
         instrument = eth_usdt_sim()
         if request.instrument_id != str(instrument.id):
             raise ValueError(f"unsupported instrument_id: {request.instrument_id}")
 
-        bar_type = BarType.from_str("ETH/USDT.SIM-1-MINUTE-LAST-EXTERNAL")
-        if request.robot is RobotName.REGIME:
-            domain_bars = synthetic_regime_ohlcv(
-                instrument_id=request.instrument_id,
-                count=request.bar_count,
-                seed=request.seed,
-            )
-        else:
-            domain_bars = synthetic_ohlcv(
-                instrument_id=request.instrument_id,
-                count=request.bar_count,
-                seed=request.seed,
-            )
-        engine_bars = [
-            Bar(
-                bar_type=bar_type,
-                open=Price(bar.open, precision=instrument.price_precision),
-                high=Price(bar.high, precision=instrument.price_precision),
-                low=Price(bar.low, precision=instrument.price_precision),
-                close=Price(bar.close, precision=instrument.price_precision),
-                volume=Quantity(bar.volume, precision=instrument.size_precision),
-                ts_event=_to_nanos(bar.ts_utc),
-                ts_init=_to_nanos(bar.ts_utc),
-            )
-            for bar in domain_bars
-        ]
+        bar_type = BarType.from_str(request.bar_type)
+        engine_bars = to_engine_bars(bars, bar_type=bar_type, instrument=instrument)
 
         usdt = instrument.quote_currency
         engine = BacktestEngine(
@@ -116,20 +89,12 @@ class NautilusResearchBacktest:
                 positions=len(positions),
                 ending_balance=ending,
                 notes=(
-                    f"{request.robot.value} research backtest with fees, "
+                    f"{request.robot.value} {request.source.value} backtest with fees, "
                     "50ms latency, 25% one-tick slippage"
                 ),
             )
         finally:
             engine.dispose()
-
-
-def _to_nanos(ts: object) -> int:
-    from datetime import datetime
-
-    if not isinstance(ts, datetime):
-        raise TypeError("expected datetime")
-    return int(ts.timestamp() * 1_000_000_000)
 
 
 def _ending_balance(account_report: object) -> Decimal | None:

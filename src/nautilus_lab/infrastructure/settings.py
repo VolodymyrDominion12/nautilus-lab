@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     exchange_api_secret: str | None = None
     instrument_id: str = "ETH/USDT.SIM"
     bar_type: str = "ETH/USDT.SIM-1-MINUTE-LAST-EXTERNAL"
+    catalog_path: str = "catalog"
+    bar_interval: str = "1h"
+    binance_symbol: str = "ETHUSDT"
 
     def risk_limits(self) -> RiskLimits:
         return RiskLimits(

@@ -71,7 +71,7 @@ def require_simulated_mode(mode: TradingMode) -> None:
         )
     if mode is TradingMode.PAPER:
         raise PaperTradingNotReadyError(
-            "Paper trading is not wired yet. Run `lab research` against simulated data."
+            "Paper trading is not wired yet. Run `lab ingest` then `lab research`."
         )
     if mode is not TradingMode.RESEARCH:
         raise LiveTradingDisabledError(f"unsupported trading mode: {mode}")

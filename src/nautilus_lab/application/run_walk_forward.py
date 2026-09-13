@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+from decimal import Decimal
+
+from nautilus_lab.application.dtos import (
+    BacktestReport,
+    BarFeed,
+    ResearchBacktestPort,
+    SelectedParams,
+    WalkForwardReport,
+    WalkForwardRequest,
+    apply_selected,
+    selected_from_request,
+)
+from nautilus_lab.application.param_grid import iter_param_grid
+from nautilus_lab.application.risk import require_simulated_mode
+from nautilus_lab.application.score import in_sample_score
+from nautilus_lab.domain.regime import RobotName
+from nautilus_lab.domain.walk_forward import (
+    WalkForwardWindow,
+    anchored_window,
+    split_by_window,
+)
+
+
+class RunWalkForward:
+    """Fit parameters on in-sample bars; report only the out-of-sample run."""
+
+    def __init__(self, engine: ResearchBacktestPort, feed: BarFeed) -> None:
+        self._engine = engine
+        self._feed = feed
+
+    def execute(self, request: WalkForwardRequest) -> WalkForwardReport:
+        require_simulated_mode(request.backtest.mode)
+        bars = self._feed.load(request.backtest)
+        window = request.window or anchored_window(
+            bars, in_sample_fraction=request.in_sample_fraction
+        )
+        folds = split_by_window(bars, window)
+        _require_warmup(request.backtest.robot, len(folds.in_sample), "in-sample")
+        _require_warmup(request.backtest.robot, len(folds.out_of_sample), "out-of-sample")
+
+        best_score: Decimal | None = None
+        best_params = selected_from_request(request.backtest)
+        best_is_report: BacktestReport | None = None
+        tried = 0
+        for params in iter_param_grid(request.backtest):
+            tried += 1
+            candidate = apply_selected(request.backtest, params)
+            report = self._engine.run(candidate, list(folds.in_sample))
+            score = in_sample_score(report)
+            if best_is_report is None or best_score is None or score > best_score:
+                best_score = score
+                best_params = params
+                best_is_report = report
+
+        if best_is_report is None:
+            raise ValueError("parameter grid is empty")
+
+        oos = self._engine.run(
+            apply_selected(request.backtest, best_params),
+            list(folds.out_of_sample),
+        )
+        return WalkForwardReport(
+            selected=best_params,
+            candidates_tried=tried,
+            in_sample=best_is_report,
+            out_of_sample=oos,
+            window=window,
+            notes=_notes(window, best_params, tried),
+        )
+
+
+def _require_warmup(robot: RobotName, bar_count: int, fold: str) -> None:
+    minimum = 150 if robot is RobotName.REGIME else 50
+    if bar_count < minimum:
+        raise ValueError(f"{fold} bar_count must be >= {minimum} so indicators can warm up")
+
+
+def _notes(window: WalkForwardWindow, params: SelectedParams, tried: int) -> str:
+    return (
+        "walk-forward: parameters selected on in-sample only; "
+        f"report out-of-sample. tried={tried} selected={params.label()} "
+        f"IS=[{window.in_sample_start.isoformat()}, {window.in_sample_end.isoformat()}) "
+        f"OOS=[{window.out_of_sample_start.isoformat()}, {window.out_of_sample_end.isoformat()})"
+    )

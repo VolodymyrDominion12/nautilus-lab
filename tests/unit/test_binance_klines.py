@@ -58,7 +58,7 @@ def test_binance_feed_paginates_and_stops_before_end() -> None:
             assert "api.binance.com" in url
             return self.pages.pop(0)
 
-    feed = BinancePublicKlines(FakeHttp(), now=datetime(2024, 1, 2, tzinfo=UTC))
+    feed = BinancePublicKlines(FakeHttp(), now=datetime(2024, 1, 2, tzinfo=UTC), page_limit=1)
     bars = feed.fetch(
         symbol="ETHUSDT",
         interval="1h",

@@ -102,7 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "research":
             robot = RobotName(args.robot) if args.robot is not None else None
             if args.synthetic:
-                report = research_use_case(cfg).execute(
+                backtest = research_use_case(cfg).execute(
                     research_request(
                         cfg,
                         bar_count=args.bars,
@@ -110,7 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         source=BarOrigin.SYNTHETIC,
                     )
                 )
-                _print_backtest(report)
+                _print_backtest(backtest)
                 return 0
             walk_forward = True if args.walk_forward else not args.full_sample
             if args.full_sample:
@@ -127,11 +127,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 _print_walk_forward(wf)
                 return 0
-            report = research_use_case(cfg).execute(
+            full = research_use_case(cfg).execute(
                 research_request(cfg, bar_count=args.bars, robot=robot, source=BarOrigin.CATALOG)
             )
             print("full-sample catalog run (in-sample only; not an out-of-sample report)")
-            _print_backtest(report)
+            _print_backtest(full)
             return 0
         if args.command == "paper":
             require_simulated_mode(TradingMode.PAPER)

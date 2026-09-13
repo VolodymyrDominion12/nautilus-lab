@@ -49,12 +49,11 @@ class NautilusParquetCatalog:
         end: datetime | None = None,
     ) -> list[OhlcvBar]:
         catalog = self._catalog()
-        kwargs: dict[str, int] = {}
-        if start is not None:
-            kwargs["start"] = datetime_to_nanos(start)
-        if end is not None:
-            kwargs["end"] = datetime_to_nanos(end)
-        raw = catalog.bars(bar_types=[bar_type], **kwargs)
+        raw = catalog.bars(
+            bar_types=[bar_type],
+            start=datetime_to_nanos(start) if start is not None else None,
+            end=datetime_to_nanos(end) if end is not None else None,
+        )
         if not raw:
             raise CatalogEmptyError(
                 f"no bars in catalog {self._path} for {bar_type}. Run `lab ingest` first."

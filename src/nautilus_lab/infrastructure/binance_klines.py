@@ -34,9 +34,11 @@ class BinancePublicKlines:
         http: JsonHttpClient | None = None,
         *,
         now: datetime | None = None,
+        page_limit: int = _PAGE_LIMIT,
     ) -> None:
         self._http = http or UrllibJsonClient()
         self._now = now
+        self._page_limit = page_limit
 
     def fetch(
         self,
@@ -61,7 +63,7 @@ class BinancePublicKlines:
                     "interval": interval,
                     "startTime": str(int(cursor.timestamp() * 1000)),
                     "endTime": str(int(end.timestamp() * 1000) - 1),
-                    "limit": str(_PAGE_LIMIT),
+                    "limit": str(self._page_limit),
                 },
             )
             rows = _as_rows(payload)
@@ -70,13 +72,13 @@ class BinancePublicKlines:
             last_open_ms: int | None = None
             for row in rows:
                 bar = parse_binance_kline(row, instrument_id=instrument_id)
-                last_open_ms = int(row[0])
+                last_open_ms = int(str(row[0]))
                 if bar.ts_utc < start or bar.ts_utc >= end:
                     continue
                 validate_bar(bar, previous_ts=previous_ts, now=clock)
                 bars.append(bar)
                 previous_ts = bar.ts_utc
-            if last_open_ms is None or len(rows) < _PAGE_LIMIT:
+            if last_open_ms is None or len(rows) < self._page_limit:
                 break
             cursor = datetime.fromtimestamp((last_open_ms + 1) / 1000, tz=UTC)
             if cursor <= start:

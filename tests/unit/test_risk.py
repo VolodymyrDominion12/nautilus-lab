@@ -5,6 +5,7 @@ import pytest
 from nautilus_lab.application.dtos import BacktestReport, BacktestRequest
 from nautilus_lab.application.risk import evaluate_entry, require_simulated_mode, size_position
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
+from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import (
     InvalidRiskError,
     LiveTradingDisabledError,
@@ -12,6 +13,7 @@ from nautilus_lab.domain.errors import (
 )
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.trading_mode import TradingMode
+from nautilus_lab.infrastructure.nautilus.synthetic_bars import synthetic_ohlcv
 
 
 @pytest.fixture
@@ -190,7 +192,7 @@ def test_require_simulated_mode_blocks_non_research(mode: TradingMode) -> None:
 
 def test_research_use_case_delegates_to_port(limits: RiskLimits) -> None:
     class FakeEngine:
-        def run(self, request: BacktestRequest, bars: list) -> BacktestReport:
+        def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
             assert len(bars) == 150
             return BacktestReport(
                 fills=3, positions=2, ending_balance=Decimal("100100"), notes="ok"
@@ -219,7 +221,7 @@ def test_require_simulated_mode_allows_research() -> None:
 
 def test_research_use_case_rejects_short_history(limits: RiskLimits) -> None:
     class FakeEngine:
-        def run(self, request: BacktestRequest, bars: list) -> BacktestReport:
+        def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
             raise AssertionError("engine must not run")
 
     use_case = RunResearchBacktest(FakeEngine(), _CountFeed())
@@ -239,7 +241,7 @@ def test_research_use_case_rejects_short_history(limits: RiskLimits) -> None:
 
 def test_research_use_case_rejects_live(limits: RiskLimits) -> None:
     class FakeEngine:
-        def run(self, request: BacktestRequest, bars: list) -> BacktestReport:
+        def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
             raise AssertionError("engine must not run")
 
     use_case = RunResearchBacktest(FakeEngine(), _CountFeed())
@@ -258,7 +260,7 @@ def test_research_use_case_rejects_live(limits: RiskLimits) -> None:
 
 
 class _CountFeed:
-    def load(self, request: BacktestRequest) -> list:
+    def load(self, request: BacktestRequest) -> list[OhlcvBar]:
         return synthetic_ohlcv(
             instrument_id=request.instrument_id,
             count=max(request.bar_count, 1),

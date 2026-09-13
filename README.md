@@ -9,8 +9,8 @@
 | Шар | Де | Навіщо |
 |-----|----|--------|
 | Domain | `src/nautilus_lab/domain/` | Сигнали, бари, EMA, ліміти ризику. Без біржі і без Nautilus. |
-| Application | `src/nautilus_lab/application/` | Розмір позиції, circuit breaker, запуск research. |
-| Infrastructure | `src/nautilus_lab/infrastructure/` | Nautilus BacktestEngine, комісії, slippage, latency. |
+| Application | `src/nautilus_lab/application/` | Розмір позиції, circuit breaker, ingest, walk-forward. |
+| Infrastructure | `src/nautilus_lab/infrastructure/` | Binance klines, Parquet catalog, Nautilus BacktestEngine, комісії, slippage. |
 | Interfaces | `src/nautilus_lab/interfaces/` | CLI `lab` — єдина точка збору залежностей. |
 
 Перший робот — **regime**: класифікатор ринку (Kaufman Efficiency Ratio + нахил EMA) і три окремі стратегії:
@@ -33,15 +33,30 @@ cp .env.example .env
 uv sync --extra dev
 ```
 
-## Перший запуск (симуляція)
+## Перший запуск (реальні дані, симуляція ордерів)
 
 ```bash
+# 1. Публічні Binance klines → Nautilus Parquet catalog (без API-ключів).
+uv run lab ingest --start 2025-01-01
+
+# 2. Walk-forward: підбір параметрів на 70% історії, звіт на решті 30%.
 uv run lab research
-uv run lab research --bars 5000
 uv run lab research --robot ema
 ```
 
-Команда згенерує синтетичні бари з трьома режимами (вгору / флет / вниз), прогонить їх через Nautilus з **комісіями, 50 мс latency і ймовірністю slippage**, і надрукує кількість філів.
+`lab research` за замовчуванням читає catalog і робить walk-forward. Друкує окремо in-sample (лише вибір параметрів) і out-of-sample (це і є звіт). Не дивись на in-sample як на результат.
+
+Повний прогін на всій вибірці (це **не** out-of-sample):
+
+```bash
+uv run lab research --full-sample
+```
+
+Синтетика лишається для тестів і демо без мережі:
+
+```bash
+uv run lab research --synthetic --bars 5000
+```
 
 Інші режими навмисно не торгують:
 
@@ -76,9 +91,7 @@ uv run mypy src tests
 
 ## Далі (коли будеш готовий)
 
-1. Справжні історичні дані в Parquet catalog Nautilus (не синтетика).
-2. Walk-forward: параметри підбирати на одній ділянці, звітувати на іншій.
-3. Paper: публічні котирування, **без** реальних ордерів.
-4. Live — тільки після явного запиту і окремих ключів у локальному `.env`.
+1. Paper: публічні котирування, **без** реальних ордерів.
+2. Live — тільки після явного запиту і окремих ключів у локальному `.env`.
 
 Документація рушія: https://nautilustrader.io/docs/latest/getting_started/

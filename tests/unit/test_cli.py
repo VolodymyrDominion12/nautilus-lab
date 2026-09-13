@@ -1,9 +1,10 @@
 import pytest
 
+from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.infrastructure.settings import Settings
-from nautilus_lab.interfaces.cli import main
+from nautilus_lab.interfaces.cli import main, parse_utc
 from nautilus_lab.interfaces.composition import research_request
 
 
@@ -33,3 +34,15 @@ def test_research_request_uses_settings_risk() -> None:
     assert request.bar_count == 100
     assert request.robot is RobotName.REGIME
     assert request.fast_ema == cfg.fast_ema
+    assert request.source is BarOrigin.CATALOG
+    assert "HOUR" in request.bar_type
+
+
+def test_parse_utc_date_is_midnight_utc() -> None:
+    parsed = parse_utc("2024-06-01")
+    assert parsed.tzinfo is not None
+    assert parsed.hour == 0
+
+
+def test_cli_walk_forward_dates_must_be_complete() -> None:
+    assert main(["research", "--is-start", "2024-01-01"]) == 1

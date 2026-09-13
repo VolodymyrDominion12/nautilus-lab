@@ -15,7 +15,7 @@
 |------|------------------|-------------|
 | `bars.py` | `OhlcvBar`, `BarOrigin`, `validate_bar()` | Один закритий бар; перевірка UTC, OHLC-інваріантів, монотонності часу, відсутності майбутнього |
 | `signals.py` | `Signal`, `SignalSide`, `LegIntent`, `SpreadSignal`, `QuoteIntent` | Наміри стратегій: однолегові, двуногові (спред) і котировки маркет-мейкера |
-| `errors.py` | `DomainError`, `InvalidBarError`, `InvalidWindowError`, `CatalogEmptyError`, `InvalidRiskError`, `LiveTradingDisabledError`, `PaperTradingNotReadyError` | Помилки; політика fail-closed |
+| `errors.py` | `DomainError`, `InvalidBarError`, `InvalidWindowError`, `CatalogEmptyError`, `InvalidRiskError`, `RobotNotWiredError`, `LiveTradingDisabledError`, `PaperTradingNotReadyError` | Помилки; політика fail-closed |
 | `money.py` | `Money` | Негрошова сума (не від'ємна), `risk_amount(fraction)` |
 | `trading_mode.py` | `TradingMode` | `RESEARCH` / `PAPER` / `LIVE` |
 | `windows.py` | `RollingWindow` | Ковзне вікно закритих значень; `values()`, `prior()` (усе, крім щойно закритого бару — захист від look-ahead) |
@@ -32,7 +32,7 @@
 
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
-| `regime.py` | `MarketRegime`, `RobotName`, `RegimeParams`, `RegimeSnapshot`, `RegimeClassifier` | Класифікатор тренд/флет (ER Кауфмана + нахил EMA + гістерезис); перелік роботів |
+| `regime.py` | `MarketRegime`, `RobotName`, `BACKTEST_WIRED_ROBOTS`, `require_backtest_support()`, `RegimeParams`, `RegimeSnapshot`, `RegimeClassifier` | Класифікатор тренд/флет (ER Кауфмана + нахил EMA + гістерезис); перелік роботів і перевірка, чи має робот адаптер у рушії |
 | `donchian.py` | `UptrendBreakout`, `DowntrendBreakout` | Пробій каналу Дончіана з виходом за EMA |
 | `mean_reversion.py` | `RangeMeanReversion` | Повернення до середнього за смугами Боллінджера |
 | `ema_crossover.py` | `EmaCrossover` | Класичний перетин EMA, завжди в ринку |
@@ -141,7 +141,7 @@
 | `conftest.py` | Фікстура `default_limits` (RiskLimits) і хелпер `make_bars(count, start, step_minutes)` |
 | `unit/test_bars.py` | Валідація OHLCV, UTC, монотонність, майбутні бари |
 | `unit/test_binance_klines.py` | Парсинг kline, пагінація, помилкові відповіді |
-| `unit/test_cli.py` | `live` fail-closed, `paper` працює, часткові дати → код 1, `parse_utc` |
+| `unit/test_cli.py` | `live` fail-closed, `paper` працює, часткові дати → код 1, `parse_utc`, роботи без адаптера (`funding`/`ml_obi`/`glft`/`tri_scan`) → код 1 |
 | `unit/test_donchian.py` | Пробої вгору/вниз, вихід за EMA, відсутність підглядання |
 | `unit/test_ema_crossover.py` | Прогрів, перетин, валідація періодів |
 | `unit/test_ingest.py` | Use case ingest: fetch → write, порожня відповідь → помилка |

@@ -7,7 +7,7 @@ from nautilus_lab.application.dtos import (
     ResearchBacktestPort,
 )
 from nautilus_lab.application.risk import require_simulated_mode
-from nautilus_lab.domain.regime import RobotName
+from nautilus_lab.domain.regime import RobotName, require_backtest_support
 
 
 class RunResearchBacktest:
@@ -17,6 +17,7 @@ class RunResearchBacktest:
 
     def execute(self, request: BacktestRequest) -> BacktestReport:
         require_simulated_mode(request.mode)
+        require_backtest_support(request.robot)
         minimum = _minimum_bars(request.robot)
         if request.robot is RobotName.PAIRS:
             bars_by_instrument = self._feed.load_multi(request)

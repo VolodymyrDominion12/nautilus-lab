@@ -1,7 +1,7 @@
 import pytest
 
 from nautilus_lab.domain.bars import BarOrigin
-from nautilus_lab.domain.regime import RobotName
+from nautilus_lab.domain.regime import RobotName, require_backtest_support
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.cli import main, parse_utc
@@ -82,3 +82,18 @@ def test_cli_scan_triangular() -> None:
 
 def test_cli_scan_missing_flag_fails() -> None:
     assert main(["scan"]) == 1
+
+
+@pytest.mark.parametrize("robot", ["funding", "ml_obi", "glft", "tri_scan"])
+def test_cli_robot_without_adapter_fails_closed(robot: str) -> None:
+    """A robot with no engine adapter must fail loudly instead of running regime."""
+    assert main(["research", "--robot", robot, "--synthetic", "--bars", "200"]) == 1
+
+
+@pytest.mark.parametrize("robot", ["regime", "ema", "pairs"])
+def test_cli_wired_robots_are_supported(robot: str) -> None:
+    for item in RobotName:
+        if item.value == robot:
+            require_backtest_support(item)
+            return
+    raise AssertionError(f"unknown robot {robot}")

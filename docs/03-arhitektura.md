@@ -220,6 +220,11 @@ BacktestReport  →  друк у консоль
 `require_simulated_mode()` викликається і в use case, і в побудові запиту, і в CLI.
 Тобто навіть програмний виклик у обхід CLI не зможе надіслати живий ордер: адаптера просто не існує.
 
+**4. Робот без адаптера падає, а не підміняється.**
+`require_backtest_support()` (перелік — `BACKTEST_WIRED_ROBOTS` у `domain/regime.py`) викликається
+на вході в `RunResearchBacktest.execute()` і `RunWalkForward.execute()`, а також у `_build_robot()`.
+Тому `--robot funding` дає помилку з кодом 1, а не тихий запуск `regime` з правдоподібним звітом.
+
 ## 6. Далі
 
 - Повний перелік файлів з описами → [12-karta-fayliv.md](12-karta-fayliv.md)

@@ -5,7 +5,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from nautilus_lab.domain.ema import ExponentialMovingAverage
-from nautilus_lab.domain.errors import InvalidRiskError
+from nautilus_lab.domain.errors import InvalidRiskError, RobotNotWiredError
 from nautilus_lab.domain.windows import RollingWindow
 
 
@@ -23,6 +23,24 @@ class RobotName(StrEnum):
     ML_OBI = "ml_obi"
     GLFT = "glft"
     TRI_SCAN = "tri_scan"
+
+
+# Robots with a real execution adapter in the backtest engine. The others exist only
+# as domain building blocks, so they must fail closed instead of silently running
+# a different strategy (see docs/08-mft-2026-vidpovidnist.md).
+BACKTEST_WIRED_ROBOTS: frozenset[RobotName] = frozenset(
+    {RobotName.REGIME, RobotName.EMA, RobotName.PAIRS}
+)
+
+
+def require_backtest_support(robot: RobotName) -> None:
+    """Reject robots that have no backtest adapter yet."""
+    if robot not in BACKTEST_WIRED_ROBOTS:
+        wired = ", ".join(sorted(item.value for item in BACKTEST_WIRED_ROBOTS))
+        raise RobotNotWiredError(
+            f"robot {robot.value!r} has no backtest adapter yet; use one of: {wired}. "
+            "Its module is a domain building block only and is not wired to the engine."
+        )
 
 
 @dataclass(frozen=True, slots=True)

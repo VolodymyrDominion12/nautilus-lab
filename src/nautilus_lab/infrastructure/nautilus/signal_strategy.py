@@ -19,7 +19,7 @@ from nautilus_lab.application.risk import (
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
-from nautilus_lab.domain.regime import RegimeParams, RobotName
+from nautilus_lab.domain.regime import RegimeParams, RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.signals import SignalSide
@@ -190,6 +190,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
 
 def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter:
     robot = RobotName(config.robot)
+    require_backtest_support(robot)
     if robot is RobotName.EMA:
         return EmaCrossover(
             instrument_id=str(config.instrument_id),

@@ -23,6 +23,10 @@ class InvalidRiskError(DomainError):
     """Risk parameter is outside the allowed range."""
 
 
+class RobotNotWiredError(DomainError):
+    """Robot has no execution adapter yet. Fail closed instead of running another robot."""
+
+
 class LiveTradingDisabledError(RuntimeError):
     """Live orders are blocked until the user explicitly enables a live adapter."""
 

@@ -18,7 +18,7 @@ from nautilus_lab.application.param_grid import iter_param_grid
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.score import in_sample_score
 from nautilus_lab.domain.align import split_aligned_by_window
-from nautilus_lab.domain.regime import RobotName
+from nautilus_lab.domain.regime import RobotName, require_backtest_support
 from nautilus_lab.domain.walk_forward import (
     WalkForwardWindow,
     anchored_window,
@@ -35,6 +35,7 @@ class RunWalkForward:
 
     def execute(self, request: WalkForwardRequest) -> WalkForwardReport:
         require_simulated_mode(request.backtest.mode)
+        require_backtest_support(request.backtest.robot)
         embargo = request.embargo_bars or request.backtest.embargo_bars
         if request.backtest.robot is RobotName.PAIRS:
             return self._execute_pairs(request, embargo)

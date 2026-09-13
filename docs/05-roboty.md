@@ -11,30 +11,37 @@
 | `regime` | `RegimeRouter` | ✅ так | Класифікує режим і торгує однією з трьох підстратегій |
 | `ema` | `EmaCrossover` | ✅ так | Перетин EMA, завжди в ринку |
 | `pairs` | `PairsTrading` + `SpreadRobot` | ✅ так (дві ноги) | Статистичний арбітраж ETH/BTC |
-| `funding` | `FundingCashAndCarry` | ❌ ні | **Запуститься робот `regime`** (мовчазна заміна) |
-| `ml_obi` | `MlObiStrategy` | ❌ ні | **Запуститься робот `regime`** |
-| `glft` | `GlftMarketMaker` | ❌ ні | **Запуститься робот `regime`** |
-| `tri_scan` | `find_negative_cycles` | ❌ ні | **Запуститься робот `regime`** |
+| `funding` | `FundingCashAndCarry` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
+| `ml_obi` | `MlObiStrategy` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
+| `glft` | `GlftMarketMaker` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
+| `tri_scan` | `find_negative_cycles` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 
-Причина: у `infrastructure/nautilus/signal_strategy.py::_build_robot()` є лише дві гілки — `EMA` і «все інше → `RegimeRouter`».
-А `application/param_grid.py` для будь-якого робота, крім `ema` та `pairs`, віддає сітку режимного робота.
+Перелік підключених роботів зберігається в одному місці — `domain/regime.py`:
 
-Перевірено на практиці — вивід для `ml_obi` та `funding` **побайтово однаковий** із виводом для `regime`:
+```python
+BACKTEST_WIRED_ROBOTS = frozenset({RobotName.REGIME, RobotName.EMA, RobotName.PAIRS})
+```
+
+Перевірка `require_backtest_support()` викликається на вході у `RunResearchBacktest.execute()`,
+`RunWalkForward.execute()` і додатково в адаптері `_build_robot()`. Тобто робот без адаптера
+**не може** бути запущений випадково — ні через CLI, ні програмно.
+
+Реальний вивід:
 
 ```
-$ uv run lab research --robot ml_obi --catalog catalog_ok | tail -2
-in-sample (selection only) fills=117 ending=109331.62479635
-out-of-sample (report this) fills=51 ending=100814.86162670     <-- це regime, не ml_obi
-
-$ uv run lab research --robot funding --catalog catalog_ok | tail -2
-in-sample (selection only) fills=117 ending=109331.62479635
-out-of-sample (report this) fills=51 ending=100814.86162670     <-- і тут regime
+$ uv run lab research --robot ml_obi --synthetic --bars 200
+robot 'ml_obi' has no backtest adapter yet; use one of: ema, pairs, regime. Its module is a domain building block only and is not wired to the engine.
+$ echo $?
+1
 ```
+
+> Історія: раніше `_build_robot()` мав лише дві гілки (`EMA` і «все інше → `RegimeRouter`»),
+> тому `--robot ml_obi` **тихо** запускав `regime` і давав правдоподібний, але неправдивий звіт.
+> Тепер це явна помилка.
 
 **Що робити:** якщо вам потрібен `funding`, `ml_obi` або `glft` у бектесті — його треба підключити
 (див. [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)), а поки що використовувати модулі
 напряму з коду (див. [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md)).
-Найближчим часом не вірте виводу з цими назвами роботів.
 
 ---
 

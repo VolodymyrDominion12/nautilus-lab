@@ -19,9 +19,18 @@ uv sync --extra dev           # базові залежності + тести, 
 
 Опційні extras (можна додати пізніше):
 
+| Extra | Що додає | Навіщо |
+|-------|----------|--------|
+| `dev` | pytest, ruff, mypy, pandas-stubs, pytest-cov | Тести й перевірка якості |
+| `ml` | LightGBM | `LightGBMDirectionClassifier` — ML-класифікатор напрямку за ознаками книги |
+| `research` | `arch`, `optuna`, `polars` | EGARCH-прогноз волатильності, байєсівська оптимізація параметрів (`--optuna`), Polars-мікроструктура |
+| `visualization` | `plotly`, `kaleido`, `simplejson` | HTML-тиршит (`--tearsheet`) |
+| `alerts` | `httpx` | Сповіщення в Telegram/Webhook (`--notify`) |
+
 ```bash
-uv sync --extra dev --extra ml         # LightGBM — для ML-класифікатора напрямку
-uv sync --extra dev --extra research   # arch — для EGARCH(1,1) прогнозу волатильності
+uv sync --extra dev                                     # мінімум для роботи й тестів
+uv sync --extra dev --extra ml --extra research          # + ML, Optuna, Polars, arch
+uv sync --extra dev --extra research --extra visualization --extra alerts   # повний стек
 ```
 
 > **Якщо `uv` не має доступу до свого кеша** (наприклад, у обмеженому середовищі),
@@ -135,6 +144,18 @@ uv run lab paper --bars 500
 | `EXCHANGE_API_KEY` | порожньо | **Не використовується.** Живий адаптер не підключений; ніщо в коді ці ключі не читає. |
 | `EXCHANGE_API_SECRET` | порожньо | Те саме. |
 
+### Сповіщення (необов'язково)
+
+| Змінна | За замовчуванням | Що робить |
+|--------|------------------|-----------|
+| `TELEGRAM_BOT_TOKEN` | порожньо | Токен бота Telegram для сповіщень (разом із `TELEGRAM_CHAT_ID`) |
+| `TELEGRAM_CHAT_ID` | порожньо | ID чату, куди надсилати повідомлення |
+| `ALERT_WEBHOOK_URL` | порожньо | URL вебхука (Slack/Discord/свій ендпоінт) |
+
+Сповіщення надсилаються лише з прапорцем `--notify` і лише після завершення прогону.
+Якщо змінні не задані — використовується «порожній» нотифікатор, який нічого не робить.
+Потрібен extra `alerts` (пакет `httpx`).
+
 > **Безпека.** Ніколи не тримайте в `.env` реальні ключі, якщо не плануєте писати живий адаптер
 > найближчим часом. `.env` уже в `.gitignore`, але ключі з нього варто видалити (а якщо вони
 > колись були справжні — перевипустити на біржі). Проєкт для research-режиму не потребує жодних ключів.
@@ -142,7 +163,7 @@ uv run lab paper --bars 500
 ## 4. Перевірка, що все працює
 
 ```bash
-uv run pytest                       # 105 тестів, включно з локальним рушієм (без мережі)
+uv run pytest                       # 128 тестів, включно з локальним рушієм (без мережі)
 uv run ruff check --fix && uv run ruff format   # стиль і форматування
 uv run mypy src tests               # сувора типізація (strict = true)
 ```

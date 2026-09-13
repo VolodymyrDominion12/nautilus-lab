@@ -123,10 +123,15 @@ DONCHIAN_PERIOD ∈ {10, 20, 40}  ×  BB_K ∈ {2, 2.5}
 `ER_*` і `TREND_EMA_PERIOD` **не** оптимізуються — вони фіксовані з `.env`. Якщо хочете їх підбирати,
 розширте сітку (див. [07](07-yak-stvoryty-strategiyu.md)) і пам'ятайте про ризик перенавчання.
 
+**Альтернатива — `--optuna`.** Тоді замість цих 6 комбінацій працює Optuna TPE зі своїм простором пошуку:
+`donchian ∈ [10, 50]` крок 5, `bb_period ∈ [10, 50]` крок 5, `bb_k ∈ [1.5, 3.0]`,
+`enter_trend_er ∈ [0.20, 0.45]`, `exit_trend_er ∈ [0.10, 0.25]`. Реальний прогін із `--trials 5` обрав
+`donchian=15, bb_k=3.0` (IS 107 715.76 → OOS 100 901.95). Пам'ятайте: більше trials — вищий ризик перенавчання.
+
 ### 1.6. Реальний результат (ETH/USDT 1h, 2025-01-01 … 2025-08-01)
 
 ```
-tried=6 selected=donchian=10 bb_k=2.5
+walk-forward (grid): ... tried=6 selected=donchian=10 bb_k=2.5 ...
 IS  fills=117 ending=109331.62   (+9.3%)
 OOS fills=51  ending=100814.86   (+0.8%)      <-- перевага в межах шуму
 ```
@@ -171,7 +176,7 @@ EMA сідується простим середнім перших `period` ц�
 **Реальний результат (ті самі дані):**
 
 ```
-tried=4 selected=fast_ema=5 slow_ema=20
+walk-forward (grid): ... tried=4 selected=fast_ema=5 slow_ema=20 ...
 IS  fills=66  ending=107207.70   (+7.2%)
 OOS fills=103 ending=97139.25    (−2.9%)      <-- класичне перенавчання
 ```
@@ -263,11 +268,13 @@ Time stop — прямо з MFT-документа (3.3): якщо спред н
 | `adf_pvalue_max` | `PairsParams` | 0.05 | Максимальний p-value ADF |
 
 Сітка підбору — **3** значення `Z_ENTRY ∈ {1.5, 2, 2.5}`. `z_exit`, `lookback` і ворота фіксовані.
+З `--optuna` простір ширший: `z_entry ∈ [1.2, 3.0]` крок 0.2 і `z_exit ∈ [0.1, 1.0]` крок 0.1
+(тобто оптимізується і поріг виходу).
 
 ### 3.7. Реальний результат
 
 ```
-tried=3 selected=z_entry=1.5
+walk-forward (grid): ... tried=3 selected=z_entry=1.5 ...
 IS  fills=0 ending=100000.00
 OOS fills=0 ending=100000.00        <-- робот не торгував
 ```

@@ -96,6 +96,7 @@
 | `run_paper.py` | `RunPaperResearch` | Лог гіпотетичних ордерів (без рушія) |
 | `train_classifier.py` | `PurgedFold`, `purged_k_fold()`, `label_direction()` | Purged K-fold із embargo і розмітка напрямку |
 | `scan_triangular.py` | `scan_triangular_opportunities()` | Обгортка над пошуком циклів (fee на кожне ребро) |
+| `optuna_optimizer.py` | `OptunaParamOptimizer` | Байєсівська оптимізація (TPE) на in-sample: `optimize(request, run_is)` → `(params, report, trials)` |
 
 ---
 
@@ -109,6 +110,8 @@
 | `binance_funding.py` | `BinancePublicFunding` | Історія ставок фінансування (fapi) |
 | `lightgbm_classifier.py` | `HeuristicDirectionClassifier`, `LightGBMDirectionClassifier` | Rule-based fallback і опційний LightGBM |
 | `egarch_forecast.py` | `egarch_forecast_volatility()` | EGARCH(1,1) через `arch`; `None`, якщо недоступно |
+| `alerts.py` | `AlertNotifier`, `NullAlertNotifier`, `TelegramAlertNotifier`, `WebhookAlertNotifier`, `CompositeAlertNotifier`, `build_notifier()` | Сповіщення про завершення прогону; `httpx`, fail-safe |
+| `orderbook_microstructure.py` | `compute_order_book_imbalance()`, `compute_micro_price()`, `compute_microstructure_dataframe()` | Мікроструктура на float/Polars (векторні обчислення), окремо від доменної версії на `Decimal` |
 | `paper_trading.py` | `PaperOrderLog`, `PaperTradingLogger` | Журнал гіпотетичних ордерів |
 | `nautilus/parquet_catalog.py` | `NautilusParquetCatalog` | `write()`, `load()`; валідація кожного бару |
 | `nautilus/bar_feed.py` | `ResearchBarFeed` | Каталог або синтетика; `load()`, `load_multi()`; стрес-вікна; inner-join |
@@ -152,12 +155,16 @@
 | `unit/test_run_walk_forward.py` | Вибір параметрів на IS, звіт на OOS, embargo |
 | `unit/test_synthetic_bars.py` | Детермінованість, валідність, структура режимів |
 | `unit/test_walk_forward.py` | Вікна, нарізка, overlap-помилки |
+| `unit/test_optuna_optimizer.py` | Оптимізатор Optuna: кількість trials, вибір параметрів для кожного робота |
+| `unit/test_alerts.py` | Нотифікатори: успіх, HTTP-помилка, виняток, композиція (з моками `httpx`) |
+| `unit/test_orderbook_microstructure.py` | OBI (скаляр і список рівнів), micro-price, Polars-трансформація |
 | `integration/test_research_backtest.py` | Реальний рушій Nautilus: синтетичний прогін, roundtrip каталогу, pairs, порожній каталог → fail closed |
+| `integration/test_tearsheet_generation.py` | Генерація HTML-тиршита: файл створюється, непорожній, шлях повертається у звіті |
 
 Запуск:
 
 ```bash
-uv run pytest                                      # усі 105 тестів
+uv run pytest                                      # усі 128 тестів
 uv run pytest tests/unit -q                        # лише швидкі
 uv run pytest tests/integration -q                 # лише рушій (локально, без мережі)
 uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%)
@@ -172,7 +179,7 @@ uv run pytest --cov --cov-report=term-missing      # з покриттям (по
 | `README.md` | Короткий вступ і швидкий старт |
 | `Стратегії MFT Криптоторгівлі 2026.md` | Вихідний дослідницький документ: ідеї, математика, інфраструктура, податки |
 | `docs/` | Ця документація |
-| `pyproject.toml` | Залежності, extras (`dev`, `ml`, `research`), налаштування ruff/mypy/pytest/coverage |
+| `pyproject.toml` | Залежності, extras (`dev`, `ml`, `research`, `visualization`, `alerts`), налаштування ruff/mypy/pytest/coverage |
 | `.env.example` | Шаблон усіх змінних з коментарями |
 | `.env` | Ваші локальні налаштування (у `.gitignore`) |
 | `uv.lock` | Зафіксовані версії залежностей |
@@ -190,6 +197,8 @@ uv run pytest --cov --cov-report=term-missing      # з покриттям (по
 | Нову команду CLI | `interfaces/cli.py` + `composition.py` | Точка входу і збірка залежностей |
 | Нову метрику звіту | `domain/metrics.py` | Одна формула — одне місце |
 | Новий запобіжник ризику | `application/risk.py::evaluate_entry` + `domain/risk.py::RiskLimits` | Уся політика ризику в одному місці |
+| Сповіщення про подію | `infrastructure/alerts.py` (новий нотифікатор) + `composition.notifier()` | Один протокол `notify(message, level)` для всіх каналів |
+| Новий спосіб підбору параметрів | `application/` (поряд із `param_grid.py` та `optuna_optimizer.py`) | `RunWalkForward` викликає їх через єдиний інтерфейс `run_is` |
 
 ## Куди йти далі
 

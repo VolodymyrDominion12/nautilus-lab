@@ -115,8 +115,10 @@ infrastructure/nautilus/bar_feed.py: ResearchBarFeed.load() / load_multi()
 domain/walk_forward.py: anchored_window() + split_by_window()
   │  ділить історію: [IS ... embargo ... OOS]
   ▼
-grid search: application/param_grid.py → iter_param_grid()
-  │  для кожної комбінації → apply_selected() → engine.run(candidate, IS-бари)
+вибір параметрів (одне з двох):
+  │  A) сітка: application/param_grid.py → iter_param_grid()
+  │  B) байєсівський пошук: application/optuna_optimizer.py (прапорець --optuna)
+  │  для кожного кандидата → apply_selected() → engine.run(candidate, IS-бари)
   │  оцінка: application/score.py → in_sample_score() = ending_balance (вищий = кращий)
   ▼
 infrastructure/nautilus/backtest_runner.py: NautilusResearchBacktest.run()
@@ -172,6 +174,7 @@ BacktestReport  →  друк у консоль
 | `run_paper.py` | Прогін у «паперовому» режимі: лог гіпотетичних ордерів |
 | `train_classifier.py` | Purged K-fold із embargo + розмітка напрямку (`up`/`down`/`flat`) |
 | `scan_triangular.py` | Сканер трикутних циклів (без виконання) |
+| `optuna_optimizer.py` | `OptunaParamOptimizer` — байєсівський (TPE) підбір параметрів на in-sample замість сітки |
 
 ### `infrastructure/` — адаптери
 
@@ -183,6 +186,8 @@ BacktestReport  →  друк у консоль
 | `binance_funding.py` | Публічна історія ставок фінансування (fapi) |
 | `lightgbm_classifier.py` | `LightGBMDirectionClassifier` (опційно) + `HeuristicDirectionClassifier` (fallback) |
 | `egarch_forecast.py` | EGARCH(1,1) прогноз волатильності через `arch` (опційно) |
+| `alerts.py` | `AlertNotifier`, `NullAlertNotifier`, `TelegramAlertNotifier`, `WebhookAlertNotifier`, `CompositeAlertNotifier`, `build_notifier()` — сповіщення про завершення прогонів |
+| `orderbook_microstructure.py` | Мікроструктура на Polars: `compute_order_book_imbalance()`, `compute_micro_price()`, `compute_microstructure_dataframe()` |
 | `paper_trading.py` | `PaperTradingLogger` — журнал гіпотетичних ордерів |
 | `nautilus/parquet_catalog.py` | Обгортка над `ParquetDataCatalog`: `write()`, `load()` |
 | `nautilus/bar_feed.py` | `ResearchBarFeed`: каталог або синтетика, стрес-вікна, мульти-серії |
@@ -199,7 +204,7 @@ BacktestReport  →  друк у консоль
 | Модуль | Роль |
 |--------|------|
 | `cli.py` | argparse-команди `ingest`, `research`, `paper`, `scan`, `live`; друк звітів |
-| `composition.py` | Збірка залежностей: `settings()`, `catalog()`, `*_use_case()`, `*_request()` |
+| `composition.py` | Збірка залежностей: `settings()`, `catalog()`, `notifier()`, `*_use_case()`, `*_request()` |
 
 ## 5. Чому саме так (три рішення, які варто розуміти)
 

@@ -475,7 +475,96 @@ print("токсичних кошиків:", toxic_hours)
 токсичних кошиків: 3041
 ```
 
-## 14. Швидка довідка «що де лежить»
+## 14. Polars-мікроструктура: обчислення на даних книги
+
+Окремий, «швидкий» набір функцій у `infrastructure/orderbook_microstructure.py`.
+Він працює на `float` і Polars DataFrame — на відміну від доменного `domain/microstructure.py`,
+який тримається `Decimal` і приймає `OrderBookSnapshot`. Призначення різне:
+домен — для сигналів у бектесті; Polars-версія — для масової обробки історичних знімків книги
+(датасети для ML, дослідницькі розрахунки).
+
+```python
+import polars as pl
+
+from nautilus_lab.infrastructure.orderbook_microstructure import (
+    compute_micro_price,
+    compute_microstructure_dataframe,
+    compute_order_book_imbalance,
+)
+
+# 1. OBI: скаляри (один рівень) або списки рівнів
+print("OBI 1 рівень:", compute_order_book_imbalance(20.0, 5.0))
+print("OBI 2 рівні:", compute_order_book_imbalance([10.0, 5.0], [5.0, 5.0]))
+
+# 2. Micro-price: ціна, зважена на «чужий» обсяг
+print("micro-price:", compute_micro_price(3500.0, 30.0, 3502.0, 10.0))
+
+# 3. Пакетна обробка знімків книги
+book = pl.DataFrame({
+    "bid_price": [3500.0, 3500.0, 3500.0],
+    "bid_volume": [10.0, 4.0, 2.0],
+    "ask_price": [3501.0, 3501.0, 3501.0],
+    "ask_volume": [6.0, 9.0, 1.0],
+})
+print(compute_microstructure_dataframe(book).select("spread", "spread_bps", "obi", "micro_price"))
+```
+
+**Вивід:**
+
+```
+OBI 1 рівень: 0.6
+OBI 2 рівні: 0.2
+micro-price: 3501.5
+shape: (3, 5)
+┌────────┬────────────┬───────────┬────────────┬─────────────┐
+│ spread ┆ spread_bps ┆ obi       ┆ ...        ┆ micro_price │
+╞════════╪════════════╪═══════════╪════════════╪═════════════╡
+│ 1.0    ┆ 2.856735   ┆ 0.25      ┆ ...        ┆ 3500.625    │
+│ 1.0    ┆ 2.856735   ┆ -0.384615 ┆ ...        ┆ 3500.307692 │
+│ 1.0    ┆ 2.856735   ┆ 0.333333  ┆ ...        ┆ 3500.666667 │
+└────────┴────────────┴───────────┴────────────┴─────────────┘
+```
+
+`compute_microstructure_dataframe()` додає до таблиці колонки `spread`, `spread_bps`
+(спред у базисних пунктах), `mid_price`, `obi` і `micro_price`.
+**Micro-price** — «справедлива» ціна, де більший обсяг на біді тягне ціну до аска:
+формула `(bid·ask_vol + ask·bid_vol) / (bid_vol + ask_vol)`.
+
+Потрібен extra `research` (пакет `polars`). Це саме та ознака, якої найбільше бракує
+`MlObiStrategy` для повноцінного ML-конвеєра з розділу 2.1 MFT-документа.
+
+## 15. Сповіщення: Telegram і webhook
+
+```python
+from nautilus_lab.infrastructure.alerts import build_notifier
+
+notifier = build_notifier(
+    telegram_token="123456:ABC...",     # або None
+    telegram_chat_id="123456789",       # або None
+    webhook_url=None,                    # або https://hooks.slack.com/...
+)
+print(notifier.notify("backtest complete: OOS=100814.86", level="INFO"))
+```
+
+**Вивід** (із фальшивим токеном — мережа реально опитана, помилка оброблена безпечно):
+
+```
+Telegram notification failed with HTTP 404: {"ok":false,"error_code":404,"description":"Not Found"}
+False
+```
+
+Важливі властивості:
+- `build_notifier()` без аргументів повертає `NullAlertNotifier` — заглушку, яка завжди повертає `True`
+  і нічого не надсилає. Тому код можна викликати без налаштувань;
+- **жоден виняток не виходить назовні**: будь-яка помилка мережі/HTTP ловиться і повертає `False`
+  з попередженням у лог. Дослідження не зупиняється;
+- кілька каналів одночасно об'єднуються в `CompositeAlertNotifier` (усі отримають повідомлення,
+  результат — «усі успішні»);
+- у CLI використовується прапорцем `--notify` (див. [04](04-tsykl-doslidzhennya.md#сповіщення-про-завершення---notify)).
+
+Потрібен extra `alerts` (пакет `httpx`).
+
+## 16. Швидка довідка «що де лежить»
 
 | Потрібно | Імпорт |
 |----------|--------|
@@ -495,9 +584,12 @@ print("токсичних кошиків:", toxic_hours)
 | Purged K-fold | `from nautilus_lab.application.train_classifier import purged_k_fold, label_direction` |
 | Коінтеграція / О-У | `from nautilus_lab.domain.pairs.cointegration import fit_cointegration` та `from nautilus_lab.domain.pairs.ou import fit_ou_half_life, z_score` |
 | Каталог | `from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog` |
+| Polars-мікроструктура | `from nautilus_lab.infrastructure.orderbook_microstructure import compute_order_book_imbalance, compute_micro_price, compute_microstructure_dataframe` |
+| Сповіщення | `from nautilus_lab.infrastructure.alerts import build_notifier` |
+| Байєсівська оптимізація | `from nautilus_lab.application.optuna_optimizer import OptunaParamOptimizer` |
 | Синтетика | `from nautilus_lab.infrastructure.nautilus.synthetic_bars import synthetic_ohlcv, synthetic_regime_ohlcv` |
 
-## 15. Куди йти далі
+## 17. Куди йти далі
 
 - Підключити будь-який з цих модулів до бектесту → [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)
 - Зрозуміти, чому модуль саме такий → [08-mft-2026-vidpovidnist.md](08-mft-2026-vidpovidnist.md)

@@ -134,7 +134,7 @@ uv run lab research --robot ema
 Реальний вивід (ETH/USDT, 1h, 2025-01-01 … 2025-08-01, 5088 барів, ризик 0.5%/угода, комісія 0.0002/0.0005):
 
 ```
-walk-forward: parameters selected on in-sample only; report out-of-sample. tried=4
+walk-forward (grid): parameters selected on in-sample only; report out-of-sample. tried=4
   selected=fast_ema=5 slow_ema=20 donchian=20 bb_k=2 z_entry=2
   IS=[2025-01-01T00:59:59.999, 2025-05-29T09:59:59.999)
   OOS=[2025-05-29T19:59:59.999, 2025-07-31T23:59:59.999+1µs)
@@ -156,7 +156,7 @@ uv run lab research --robot pairs
 Реальний вивід для `regime` на тих самих даних:
 
 ```
-walk-forward: parameters selected on in-sample only; report out-of-sample. tried=6
+walk-forward (grid): parameters selected on in-sample only; report out-of-sample. tried=6
   selected=fast_ema=10 slow_ema=20 donchian=10 bb_k=2.5 z_entry=2
   IS=[2025-01-01T00:59:59.999, 2025-05-29T09:59:59.999)
   OOS=[2025-05-29T19:59:59.999, 2025-07-31T23:59:59.999+1µs)
@@ -179,7 +179,7 @@ out-of-sample (report this) fills=51 ending=100814.86162670
 Аналогічно для `pairs`:
 
 ```
-walk-forward: ... tried=3 selected=z_entry=1.5 ...
+walk-forward (grid): ... tried=3 selected=z_entry=1.5 ...
 in-sample (selection only) fills=0 ending=100000.00000000
 out-of-sample (report this) fills=0 ending=100000.00000000
 ```
@@ -193,7 +193,7 @@ out-of-sample (report this) fills=0 ending=100000.00000000
 Розберемо рядок за рядком.
 
 ```
-walk-forward: parameters selected on in-sample only; report out-of-sample. tried=6 selected=donchian=10 bb_k=2.5 ...
+walk-forward (grid): parameters selected on in-sample only; report out-of-sample. tried=6 selected=donchian=10 bb_k=2.5 ...
 ```
 - `tried=6` — скільки комбінацій перевірено. Що більше спроб, то вища ймовірність випадкової «перемоги»
   на IS (проблема PBO з MFT-документа, розділ 2.2). Сітка тут навмисно мала.
@@ -329,6 +329,82 @@ uv run lab research --bar-vpin
   IS (підбір) → validation (вибір конфігурації) → OOS (фінальний звіт, один раз). У CLI це робиться
   двома послідовними прогонами з різними явними вікнами.
 
+### Альтернатива сітці: байєсівська оптимізація (`--optuna`)
+
+Замість перебору наперед заданої сітки можна попросити Optuna (TPE-семплер) шукати параметри
+розумніше — 20 спроб за замовчуванням замість 6:
+
+```bash
+uv run lab research --optuna --trials 30
+uv run lab research --optuna --trials 5 --catalog catalog_ok     # швидкий тест
+```
+
+Реальний вивід (той самий каталог, 5 trials):
+
+```
+walk-forward (optuna): parameters selected on in-sample only; report out-of-sample. tried=5
+  selected=fast_ema=10 slow_ema=20 donchian=15 bb_k=3.0 z_entry=2 IS=[...] OOS=[...]
+in-sample (selection only) fills=65 ending=107715.76289428
+out-of-sample (report this) fills=36 ending=100901.95271967
+```
+
+Простори пошуку Optuna ширші за сітку: для `regime` — `donchian ∈ [10, 50]` крок 5, `bb_period ∈ [10, 50]` крок 5,
+`bb_k ∈ [1.5, 3.0]`, `enter_trend_er ∈ [0.20, 0.45]`, `exit_trend_er ∈ [0.10, 0.25]`;
+для `ema` — `fast ∈ [5, 20]`, `slow ∈ [fast+5, 60]`; для `pairs` — `z_entry ∈ [1.2, 3.0]`, `z_exit ∈ [0.1, 1.0]`.
+
+> ⚠️ **Ціна розумнішого пошуку — вищий ризик перенавчання.** 30 trials замість 6 — це в 5 разів
+> більше шансів випадково знайти «щасливий» набір на in-sample (та сама проблема PBO з MFT-документа, 2.2).
+> Optuna — інструмент для великої історії та малої кількості параметрів, а не спосіб «вичавити» прибуток.
+> Завжди порівнюйте OOS від `--optuna` з OOS від сітки і з baseline.
+
+### Звіт для очей: HTML-тиршит (`--tearsheet`)
+
+```bash
+uv run lab research --tearsheet reports/tearsheet.html
+uv run lab research --synthetic --bars 800 --tearsheet reports/synthetic.html
+```
+
+Створює інтерактивний HTML-звіт засобами Nautilus (`create_tearsheet`): крива капіталу, просадки,
+розподіли, таблиця угод. У консолі з'являється рядок:
+
+```
+tearsheet_saved=reports/tearsheet.html
+```
+
+Практичні деталі:
+- файл важкий (реальний приклад: **4.3 МБ** для 800 синтетичних барів) — додавайте `reports/` у `.gitignore` (уже додано);
+- потрібен extra `visualization` (`plotly`, `kaleido`, `simplejson`); без `plotly` тиршит не створюється,
+  але прогін завершується успішно (у лог іде попередження);
+- у walk-forward тиршит зберігається для **out-of-sample** прогону — тобто того, який і є звітом;
+- шлях створюється разом із теками (`reports/2025/eth.html` теж працює).
+
+### Сповіщення про завершення (`--notify`)
+
+```dotenv
+TELEGRAM_BOT_TOKEN=123456:ABC...
+TELEGRAM_CHAT_ID=123456789
+# або
+ALERT_WEBHOOK_URL=https://hooks.slack.com/services/...
+```
+
+```bash
+uv run lab research --optuna --trials 20 --notify
+```
+
+Після прогону надсилається коротке повідомлення з `IS=`/`OOS=` (для walk-forward) або
+`fills=`/`ending=` (для повного прогону). Потрібен extra `alerts` (`httpx`).
+
+Важливо: **збій сповіщення не зупиняє дослідження** — команда завершується з кодом 0,
+а в лог іде попередження. Реальний приклад із неправильним токеном:
+
+```
+Telegram notification failed with HTTP 404: {"ok":false,"error_code":404,"description":"Not Found"}
+...
+(прогін успішно завершено, exit=0)
+```
+
+Це зручно для довгих прогонів на сервері: запустили вночі — отримали повідомлення вранці.
+
 ## Крок 9. Paper-режим і фінальний чекліст
 
 ```bash
@@ -362,6 +438,7 @@ paper_orders=289 (no exchange submission)
 - [ ] `fees_paid` не з'їдає весь прибуток; `turnover` не абсурдний.
 - [ ] Результат OOS не «ідеально рівний» — ідеальна крива майже завжди означає підгляд у майбутнє.
 - [ ] Результат відтворюваний: той самий прогін дає ті самі числа (`seed=42` для проковзування фіксований).
+- [ ] Якщо використовували `--optuna` — кількість trials не «роздута» (10–30 для маленької сітки параметрів).
 
 ## Крок 10. Журнал досліджень
 

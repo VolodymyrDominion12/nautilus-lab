@@ -86,12 +86,22 @@ usage: lab research [-h] [--bars BARS]
 | `--slice` | — | Стрес-період: `covid2020`, `ftx2022`, `etf2024` |
 | `--embargo-bars` | `EMBARGO_BARS` (`10`) | Розрив між IS і OOS |
 | `--bar-vpin` | вимкнено | Увімкнути VPIN-фільтр режиму (робот `regime`) |
+| `--tearsheet PATH` | — | Зберегти інтерактивний HTML-звіт (тиршит) за вказаним шляхом |
+| `--optuna` | вимкнено | Замінити перебір сітки на байєсівську оптимізацію (Optuna TPE) на in-sample |
+| `--trials N` | `20` | Кількість спроб Optuna (працює лише з `--optuna`) |
+| `--notify` | вимкнено | Надіслати сповіщення про завершення (Telegram/Webhook) |
 
 Логіка вибору режиму:
 
-1. `--synthetic` → синтетичний прогін (повний, не walk-forward).
-2. інакше, якщо `--full-sample` → один прогін по всьому каталогу.
-3. інакше → walk-forward (типово).
+1. `--synthetic` без `--walk-forward` → синтетичний повний прогін.
+2. `--synthetic --walk-forward` (або `--synthetic --optuna`) → синтетичний **walk-forward** (1-хвилинні бари).
+3. `--full-sample` → один прогін по всьому каталогу (лише in-sample).
+4. інакше → walk-forward по каталогу (типово).
+
+Спосіб підбору параметрів:
+- типово — **сітка** (`tried=6` для `regime`, `4` для `ema`, `3` для `pairs`);
+- з `--optuna` — **байєсівська оптимізація** Optuna TPE, `tried=` дорівнює кількості trials.
+  У рядку звіту це видно: `walk-forward (grid):` або `walk-forward (optuna):`.
 
 Приклади:
 
@@ -106,12 +116,16 @@ uv run lab research --bar-vpin                           # VPIN-фільтр
 uv run lab research --slice etf2024 --catalog catalog_long
 uv run lab research --is-start 2025-01-01 --is-end 2025-05-01 \
                     --oos-start 2025-05-15 --oos-end 2025-07-01 --catalog catalog_ok
+uv run lab research --optuna --trials 30                   # байєсівський підбір замість сітки
+uv run lab research --tearsheet reports/tearsheet.html     # зберегти HTML-звіт
+uv run lab research --optuna --trials 20 --notify          # + сповіщення про завершення
+uv run lab research --synthetic --bars 1200 --walk-forward # walk-forward на синтетиці
 ```
 
 Вивід walk-forward:
 
 ```
-walk-forward: parameters selected on in-sample only; report out-of-sample. tried=6 selected=... IS=[...] OOS=[...]
+walk-forward (grid): parameters selected on in-sample only; report out-of-sample. tried=6 selected=... IS=[...] OOS=[...]
 in-sample (selection only) fills=117 ending=109331.62479635
 out-of-sample (report this) fills=51 ending=100814.86162670
 ```
@@ -215,6 +229,65 @@ $ echo $?
 який може надіслати ордер на біржу. Прапорець `LIVE_ENABLED=true` у `.env` нічого не змінює.
 
 ---
+
+## Додаткові інструменти дослідника
+
+### `--tearsheet PATH` — інтерактивний HTML-звіт
+
+```bash
+uv run lab research --tearsheet reports/tearsheet.html
+uv run lab research --synthetic --bars 800 --tearsheet reports/synthetic.html
+```
+
+Створює HTML-тиршит (крива капіталу, просадки, угоди) і друкує `tearsheet_saved=<шлях>`.
+Потрібен extra `visualization`. Якщо `plotly` немає — прогін не падає, лише попередження в лог.
+У walk-forward зберігається тиршит **out-of-sample** прогону.
+
+### `--optuna [--trials N]` — байєсівська оптимізація параметрів
+
+```bash
+uv run lab research --optuna --trials 30
+```
+
+Замість сітки (`tried=6`) працює Optuna TPE з кількістю спроб `--trials` (типово 20).
+У рядку звіту видно `walk-forward (optuna):`. Потрібен extra `research` (пакет `optuna`);
+без нього — помилка `optuna is not installed; run: uv sync --extra research`.
+
+⚠️ Більше спроб = вищий ризик перенавчання. Порівнюйте результат зі звичайною сіткою.
+
+### `--notify` — сповіщення про завершення
+
+```dotenv
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+ALERT_WEBHOOK_URL=https://...
+```
+
+```bash
+uv run lab research --optuna --trials 20 --notify
+```
+
+Потрібен extra `alerts` (`httpx`). Збій надсилання не впливає на код виходу (завжди 0) —
+у лог іде попередження. Без заданих змінних працює «порожній» нотифікатор.
+
+### Walk-forward на синтетиці
+
+```bash
+uv run lab research --synthetic --bars 1200 --walk-forward
+```
+
+Раніше `--synthetic` завжди давав повний прогін; тепер у комбінації з `--walk-forward`
+(або `--optuna`) виконується справжній walk-forward на 1-хвилинних синтетичних барах.
+Реальний вивід для 1200 барів:
+
+```
+walk-forward (grid): ... tried=6 selected=donchian=20 bb_k=2.5 ...
+in-sample (selection only) fills=17 ending=272625.25800441
+out-of-sample (report this) fills=2 ending=99900.20080881
+```
+
+Зверніть увагу на розрив: IS +172%, OOS −0.1%. Це не стратегія, це демонстрація того,
+як виглядає перенавчання на синтетиці.
 
 ## Змінні середовища: швидка шпаргалка
 

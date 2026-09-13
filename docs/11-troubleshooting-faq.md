@@ -185,6 +185,52 @@ uv sync --extra dev --extra ml
 
 ---
 
+### `optuna is not installed; run: uv sync --extra research`
+
+Прапорець `--optuna` потребує пакета `optuna`:
+
+```bash
+uv sync --extra dev --extra research
+```
+
+Перевірка: `uv run python -c "import optuna; print(optuna.__version__)"`.
+
+---
+
+### Тиршит не створюється (`--tearsheet`), але прогін завершується успішно
+
+Дві можливі причини, обидві видно в логі як попередження:
+
+| Повідомлення | Причина | Лікування |
+|--------------|---------|-----------|
+| `Cannot generate tearsheet: plotly is missing.` | Не встановлено extra `visualization` | `uv sync --extra dev --extra visualization` |
+| `Failed to generate tearsheet: <деталі>` | Помилка всередині Nautilus (наприклад, немає даних для графіків) | Подивіться деталі; тиршит не є критичним для дослідження |
+
+Генерація тиршита **ніколи не ламає прогін**: помилка ловиться, `tearsheet_path` у звіті лишається `None`,
+і рядок `tearsheet_saved=` не друкується. Також пам'ятайте: файл важкий (реальний приклад — 4.3 МБ),
+і `.gitignore` уже містить `reports/` та `*.html`.
+
+---
+
+### `--notify` не надсилає повідомлення (і команда все одно завершується з кодом 0)
+
+Перевірте:
+
+1. Змінні задані саме там, де їх бачить процес: `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`
+   (потрібні **обидві**) або `ALERT_WEBHOOK_URL`.
+2. Встановлено extra `alerts` (пакет `httpx`).
+3. У лозі немає рядка на кшталт `Telegram notification failed with HTTP 404`.
+   Реальний випадок із неправильним токеном:
+
+```
+Telegram notification failed with HTTP 404: {"ok":false,"error_code":404,"description":"Not Found"}
+```
+
+Це очікувана поведінка: **збій сповіщення не є помилкою дослідження**, тому код виходу лишається `0`.
+Якщо потрібно, щоб відсутність сповіщення «валила» процес, перевіряйте це у своєму скрипті-обгортці.
+
+---
+
 ### `Pandas4Warning: Timestamp.utcnow is deprecated` під час тестів
 
 Це попередження зсередини NautilusTrader, не з нашого коду. Ігноруйте.
@@ -338,7 +384,10 @@ uv run lab research --catalog catalog_5m
 | `--synthetic --bars 2000` (ema) | ~1 с |
 | Walk-forward, 5088 барів, сітка 6 | ~8.5 с |
 | Walk-forward, 5088 барів, сітка 4 (`ema`) | ~5 с |
+| Walk-forward, 5088 барів, `--optuna --trials 5` | ~9 с |
+| `--synthetic --bars 800 --tearsheet …` | ~2 с + генерація HTML (файл ~4 МБ) |
 | `ingest` 7 місяців по 1h, два символи | ~6.5 с |
+| `pytest` (128 тестів, разом із рушієм) | ~4 с |
 
 Час зростає лінійно з кількістю кандидатів у сітці (кожен кандидат — окремий прогін рушія на IS).
 
@@ -366,6 +415,24 @@ catalog/data/currency_pair/<INSTRUMENT>/<...>.parquet                      # о�
 `fees_paid`, `turnover`, `sharpe_like`) показуються у `--full-sample` і `--synthetic`.
 Хочете метрики для конкретної конфігурації — прогоніть її окремо з `--full-sample`
 на тому вікні, яке вас цікавить.
+
+### Чи можна зробити walk-forward на синтетичних даних?
+
+Так — додайте `--walk-forward` (або `--optuna`):
+
+```bash
+uv run lab research --synthetic --bars 1200 --walk-forward
+```
+
+Синтетика використовує **1-хвилинні** бари починаючи з 2024-01-01, тож 1200 барів — це лише 20 годин.
+Приклад виводу показує, наскільки оманливим може бути такий результат:
+
+```
+in-sample (selection only) fills=17 ending=272625.25800441     (+172%!)
+out-of-sample (report this) fills=2 ending=99900.20080881      (-0.1%)
+```
+
+Використовуйте це як перевірку механіки (чи працює розріз IS/OOS), а не як дослідження стратегії.
 
 ### Чи можна порівнювати `sharpe_like` з річним Sharpe?
 

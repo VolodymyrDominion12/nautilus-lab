@@ -34,7 +34,7 @@
 | [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md) | Покроковий рецепт створення нової стратегії + готовий приклад коду й тестів |
 | [08-mft-2026-vidpovidnist.md](08-mft-2026-vidpovidnist.md) | Мапа: розділ MFT-документа → модуль коду → статус (готово / частково / немає) |
 | [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md) | Робочі приклади коду для MFT-модулів, які не підключені до CLI |
-| [10-cli-dovidnyk.md](10-cli-dovidnyk.md) | Довідник CLI: усі команди, прапорці, коди виходу, змінні середовища |
+| [10-cli-dovidnyk.md](10-cli-dovidnyk.md) | Довідник CLI: усі команди, прапорці (зокрема `--optuna`, `--tearsheet`, `--notify`), коди виходу, змінні середовища |
 | [11-troubleshooting-faq.md](11-troubleshooting-faq.md) | Типові помилки та їх причини, часті питання |
 | [12-karta-fayliv.md](12-karta-fayliv.md) | Карта всіх модулів проєкту: файл → що робить → ключові функції |
 
@@ -43,6 +43,8 @@
 - **Завантаження даних** з публічного Binance REST (klines, без API-ключів) у Nautilus Parquet-каталог.
 - **Бектест** на реальному рушії NautilusTrader: комісії maker/taker, затримка 50 мс, імовірнісне проковзування.
 - **Walk-forward дослідження**: підбір параметрів на першій частині історії (in-sample) і звіт на тій, яку стратегія «не бачила» (out-of-sample), з розривом-embargo.
+- **Підбір параметрів двома способами**: невелика сітка (типово) або байєсівська оптимізація Optuna TPE (`--optuna --trials N`).
+- **Звітність і моніторинг**: інтерактивний HTML-тиршит Nautilus (`--tearsheet`) і сповіщення в Telegram/Webhook (`--notify`).
 - **Три роботи**: `regime` (тренд/флет з трьома підстратегіями), `ema` (перетин ковзних), `pairs` (статистичний арбітраж ETH/BTC).
 - **Ризик-шар**: розмір позиції від стопу, ATR-стопи, денний ліміт збитку, ліміт просадки, VaR-запобіжник, дробовий Келлі.
 - **MFT-модулі** зі «Стратегій MFT Криптоторгівлі 2026.md»: VPIN, процеси Хоукса, коінтеграція + O-U, GLFT-маркет-мейкінг, funding cash-and-carry, трикутний арбітраж Беллмана-Форда, HAR-RV, EGARCH, purged K-fold. Частина з них — готові будівельні блоки, які ще не підключені до CLI (див. [08](08-mft-2026-vidpovidnist.md)).
@@ -51,7 +53,7 @@
 ## Технічні факти одним рядком
 
 - Python ≥ 3.12, менеджер залежностей `uv`, залежності: `nautilus-trader`, `numpy`, `pandas`, `pydantic`, `pydantic-settings`.
-- Опційні extras: `ml` (LightGBM), `research` (arch — EGARCH).
+- Опційні extras: `ml` (LightGBM), `research` (arch, optuna, polars), `visualization` (plotly, kaleido), `alerts` (httpx).
 - Єдина точка входу: консольна команда `lab`.
 - Інструменти в симуляції: `ETH/USDT.SIM`, `BTC/USDT.SIM` (спот, венʼю `SIM`) і `ETHUSDT-PERP.SIM` (перпетуал).
 - Немає WebSocket, немає реального виконання ордерів, немає колокації — це дослідницька пісочниця, а не HFT-движок.

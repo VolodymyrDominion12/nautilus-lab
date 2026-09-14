@@ -91,7 +91,7 @@ usage: lab research [-h] [--bars BARS]
 | `--tearsheet PATH` | — | Зберегти інтерактивний HTML-звіт (тиршит) за вказаним шляхом |
 | `--optuna` | вимкнено | Замінити перебір сітки на байєсівську оптимізацію (Optuna TPE) на in-sample |
 | `--trials N` | `20` | Кількість спроб Optuna (працює лише з `--optuna`) |
-| `--folds N` | `1` | Кількість ковзних фолдів. `N >= 2` → **окремий walk-forward на кожен фолд** і звіт-агрегат out-of-sample замість однієї нарізки; `N < 2` — звичайний єдиний спліт |
+| `--folds N` | `1` | Кількість ковзних фолдів. `N >= 2` → **окремий walk-forward на кожен фолд** і звіт-агрегат out-of-sample замість однієї нарізки; `N == 1` — звичайний єдиний спліт; `N < 1` — помилка (код 1) |
 | `--notify` | вимкнено | Надіслати сповіщення про завершення (Telegram/Webhook) |
 
 Логіка вибору режиму:
@@ -142,14 +142,17 @@ out-of-sample (report this) fills=51 ending=100814.86162670
 
 ```
 multi-window walk-forward (grid): 4 rolling folds, parameters re-selected on each fold's own in-sample window; report the out-of-sample aggregate. windows=[..., ...]
-fold 0 OOS=[2025-11-22, 2026-02-04) fills=163 return=6.01% buy_hold=-17.49% selected=...
-fold 1 OOS=[2026-02-04, 2026-04-19) fills=69 return=-1.13% buy_hold=3.81% selected=...
-fold 2 OOS=[2026-04-19, 2026-07-02) fills=53 return=-6.23% buy_hold=-29.33% selected=...
-fold 3 OOS=[2026-07-02, 2026-09-14) fills=56 return=3.65% buy_hold=53.00% selected=...
+fold 0 OOS=[2025-11-22T13:59:59.999000+00:00, 2026-02-04T17:59:59.999000+00:00) fills=163 return=6.01% buy_hold=-17.49% selected=...
+fold 1 OOS=[2026-02-04T17:59:59.999000+00:00, 2026-04-19T19:59:59.999000+00:00) fills=69 return=-1.13% buy_hold=3.81% selected=...
+fold 2 OOS=[2026-04-19T19:59:59.999000+00:00, 2026-07-02T17:59:59.999000+00:00) fills=53 return=-6.23% buy_hold=-29.33% selected=...
+fold 3 OOS=[2026-07-02T17:59:59.999000+00:00, 2026-09-14T08:59:59.999001+00:00) fills=56 return=3.65% buy_hold=53.00% selected=...
 out-of-sample aggregate profitable=2/4 mean=0.58% median=1.26% worst=-6.23% best=6.01%
 baseline buy&hold mean=2.50% oos_fills=341
 folds=4 profitable=2/4 mean_oos=0.58% median_oos=1.26% worst=-6.23% best=6.01% mean_buy_hold=2.50% (does not beat buy&hold) oos_fills=341
 ```
+
+Межі вікон друкуються повними ISO-мітками, а не датами: на внутрішньоденних барах OOS-блок може
+тривати години, і дата без часу показала б той самий день для всіх фолдів.
 
 Вивід повного прогону / синтетики:
 

@@ -166,7 +166,7 @@
 Запуск:
 
 ```bash
-uv run pytest                                      # усі 164 тести
+uv run pytest                                      # усі 167 тестів
 uv run pytest tests/unit -q                        # лише швидкі
 uv run pytest tests/integration -q                 # лише рушій (локально, без мережі)
 uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%; поточне — 83.70%)

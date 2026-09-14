@@ -87,6 +87,7 @@ def research_request(
         bar_count=bar_count,
         starting_equity=cfg.starting_equity,
         risk=cfg.risk_limits(),
+        risk_overlay=cfg.risk_overlay(),
         robot=resolved_robot,
         fast_ema=cfg.fast_ema,
         slow_ema=cfg.slow_ema,
@@ -106,6 +107,10 @@ def research_request(
         use_bar_vpin=cfg.use_bar_vpin,
         vpin_bucket_volume=cfg.vpin_bucket_volume,
         vpin_toxic_threshold=cfg.vpin_toxic_threshold,
+        vpin_momentum_ema_period=cfg.vpin_momentum_ema_period,
+        vpin_momentum_atr_multiple=cfg.vpin_momentum_atr_multiple,
+        formulaic_model_path=cfg.formulaic_model_path,
+        formulaic_threshold=cfg.formulaic_threshold,
         tearsheet_path=tearsheet_path,
     )
 

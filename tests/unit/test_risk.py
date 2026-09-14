@@ -3,7 +3,13 @@ from decimal import Decimal
 import pytest
 
 from nautilus_lab.application.dtos import BacktestReport, BacktestRequest
-from nautilus_lab.application.risk import evaluate_entry, require_simulated_mode, size_position
+from nautilus_lab.application.risk import (
+    TradeStats,
+    evaluate_entry,
+    require_simulated_mode,
+    resolve_risk_fraction,
+    size_position,
+)
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import (
@@ -11,6 +17,7 @@ from nautilus_lab.domain.errors import (
     LiveTradingDisabledError,
 )
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
+from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.infrastructure.nautilus.synthetic_bars import synthetic_ohlcv
 
@@ -225,6 +232,37 @@ def test_research_use_case_delegates_to_port(limits: RiskLimits) -> None:
 
 def test_require_simulated_mode_allows_research() -> None:
     require_simulated_mode(TradingMode.RESEARCH)
+
+
+def test_resolve_risk_fraction_applies_vol_scaling_when_enabled(limits: RiskLimits) -> None:
+    overlay = RiskOverlay(use_vol_scaling=True, vol_scaling_target=Decimal("0.02"))
+    scaled = resolve_risk_fraction(
+        limits,
+        overlay,
+        forecast_vol=Decimal("0.04"),
+    )
+    assert scaled < limits.risk_per_trade
+
+
+def test_resolve_risk_fraction_kelly_requires_min_trades(limits: RiskLimits) -> None:
+    overlay = RiskOverlay(use_fractional_kelly=True, kelly_min_trades=30)
+    stats = TradeStats(wins=20, losses=5, gross_profit=Decimal("1000"), gross_loss=Decimal("200"))
+    unchanged = resolve_risk_fraction(limits, overlay, stats=stats)
+    assert unchanged == limits.risk_per_trade
+
+
+def test_evaluate_entry_trips_cvar_breaker(limits: RiskLimits) -> None:
+    overlay = RiskOverlay(use_cvar_breaker=True, max_cvar_99=Decimal("0.02"))
+    snapshot = AccountSnapshot(
+        equity=Decimal("99500"),
+        peak_equity=Decimal("100000"),
+        day_start_equity=Decimal("100000"),
+        open_positions=0,
+        recent_returns=tuple(Decimal(x) for x in ("-0.025", "-0.024", "-0.023", "0.01")),
+    )
+    decision = evaluate_entry(snapshot, limits, overlay)
+    assert decision.allowed is False
+    assert "CVaR" in decision.reason
 
 
 def test_research_use_case_rejects_short_history(limits: RiskLimits) -> None:

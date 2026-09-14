@@ -11,8 +11,9 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.strategy import Strategy
 
 from nautilus_lab.application.risk import (
-    effective_risk_fraction,
+    TradeStats,
     evaluate_entry,
+    resolve_risk_fraction,
     size_position,
     stop_distance,
 )
@@ -21,6 +22,7 @@ from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.pairs.pairs_trading import PairsTrading
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
+from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.signals import SignalSide
 
 
@@ -35,9 +37,17 @@ class SpreadRobotConfig(StrategyConfig, frozen=True):
     max_daily_loss: Decimal = Decimal("0.02")
     max_drawdown: Decimal = Decimal("0.06")
     max_open_positions: int = 2
+    kelly_fraction: Decimal = Decimal("0.25")
+    max_var_99: Decimal = Decimal("0.05")
     quote_currency: str = "USDT"
     qty_step_a: Decimal = Decimal("0.001")
     qty_step_b: Decimal = Decimal("0.00001")
+    use_vol_scaling: bool = False
+    vol_scaling_target: Decimal = Decimal("0.02")
+    use_fractional_kelly: bool = False
+    kelly_min_trades: int = 30
+    use_cvar_breaker: bool = False
+    max_cvar_99: Decimal = Decimal("0.05")
 
 
 class SpreadRobot(Strategy):  # type: ignore[misc]
@@ -56,6 +66,16 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             max_daily_loss=config.max_daily_loss,
             max_drawdown=config.max_drawdown,
             max_open_positions=config.max_open_positions,
+            kelly_fraction=config.kelly_fraction,
+            max_var_99=config.max_var_99,
+        )
+        self._overlay = RiskOverlay(
+            use_vol_scaling=config.use_vol_scaling,
+            vol_scaling_target=config.vol_scaling_target,
+            use_fractional_kelly=config.use_fractional_kelly,
+            kelly_min_trades=config.kelly_min_trades,
+            use_cvar_breaker=config.use_cvar_breaker,
+            max_cvar_99=config.max_cvar_99,
         )
         self._last_a: OhlcvBar | None = None
         self._last_b: OhlcvBar | None = None
@@ -66,6 +86,10 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         self._day: date | None = None
         self._equity_curve: list[Decimal] = []
         self._turnover: Decimal = Decimal("0")
+        self._returns: list[Decimal] = []
+        self._previous_equity: Decimal | None = None
+        self._entry_equity: Decimal | None = None
+        self._trade_stats = TradeStats()
         self._atr_a = AverageTrueRange(14)
         self._atr_b = AverageTrueRange(14)
 
@@ -97,11 +121,14 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         if equity is not None:
             self._update_equity_path(self._last_a.ts_utc, equity)
             self._equity_curve.append(equity)
+            if self._previous_equity is not None and self._previous_equity > 0:
+                self._returns.append((equity - self._previous_equity) / self._previous_equity)
+            self._previous_equity = equity
 
         if signal is None:
             return
         if signal.leg_a.side is SignalSide.FLAT:
-            self._flatten_both()
+            self._flatten_both(equity)
             return
 
         if equity is None:
@@ -112,14 +139,19 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             peak_equity=self._peak_equity or equity,
             day_start_equity=self._day_start_equity or equity,
             open_positions=self._open_legs(),
+            recent_returns=tuple(self._returns[-30:]),
         )
-        decision = evaluate_entry(snapshot, self._limits)
+        decision = evaluate_entry(snapshot, self._limits, self._overlay)
         if not decision.allowed:
             self.log.warning(f"Risk blocked spread entry: {decision.reason}")
             return
 
-        risk_fraction = effective_risk_fraction(self._limits)
-        self._flatten_both()
+        risk_fraction = resolve_risk_fraction(
+            self._limits,
+            self._overlay,
+            stats=self._trade_stats,
+        )
+        self._flatten_both(equity)
         self._submit_leg(
             self.config.leg_a_id,
             signal.leg_a.side,
@@ -138,9 +170,10 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             risk_fraction * signal.leg_b.qty_weight,
             self._atr_b.value,
         )
+        self._entry_equity = equity
 
     def on_stop(self) -> None:
-        self._flatten_both()
+        self._flatten_both(self._equity())
 
     @property
     def equity_curve(self) -> tuple[Decimal, ...]:
@@ -178,7 +211,10 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         self.submit_order(order)
         self._turnover += price * qty
 
-    def _flatten_both(self) -> None:
+    def _flatten_both(self, equity: Decimal | None) -> None:
+        if equity is not None and self._entry_equity is not None and self._open_legs() > 0:
+            self._trade_stats.record(equity - self._entry_equity)
+            self._entry_equity = None
         self.close_all_positions(self.config.leg_a_id)
         self.close_all_positions(self.config.leg_b_id)
 

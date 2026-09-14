@@ -32,8 +32,10 @@ class RunResearchBacktest:
 
 
 def _minimum_bars(robot: RobotName) -> int:
-    if robot is RobotName.REGIME:
+    if robot in (RobotName.REGIME, RobotName.VPIN_MOMENTUM):
         return 150
     if robot is RobotName.PAIRS:
         return 200
+    if robot is RobotName.FORMULAIC_LGBM:
+        return 80
     return 50

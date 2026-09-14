@@ -19,6 +19,8 @@ class RobotName(StrEnum):
     REGIME = "regime"
     EMA = "ema"
     PAIRS = "pairs"
+    VPIN_MOMENTUM = "vpin_momentum"
+    FORMULAIC_LGBM = "formulaic_lgbm"
     FUNDING = "funding"
     ML_OBI = "ml_obi"
     GLFT = "glft"
@@ -29,7 +31,13 @@ class RobotName(StrEnum):
 # as domain building blocks, so they must fail closed instead of silently running
 # a different strategy (see docs/08-mft-2026-vidpovidnist.md).
 BACKTEST_WIRED_ROBOTS: frozenset[RobotName] = frozenset(
-    {RobotName.REGIME, RobotName.EMA, RobotName.PAIRS}
+    {
+        RobotName.REGIME,
+        RobotName.EMA,
+        RobotName.PAIRS,
+        RobotName.VPIN_MOMENTUM,
+        RobotName.FORMULAIC_LGBM,
+    }
 )
 
 

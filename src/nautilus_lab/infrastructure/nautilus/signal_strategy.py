@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Protocol
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar, BarType
@@ -11,19 +12,32 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.strategy import Strategy
 
 from nautilus_lab.application.risk import (
-    effective_risk_fraction,
+    TradeStats,
     evaluate_entry,
+    resolve_risk_fraction,
     size_position,
     stop_distance,
 )
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
+from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
 from nautilus_lab.domain.regime import RegimeParams, RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
-from nautilus_lab.domain.signals import SignalSide
+from nautilus_lab.domain.risk_overlay import RiskOverlay
+from nautilus_lab.domain.signals import Signal, SignalSide
+from nautilus_lab.domain.volatility import HarRealizedVolatility
 from nautilus_lab.domain.vpin import BarVpin
+from nautilus_lab.domain.vpin_momentum import VpinMomentum
+from nautilus_lab.infrastructure.lightgbm_classifier import (
+    HeuristicDirectionClassifier,
+    LightGBMDirectionClassifier,
+)
+
+
+class SingleLegRobot(Protocol):
+    def on_bar(self, bar: OhlcvBar) -> Signal | None: ...
 
 
 class SignalRobotConfig(StrategyConfig, frozen=True):
@@ -45,11 +59,23 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     max_daily_loss: Decimal = Decimal("0.02")
     max_drawdown: Decimal = Decimal("0.06")
     max_open_positions: int = 1
+    kelly_fraction: Decimal = Decimal("0.25")
+    max_var_99: Decimal = Decimal("0.05")
     quote_currency: str = "USDT"
     qty_step: Decimal = Decimal("0.001")
     use_bar_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    vpin_momentum_ema_period: int = 50
+    vpin_momentum_atr_multiple: Decimal = Decimal("2")
+    formulaic_model_path: str | None = None
+    formulaic_threshold: Decimal = Decimal("0.55")
+    use_vol_scaling: bool = False
+    vol_scaling_target: Decimal = Decimal("0.02")
+    use_fractional_kelly: bool = False
+    kelly_min_trades: int = 30
+    use_cvar_breaker: bool = False
+    max_cvar_99: Decimal = Decimal("0.05")
 
 
 class SignalRobot(Strategy):  # type: ignore[misc]
@@ -64,6 +90,16 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             max_daily_loss=config.max_daily_loss,
             max_drawdown=config.max_drawdown,
             max_open_positions=config.max_open_positions,
+            kelly_fraction=config.kelly_fraction,
+            max_var_99=config.max_var_99,
+        )
+        self._overlay = RiskOverlay(
+            use_vol_scaling=config.use_vol_scaling,
+            vol_scaling_target=config.vol_scaling_target,
+            use_fractional_kelly=config.use_fractional_kelly,
+            kelly_min_trades=config.kelly_min_trades,
+            use_cvar_breaker=config.use_cvar_breaker,
+            max_cvar_99=config.max_cvar_99,
         )
         self._previous_ts: datetime | None = None
         self._day_start_equity: Decimal | None = None
@@ -73,7 +109,11 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._turnover: Decimal = Decimal("0")
         self._returns: list[Decimal] = []
         self._previous_equity: Decimal | None = None
+        self._entry_equity: Decimal | None = None
+        self._trade_stats = TradeStats()
         self._atr = AverageTrueRange(14)
+        self._har = HarRealizedVolatility()
+        self._previous_close: Decimal | None = None
 
     def on_start(self) -> None:
         self.subscribe_bars(self.config.bar_type)
@@ -83,6 +123,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         validate_bar(domain_bar, previous_ts=self._previous_ts, now=domain_bar.ts_utc)
         self._previous_ts = domain_bar.ts_utc
         self._atr.update(domain_bar)
+        vol_forecast = self._har.update(domain_bar, self._previous_close)
+        self._previous_close = domain_bar.close
 
         signal = self._robot.on_bar(domain_bar)
         equity = self._equity()
@@ -96,7 +138,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         if signal is None:
             return
         if signal.side is SignalSide.FLAT:
-            self._flatten()
+            self._flatten(equity)
             return
 
         if equity is None:
@@ -110,7 +152,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             open_positions=0 if self._is_flat() else 1,
             recent_returns=tuple(self._returns[-30:]),
         )
-        decision = evaluate_entry(snapshot, self._limits)
+        decision = evaluate_entry(snapshot, self._limits, self._overlay)
         if not decision.allowed:
             self.log.warning(f"Risk blocked entry: {decision.reason}")
             return
@@ -122,7 +164,12 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return
 
         distance = stop_distance(domain_bar.close, self._limits, atr=self._atr.value)
-        risk_fraction = effective_risk_fraction(self._limits)
+        risk_fraction = resolve_risk_fraction(
+            self._limits,
+            self._overlay,
+            stats=self._trade_stats,
+            forecast_vol=vol_forecast,
+        )
         qty = size_position(
             equity=equity,
             price=domain_bar.close,
@@ -140,7 +187,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return
 
         if not self._is_flat():
-            self.close_all_positions(self.config.instrument_id)
+            self._flatten(equity)
 
         side = OrderSide.BUY if desired_buy else OrderSide.SELL
         order = self.order_factory.market(
@@ -150,9 +197,10 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         self.submit_order(order)
         self._turnover += domain_bar.close * qty
+        self._entry_equity = equity
 
     def on_stop(self) -> None:
-        self.close_all_positions(self.config.instrument_id)
+        self._flatten(self._equity())
 
     @property
     def equity_curve(self) -> tuple[Decimal, ...]:
@@ -162,8 +210,11 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     def turnover(self) -> Decimal:
         return self._turnover
 
-    def _flatten(self) -> None:
+    def _flatten(self, equity: Decimal | None) -> None:
         if not self._is_flat():
+            if equity is not None and self._entry_equity is not None:
+                self._trade_stats.record(equity - self._entry_equity)
+                self._entry_equity = None
             self.close_all_positions(self.config.instrument_id)
 
     def _is_flat(self) -> bool:
@@ -188,14 +239,30 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             self._peak_equity = equity
 
 
-def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter:
+def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
     robot = RobotName(config.robot)
     require_backtest_support(robot)
+    instrument_id = str(config.instrument_id)
     if robot is RobotName.EMA:
         return EmaCrossover(
-            instrument_id=str(config.instrument_id),
+            instrument_id=instrument_id,
             fast_period=config.fast_period,
             slow_period=config.slow_period,
+        )
+    if robot is RobotName.VPIN_MOMENTUM:
+        return VpinMomentum(
+            instrument_id=instrument_id,
+            bucket_volume=config.vpin_bucket_volume,
+            toxic_threshold=config.vpin_toxic_threshold,
+            ema_period=config.vpin_momentum_ema_period,
+            atr_multiple=config.vpin_momentum_atr_multiple,
+        )
+    if robot is RobotName.FORMULAIC_LGBM:
+        classifier = _build_classifier(config.formulaic_model_path)
+        return FormulaicLgbmStrategy(
+            instrument_id=instrument_id,
+            classifier=classifier,
+            threshold=config.formulaic_threshold,
         )
     vpin = None
     if config.use_bar_vpin:
@@ -204,7 +271,7 @@ def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter:
             toxic_threshold=config.vpin_toxic_threshold,
         )
     return RegimeRouter(
-        instrument_id=str(config.instrument_id),
+        instrument_id=instrument_id,
         params=RegimeParams(
             er_period=config.er_period,
             trend_ema_period=config.trend_ema_period,
@@ -217,6 +284,14 @@ def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter:
         ),
         vpin=vpin,
     )
+
+
+def _build_classifier(
+    model_path: str | None,
+) -> HeuristicDirectionClassifier | LightGBMDirectionClassifier:
+    if model_path:
+        return LightGBMDirectionClassifier(model_path=model_path)
+    return HeuristicDirectionClassifier()
 
 
 def _to_domain_bar(bar: Bar, instrument_id: str) -> OhlcvBar:

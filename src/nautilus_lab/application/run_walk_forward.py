@@ -313,7 +313,14 @@ def _multi_report(
 
 
 def _require_warmup(robot: RobotName, bar_count: int, fold: str) -> None:
-    minimum = 200 if robot is RobotName.PAIRS else 150 if robot is RobotName.REGIME else 50
+    if robot is RobotName.PAIRS:
+        minimum = 200
+    elif robot in (RobotName.REGIME, RobotName.VPIN_MOMENTUM):
+        minimum = 150
+    elif robot is RobotName.FORMULAIC_LGBM:
+        minimum = 80
+    else:
+        minimum = 50
     if bar_count < minimum:
         raise ValueError(f"{fold} bar_count must be >= {minimum} so indicators can warm up")
 

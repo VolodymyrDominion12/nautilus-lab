@@ -12,6 +12,7 @@ from nautilus_lab.domain.metrics import BacktestMetrics
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
 from nautilus_lab.domain.risk import RiskLimits
+from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 
@@ -23,6 +24,7 @@ class BacktestRequest:
     bar_count: int
     starting_equity: Decimal
     risk: RiskLimits
+    risk_overlay: RiskOverlay = field(default_factory=RiskOverlay)
     robot: RobotName = RobotName.REGIME
     fast_ema: int = 10
     slow_ema: int = 20
@@ -41,6 +43,10 @@ class BacktestRequest:
     use_bar_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    vpin_momentum_ema_period: int = 50
+    vpin_momentum_atr_multiple: Decimal = Decimal("2")
+    formulaic_model_path: str | None = None
+    formulaic_threshold: Decimal = Decimal("0.55")
     tearsheet_path: str | None = None
 
 
@@ -98,6 +104,8 @@ class SelectedParams:
     exit_trend_er: Decimal
     z_entry: Decimal = Decimal("2")
     z_exit: Decimal = Decimal("0.5")
+    vpin_ema_period: int = 50
+    vpin_atr_multiple: Decimal = Decimal("2")
 
     def label(self) -> str:
         return (
@@ -247,6 +255,8 @@ def selected_from_request(request: BacktestRequest) -> SelectedParams:
         exit_trend_er=request.regime.exit_trend_er,
         z_entry=request.pairs.z_entry,
         z_exit=request.pairs.z_exit,
+        vpin_ema_period=request.vpin_momentum_ema_period,
+        vpin_atr_multiple=request.vpin_momentum_atr_multiple,
     )
 
 
@@ -268,4 +278,6 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
             z_entry=params.z_entry,
             z_exit=params.z_exit,
         ),
+        vpin_momentum_ema_period=params.vpin_ema_period,
+        vpin_momentum_atr_multiple=params.vpin_atr_multiple,
     )

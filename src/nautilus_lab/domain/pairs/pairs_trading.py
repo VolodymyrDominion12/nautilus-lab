@@ -31,6 +31,7 @@ class PairsTrading:
         self._closes_a = RollingWindow(params.lookback)
         self._closes_b = RollingWindow(params.lookback)
         self._state: _PairState | None = None
+        self._bars_since_refit = 0
 
     def on_bars(self, bar_a: OhlcvBar, bar_b: OhlcvBar) -> SpreadSignal | None:
         self._closes_a.push(bar_a.close)
@@ -41,6 +42,11 @@ class PairsTrading:
             self._state = self._fit_state()
             if self._state is None:
                 return None
+            self._bars_since_refit = 0
+
+        refit_signal = self._maybe_refit(bar_a.ts_utc)
+        if refit_signal is not None:
+            return refit_signal
 
         spread = self._current_spread(bar_a.close, bar_b.close)
         z = z_score(spread, self._state.ou.mean, self._state.ou.sigma)
@@ -69,6 +75,40 @@ class PairsTrading:
             self._state.direction = 1
             self._state.open_bars = 0
             return self._entry_signal(ts, z, short_a=False, reason="pairs z low long spread")
+        return None
+
+    def _maybe_refit(self, ts: datetime) -> SpreadSignal | None:
+        refit_every = self._params.refit_every_bars
+        if refit_every <= 0:
+            return None
+        self._bars_since_refit += 1
+        if self._bars_since_refit < refit_every:
+            return None
+        self._bars_since_refit = 0
+        was_in_position = self._state is not None and self._state.in_position
+        new_state = self._fit_state()
+        if new_state is None:
+            if was_in_position and self._state is not None:
+                hedge = self._state.coint.hedge_ratio
+                half_life = self._state.ou.half_life_bars
+                self._state = None
+                return self._flat_signal(ts, "pairs cointegration break", hedge, half_life)
+            self._state = None
+            return None
+        if was_in_position:
+            hedge = (
+                self._state.coint.hedge_ratio
+                if self._state is not None
+                else new_state.coint.hedge_ratio
+            )
+            half_life = (
+                self._state.ou.half_life_bars
+                if self._state is not None
+                else new_state.ou.half_life_bars
+            )
+            self._state = new_state
+            return self._flat_signal(ts, "pairs refit flatten", hedge, half_life)
+        self._state = new_state
         return None
 
     def _fit_state(self) -> _PairState | None:
@@ -116,14 +156,24 @@ class PairsTrading:
             half_life_bars=self._state.ou.half_life_bars,
         )
 
-    def _flat_signal(self, ts: datetime, reason: str) -> SpreadSignal:
-        assert self._state is not None
+    def _flat_signal(
+        self,
+        ts: datetime,
+        reason: str,
+        hedge_ratio: Decimal | None = None,
+        half_life_bars: Decimal | None = None,
+    ) -> SpreadSignal:
+        assert self._state is not None or hedge_ratio is not None
+        hedge = hedge_ratio if hedge_ratio is not None else self._state.coint.hedge_ratio  # type: ignore[union-attr]
+        half_life = (
+            half_life_bars if half_life_bars is not None else self._state.ou.half_life_bars  # type: ignore[union-attr]
+        )
         return SpreadSignal(
             leg_a=LegIntent(self._leg_a, SignalSide.FLAT),
             leg_b=LegIntent(self._leg_b, SignalSide.FLAT),
             bar_ts_utc=ts,
             reason=reason,
-            hedge_ratio=self._state.coint.hedge_ratio,
+            hedge_ratio=hedge,
             z_score=None,
-            half_life_bars=self._state.ou.half_life_bars,
+            half_life_bars=half_life,
         )

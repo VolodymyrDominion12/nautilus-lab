@@ -17,6 +17,7 @@
 | Хочу зрозуміти, як влаштований код | [03-arhitektura.md](03-arhitektura.md) → [12-karta-fayliv.md](12-karta-fayliv.md) |
 | Хочу написати свою стратегію | [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md) |
 | Хочу зрозуміти, що з «Стратегій MFT Криптоторгівлі 2026.md» уже є в коді | [08-mft-2026-vidpovidnist.md](08-mft-2026-vidpovidnist.md) |
+| Хочу застосувати ідеї з «Алгоритми ШІ У Криптоторгівлі 2026» | [13-ai-2026-vidpovidnist.md](13-ai-2026-vidpovidnist.md) |
 | Хочу використати MFT-модулі (VPIN, Хоукс, Келлі, GLFT...) у своєму коді | [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md) |
 | Шукаю точний синтаксис команд | [10-cli-dovidnyk.md](10-cli-dovidnyk.md) |
 | Щось упало з помилкою | [11-troubleshooting-faq.md](11-troubleshooting-faq.md) |
@@ -37,6 +38,7 @@
 | [10-cli-dovidnyk.md](10-cli-dovidnyk.md) | Довідник CLI: усі команди, прапорці (зокрема `--optuna`, `--tearsheet`, `--notify`), коди виходу, змінні середовища |
 | [11-troubleshooting-faq.md](11-troubleshooting-faq.md) | Типові помилки та їх причини, часті питання |
 | [12-karta-fayliv.md](12-karta-fayliv.md) | Карта всіх модулів проєкту: файл → що робить → ключові функції |
+| [13-ai-2026-vidpovidnist.md](13-ai-2026-vidpovidnist.md) | Мапа ШІ-дослідження 2026 → код (LLM, DRL, overlays, нові роботи) |
 
 ## Що вміє проєкт (коротко)
 

@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal
 
 from nautilus_lab.domain.errors import (
     InvalidRiskError,
     LiveTradingDisabledError,
 )
-from nautilus_lab.domain.portfolio_risk import fractional_kelly_cap, historical_var
+from nautilus_lab.domain.portfolio_risk import (
+    fractional_kelly_cap,
+    historical_cvar,
+    historical_var,
+)
 from nautilus_lab.domain.risk import AccountSnapshot, RiskDecision, RiskLimits
+from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.trading_mode import TradingMode
+from nautilus_lab.domain.volatility import vol_scaled_risk_fraction
 
 
 def size_position(
@@ -39,6 +46,36 @@ def size_position(
     return steps * qty_step
 
 
+@dataclass
+class TradeStats:
+    wins: int = 0
+    losses: int = 0
+    gross_profit: Decimal = Decimal("0")
+    gross_loss: Decimal = Decimal("0")
+
+    @property
+    def total_trades(self) -> int:
+        return self.wins + self.losses
+
+    def win_rate(self) -> Decimal | None:
+        if self.total_trades == 0:
+            return None
+        return Decimal(self.wins) / Decimal(self.total_trades)
+
+    def reward_risk(self) -> Decimal | None:
+        if self.gross_loss <= 0:
+            return Decimal("3") if self.gross_profit > 0 else None
+        return self.gross_profit / self.gross_loss
+
+    def record(self, pnl: Decimal) -> None:
+        if pnl > 0:
+            self.wins += 1
+            self.gross_profit += pnl
+        elif pnl < 0:
+            self.losses += 1
+            self.gross_loss += abs(pnl)
+
+
 def effective_risk_fraction(
     limits: RiskLimits,
     *,
@@ -58,6 +95,34 @@ def effective_risk_fraction(
     return min(limits.risk_per_trade, kelly_cap)
 
 
+def resolve_risk_fraction(
+    limits: RiskLimits,
+    overlay: RiskOverlay,
+    *,
+    stats: TradeStats | None = None,
+    forecast_vol: Decimal | None = None,
+) -> Decimal:
+    """Apply optional Kelly cap and vol-scaling on top of base risk_per_trade."""
+    fraction = limits.risk_per_trade
+    if (
+        overlay.use_fractional_kelly
+        and stats is not None
+        and stats.total_trades >= overlay.kelly_min_trades
+    ):
+        fraction = effective_risk_fraction(
+            limits,
+            win_rate=stats.win_rate(),
+            reward_risk=stats.reward_risk(),
+        )
+    if overlay.use_vol_scaling and forecast_vol is not None:
+        fraction = vol_scaled_risk_fraction(
+            fraction,
+            forecast_vol,
+            overlay.vol_scaling_target,
+        )
+    return fraction
+
+
 def stop_distance(
     price: Decimal,
     limits: RiskLimits,
@@ -70,8 +135,13 @@ def stop_distance(
     return price * limits.stop_pct
 
 
-def evaluate_entry(snapshot: AccountSnapshot, limits: RiskLimits) -> RiskDecision:
+def evaluate_entry(
+    snapshot: AccountSnapshot,
+    limits: RiskLimits,
+    overlay: RiskOverlay | None = None,
+) -> RiskDecision:
     """Circuit breaker before a new entry. Flattening is the caller's job."""
+    resolved_overlay = overlay or RiskOverlay()
     if snapshot.equity <= 0:
         return RiskDecision(False, "non-positive equity")
     if snapshot.day_start_equity <= 0:
@@ -94,6 +164,10 @@ def evaluate_entry(snapshot: AccountSnapshot, limits: RiskLimits) -> RiskDecisio
         var_99 = historical_var(snapshot.recent_returns, confidence=Decimal("0.99"))
         if var_99 is not None and var_99 >= limits.max_var_99:
             return RiskDecision(False, "portfolio VaR 99% circuit breaker")
+        if resolved_overlay.use_cvar_breaker:
+            cvar_99 = historical_cvar(snapshot.recent_returns, confidence=Decimal("0.99"))
+            if cvar_99 is not None and cvar_99 >= resolved_overlay.max_cvar_99:
+                return RiskDecision(False, "portfolio CVaR 99% circuit breaker")
 
     return RiskDecision(True, "ok")
 

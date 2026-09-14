@@ -13,3 +13,4 @@ class PairsParams:
     z_exit: Decimal = Decimal("0.5")
     max_half_life_bars: int = 240
     adf_pvalue_max: Decimal = Decimal("0.05")
+    refit_every_bars: int = 0

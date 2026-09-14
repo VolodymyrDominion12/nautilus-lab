@@ -18,6 +18,7 @@
 | [docs/06-ryzyk-metryky.md](docs/06-ryzyk-metryky.md) | Ризик-менеджмент, розмір позиції, метрики |
 | [docs/07-yak-stvoryty-strategiyu.md](docs/07-yak-stvoryty-strategiyu.md) | **Як створити свою стратегію** — покроково, з кодом і тестами |
 | [docs/08-mft-2026-vidpovidnist.md](docs/08-mft-2026-vidpovidnist.md) | Що з «Стратегій MFT 2026» уже в коді, що частково, чого немає |
+| [docs/13-ai-2026-vidpovidnist.md](docs/13-ai-2026-vidpovidnist.md) | Що з «Алгоритми ШІ 2026» можна застосувати безпечно (overlays, нові роботи) |
 | [docs/09-mft-moduli-pryklady.md](docs/09-mft-moduli-pryklady.md) | Робочі приклади для VPIN, Хоукса, GLFT, funding, Келлі тощо |
 | [docs/10-cli-dovidnyk.md](docs/10-cli-dovidnyk.md) | Довідник усіх команд і прапорців |
 | [docs/11-troubleshooting-faq.md](docs/11-troubleshooting-faq.md) | Типові помилки, дивна поведінка, часті питання |

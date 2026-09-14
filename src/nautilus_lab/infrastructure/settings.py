@@ -9,6 +9,7 @@ from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
 from nautilus_lab.domain.risk import RiskLimits
+from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.trading_mode import TradingMode
 
 
@@ -27,6 +28,17 @@ class Settings(BaseSettings):
     max_open_positions: int = 1
     kelly_fraction: Decimal = Decimal("0.25")
     max_var_99: Decimal = Decimal("0.05")
+    use_vol_scaling: bool = False
+    vol_scaling_target: Decimal = Decimal("0.02")
+    use_fractional_kelly: bool = False
+    kelly_min_trades: int = 30
+    use_cvar_breaker: bool = False
+    max_cvar_99: Decimal = Decimal("0.05")
+    pairs_refit_every: int = 0
+    vpin_momentum_ema_period: int = 50
+    vpin_momentum_atr_multiple: Decimal = Decimal("2")
+    formulaic_model_path: str | None = None
+    formulaic_threshold: Decimal = Decimal("0.55")
     robot: RobotName = RobotName.REGIME
     fast_ema: int = 10
     slow_ema: int = 20
@@ -82,5 +94,15 @@ class Settings(BaseSettings):
             bb_k=self.bb_k,
         )
 
+    def risk_overlay(self) -> RiskOverlay:
+        return RiskOverlay(
+            use_vol_scaling=self.use_vol_scaling,
+            vol_scaling_target=self.vol_scaling_target,
+            use_fractional_kelly=self.use_fractional_kelly,
+            kelly_min_trades=self.kelly_min_trades,
+            use_cvar_breaker=self.use_cvar_breaker,
+            max_cvar_99=self.max_cvar_99,
+        )
+
     def pairs_params(self) -> PairsParams:
-        return PairsParams()
+        return PairsParams(refit_every_bars=self.pairs_refit_every)

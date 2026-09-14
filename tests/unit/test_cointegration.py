@@ -16,6 +16,8 @@ from decimal import Decimal
 import pytest
 
 from nautilus_lab.domain.pairs.cointegration import (
+    _adf_test,
+    _max_lags,
     critical_values,
     fit_cointegration,
     p_value_from_statistic,
@@ -118,6 +120,53 @@ def test_p_value_falls_as_the_statistic_falls() -> None:
     weak = p_value_from_statistic(Decimal("-1"), _LOOKBACK)
     assert strong < weak
     assert strong < Decimal("0.05") <= weak
+
+
+# --- pinning to the reference implementation ---------------------------------------
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_matches_the_statsmodels_reference_implementation() -> None:
+    """Lock the statistic and the lag choice to statsmodels, the reference that exposed
+    both original bugs: the unreachable coefficient bands and the wrong N.
+
+    statsmodels is a test-time reference only — the domain keeps its own ``Decimal``
+    implementation and never imports it at runtime, so this skips when the `research`
+    extra is absent. Without this test the manual cross-check that justified the rewrite
+    would have to be redone by hand after every change.
+    """
+    stattools = pytest.importorskip("statsmodels.tsa.stattools")
+
+    for phi in (0.5, 0.9, 0.99, 1.0):
+        series = [float(value) for value in _ar1(phi, count=240, seed=int(phi * 100))]
+        reference = stattools.adfuller(
+            series,
+            maxlag=_max_lags(len(series)),
+            regression="n",
+            autolag="bic",
+        )
+        statistic, _, lags = _adf_test(tuple(Decimal(repr(value)) for value in series))
+
+        assert lags == reference[2], f"lag choice diverged at phi={phi}"
+        assert float(statistic) == pytest.approx(float(reference[0]), abs=1e-9)
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_end_to_end_fit_matches_statsmodels_coint() -> None:
+    """``coint`` is the canonical Engle-Granger implementation for a bivariate pair."""
+    stattools = pytest.importorskip("statsmodels.tsa.stattools")
+    y, x = _cointegrated_pair(count=_COUNT, seed=3)
+
+    result = fit_cointegration(y, x)
+    reference = stattools.coint(
+        [float(value) for value in y],
+        [float(value) for value in x],
+        trend="c",
+        autolag="bic",
+    )
+
+    assert float(result.adf_statistic) == pytest.approx(float(reference.coint_t), abs=1e-5)
+    assert result.adf_pvalue < Decimal("0.05")
 
 
 # --- lag selection and input validation -------------------------------------------

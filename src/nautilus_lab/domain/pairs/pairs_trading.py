@@ -32,6 +32,7 @@ class PairsTrading:
         self._closes_b = RollingWindow(params.lookback)
         self._state: _PairState | None = None
         self._bars_since_refit = 0
+        self._bars_until_retry = 0
 
     def on_bars(self, bar_a: OhlcvBar, bar_b: OhlcvBar) -> SpreadSignal | None:
         self._closes_a.push(bar_a.close)
@@ -39,10 +40,20 @@ class PairsTrading:
         if not self._closes_a.full:
             return None
         if self._state is None:
+            # Retry cadence has two regimes. Before the *first* successful fit the robot
+            # probes every bar, so it enters as soon as the pair becomes cointegrated.
+            # After a periodic refit fails it waits a full refit interval instead, so
+            # `refit_every_bars` keeps meaning what it says: re-testing every bar ran a
+            # fit on ~75% of bars rather than ~4%, which turned a rolling refit into an
+            # hour-long walk-forward.
+            if self._bars_until_retry > 0:
+                self._bars_until_retry -= 1
+                return None
             self._state = self._fit_state()
             if self._state is None:
                 return None
             self._bars_since_refit = 0
+            self._bars_until_retry = 0
 
         refit_signal = self._maybe_refit(bar_a.ts_utc)
         if refit_signal is not None:
@@ -95,6 +106,12 @@ class PairsTrading:
         was_in_position = self._state is not None and self._state.in_position
         new_state = self._fit_state()
         if new_state is None:
+            # The pair is not cointegrated on this window: stand aside and re-test on the
+            # next refit interval, not on every bar. `refit_every - 1` because the check
+            # above decrements before it tests, so the next attempt lands exactly
+            # `refit_every` bars after this failure. At `refit_every == 1` the robot still
+            # probes every bar, which is what that setting asks for.
+            self._bars_until_retry = max(refit_every - 1, 0)
             if was_in_position and self._state is not None:
                 hedge = self._state.coint.hedge_ratio
                 half_life = self._state.ou.half_life_bars
@@ -102,6 +119,7 @@ class PairsTrading:
                 return self._flat_signal(ts, "pairs cointegration break", hedge, half_life)
             self._state = None
             return None
+        self._bars_until_retry = 0
         if was_in_position:
             hedge = (
                 self._state.coint.hedge_ratio

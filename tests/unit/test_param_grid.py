@@ -34,3 +34,13 @@ def test_regime_grid_varies_donchian_and_bands() -> None:
     assert len(grid) == 6
     assert {item.donchian_period for item in grid} == {10, 20, 40}
     assert {item.bb_k for item in grid} == {Decimal("2"), Decimal("2.5")}
+
+
+def test_formulaic_grid_varies_threshold_only() -> None:
+    grid = list(iter_param_grid(_request(RobotName.FORMULAIC_LGBM)))
+    assert len(grid) == 3
+    assert {item.formulaic_threshold for item in grid} == {
+        Decimal("0.50"),
+        Decimal("0.55"),
+        Decimal("0.60"),
+    }

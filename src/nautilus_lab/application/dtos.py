@@ -106,12 +106,13 @@ class SelectedParams:
     z_exit: Decimal = Decimal("0.5")
     vpin_ema_period: int = 50
     vpin_atr_multiple: Decimal = Decimal("2")
+    formulaic_threshold: Decimal = Decimal("0.55")
 
     def label(self) -> str:
         return (
             f"fast_ema={self.fast_ema} slow_ema={self.slow_ema} "
             f"donchian={self.donchian_period} bb_k={self.bb_k} "
-            f"z_entry={self.z_entry}"
+            f"z_entry={self.z_entry} formulaic_threshold={self.formulaic_threshold}"
         )
 
 
@@ -257,6 +258,7 @@ def selected_from_request(request: BacktestRequest) -> SelectedParams:
         z_exit=request.pairs.z_exit,
         vpin_ema_period=request.vpin_momentum_ema_period,
         vpin_atr_multiple=request.vpin_momentum_atr_multiple,
+        formulaic_threshold=request.formulaic_threshold,
     )
 
 
@@ -280,4 +282,5 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
         ),
         vpin_momentum_ema_period=params.vpin_ema_period,
         vpin_momentum_atr_multiple=params.vpin_atr_multiple,
+        formulaic_threshold=params.formulaic_threshold,
     )

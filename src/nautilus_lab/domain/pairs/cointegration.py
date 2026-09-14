@@ -142,20 +142,32 @@ def _adf_test(residuals: tuple[Decimal, ...]) -> tuple[Decimal, Decimal, int]:
 
     best_lags = 0
     best_bic: Decimal | None = None
+    # One Gram matrix for the widest candidate; every narrower model is a leading
+    # submatrix of it. Accumulating it once instead of once per candidate lag is what
+    # makes a periodic refit affordable: that accumulation measured ~80% of a fit's
+    # runtime, and a rolling refit calls this on every bar.
+    design, response, rows = _adf_design(diffs, residuals, trim=p_max, lags=p_max)
+    gram, xty = _gram(design, response)
     for lags in range(p_max + 1):
-        design, response, rows = _adf_design(diffs, residuals, trim=p_max, lags=lags)
-        if rows < _MIN_OBS_PER_PARAM * (lags + 1):
+        params = lags + 1
+        if rows < _MIN_OBS_PER_PARAM * params:
             continue
-        fit = _ols_first_coefficient(design, response)
+        fit = _ols_first_coefficient(
+            [row[:params] for row in gram[:params]],
+            xty[:params],
+            design,
+            response,
+        )
         if fit is None:
             continue
-        bic = _bic(fit[1], rows, lags + 1)
+        bic = _bic(fit[1], rows, params)
         if best_bic is None or bic < best_bic:
             best_bic = bic
             best_lags = lags
 
     design, response, rows = _adf_design(diffs, residuals, trim=best_lags, lags=best_lags)
-    fit = _ols_first_coefficient(design, response)
+    gram, xty = _gram(design, response)
+    fit = _ols_first_coefficient(gram, xty, design, response)
     if fit is None:
         return Decimal("0"), Decimal("1"), best_lags
     t_stat = fit[0]
@@ -201,41 +213,65 @@ def _bic(rss: Decimal, observations: int, params: int) -> Decimal:
     return n * (rss / n).ln() + Decimal(params) * n.ln()
 
 
+def _gram(
+    design: list[list[Decimal]],
+    response: list[Decimal],
+) -> tuple[list[list[Decimal]], list[Decimal]]:
+    """Accumulate ``X'X`` and ``X'y`` in a single pass over the rows.
+
+    Written as explicit loops rather than nested ``sum(generator)``: the generator form
+    was measured to spend most of a fit's runtime on interpreter overhead (2.6M generator
+    resumes for 30 fits at lookback 120), and ``X'X`` is symmetric so only the upper
+    triangle is accumulated.
+    """
+    params = len(design[0])
+    gram = [[Decimal("0")] * params for _ in range(params)]
+    xty = [Decimal("0")] * params
+    for row, value in zip(design, response, strict=True):
+        for index in range(params):
+            item = row[index]
+            xty[index] += item * value
+            target = gram[index]
+            for other in range(index, params):
+                target[other] += item * row[other]
+    for index in range(params):
+        for other in range(index + 1, params):
+            gram[other][index] = gram[index][other]
+    return gram, xty
+
+
 def _ols_first_coefficient(
+    gram: list[list[Decimal]],
+    xty: list[Decimal],
     design: list[list[Decimal]],
     response: list[Decimal],
 ) -> tuple[Decimal, Decimal] | None:
-    """OLS by normal equations; returns the t-ratio and RSS of the first coefficient.
+    """Solve the normal equations for the t-ratio and RSS of the first coefficient.
 
     Only the first coefficient's standard error is needed, so instead of inverting
-    ``X'X`` we solve ``(X'X) z = e_0`` and read ``z[0] = [(X'X)^-1]_00``.
+    ``X'X`` we solve ``(X'X) z = e_0`` and read ``z[0] = [(X'X)^-1]_00``. RSS comes from
+    the residuals rather than the ``y'y - b'X'y`` identity, which loses precision exactly
+    when the fit is near-perfect.
     """
     observations = len(design)
-    params = len(design[0])
+    params = len(xty)
     dof = observations - params
     if dof <= 0:
         return None
 
-    xtx: list[list[Decimal]] = [
-        [sum((row[i] * row[j] for row in design), Decimal("0")) for j in range(params)]
-        for i in range(params)
-    ]
-    xty = [
-        sum((row[i] * value for row, value in zip(design, response, strict=True)), Decimal("0"))
-        for i in range(params)
-    ]
-
-    beta = _solve(xtx, xty)
+    beta = _solve(gram, xty)
     if beta is None:
         return None
     unit = [Decimal("1")] + [Decimal("0")] * (params - 1)
-    inverse_column = _solve(xtx, unit)
+    inverse_column = _solve(gram, unit)
     if inverse_column is None or inverse_column[0] <= 0:
         return None
 
     rss = Decimal("0")
     for row, value in zip(design, response, strict=True):
-        fitted = sum((coef * item for coef, item in zip(beta, row, strict=True)), Decimal("0"))
+        fitted = Decimal("0")
+        for index in range(params):
+            fitted += beta[index] * row[index]
         residual = value - fitted
         rss += residual * residual
 

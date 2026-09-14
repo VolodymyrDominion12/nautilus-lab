@@ -47,6 +47,13 @@ class PairsTrading:
         refit_signal = self._maybe_refit(bar_a.ts_utc)
         if refit_signal is not None:
             return refit_signal
+        if self._state is None:
+            # A periodic refit that fails the gate clears the state and asks the robot to
+            # stand aside; the next bar re-attempts the fit through the branch above.
+            # Without this guard the flow fell through to `_current_spread()`, whose
+            # `assert self._state is not None` raised and killed the whole `pairs` run as
+            # soon as `refit_every_bars > 0`.
+            return None
 
         spread = self._current_spread(bar_a.close, bar_b.close)
         z = z_score(spread, self._state.ou.mean, self._state.ou.sigma)

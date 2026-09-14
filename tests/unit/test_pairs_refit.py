@@ -47,9 +47,39 @@ def test_pairs_refit_emits_flat_on_cointegration_break() -> None:
         signal = robot.on_bars(bar_a, bar_b)
         if signal is not None and signal.leg_a.side is SignalSide.FLAT:
             flat_reasons.append(signal.reason)
-    assert any(
-        "cointegration break" in reason or "refit flatten" in reason for reason in flat_reasons
+    # The original assertion was `any("cointegration break" in r or "refit flatten" in r)`.
+    # A *successful* refit while holding a position also emits a FLAT ("refit flatten"),
+    # so that disjunction was satisfied by refit churn alone and could not notice the
+    # break path regressing. Demand the specific reason.
+    assert "pairs cointegration break" in flat_reasons
+
+
+def test_a_refit_that_fails_while_flat_does_not_crash_the_robot() -> None:
+    """Regression: a failed periodic refit used to fall through into `_current_spread()`.
+
+    `_maybe_refit` clears the state when the gate closes and returns `None`. The caller
+    read that as "nothing happened", carried on to `_current_spread()`, and hit
+    `assert self._state is not None` — killing the whole `pairs` run as soon as
+    `refit_every_bars > 0`. This scenario trips that path repeatedly, so it fails loudly
+    if the guard is ever removed again.
+    """
+    data = synthetic_cointegrated_pair(
+        leg_a="ETH/USDT.SIM",
+        leg_b="BTC/USDT.SIM",
+        count=140,
+        seed=1,
     )
+    robot = PairsTrading(
+        leg_a="ETH/USDT.SIM",
+        leg_b="BTC/USDT.SIM",
+        params=PairsParams(lookback=30, z_entry=Decimal("1.5"), refit_every_bars=1),
+    )
+    for index, (bar_a, bar_b) in enumerate(
+        zip(data["ETH/USDT.SIM"], data["BTC/USDT.SIM"], strict=True)
+    ):
+        if index >= 35:
+            bar_b = _broken_bar(bar_b)
+        robot.on_bars(bar_a, bar_b)
 
 
 def _broken_bar(bar: OhlcvBar) -> OhlcvBar:

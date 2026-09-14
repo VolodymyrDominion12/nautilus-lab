@@ -70,6 +70,8 @@ usage: lab research [-h] [--bars BARS]
                     [--oos-start OOS_START] [--oos-end OOS_END]
                     [--is-fraction IS_FRACTION] [--catalog CATALOG]
                     [--slice SLICE] [--embargo-bars EMBARGO_BARS] [--bar-vpin]
+                    [--tearsheet TEARSHEET] [--optuna] [--trials TRIALS]
+                    [--folds FOLDS] [--notify]
 ```
 
 | Прапорець | Типово | Опис |
@@ -89,6 +91,7 @@ usage: lab research [-h] [--bars BARS]
 | `--tearsheet PATH` | — | Зберегти інтерактивний HTML-звіт (тиршит) за вказаним шляхом |
 | `--optuna` | вимкнено | Замінити перебір сітки на байєсівську оптимізацію (Optuna TPE) на in-sample |
 | `--trials N` | `20` | Кількість спроб Optuna (працює лише з `--optuna`) |
+| `--folds N` | `1` | Кількість ковзних фолдів. `N >= 2` → **окремий walk-forward на кожен фолд** і звіт-агрегат out-of-sample замість однієї нарізки; `N < 2` — звичайний єдиний спліт |
 | `--notify` | вимкнено | Надіслати сповіщення про завершення (Telegram/Webhook) |
 
 Логіка вибору режиму:
@@ -97,6 +100,9 @@ usage: lab research [-h] [--bars BARS]
 2. `--synthetic --walk-forward` (або `--synthetic --optuna`) → синтетичний **walk-forward** (1-хвилинні бари).
 3. `--full-sample` → один прогін по всьому каталогу (лише in-sample).
 4. інакше → walk-forward по каталогу (типово).
+5. `--folds N` з `N >= 2` перекриває пункти 2 і 4: замість однієї нарізки виконується **N ковзних
+   walk-forward**. Працює і на каталозі, і на `--synthetic`, і для всіх трьох підключених роботів
+   (`regime`, `ema`, `pairs`).
 
 Спосіб підбору параметрів:
 - типово — **сітка** (`tried=6` для `regime`, `4` для `ema`, `3` для `pairs`);
@@ -120,6 +126,8 @@ uv run lab research --optuna --trials 30                   # байєсівсь�
 uv run lab research --tearsheet reports/tearsheet.html     # зберегти HTML-звіт
 uv run lab research --optuna --trials 20 --notify          # + сповіщення про завершення
 uv run lab research --synthetic --bars 1200 --walk-forward # walk-forward на синтетиці
+uv run lab research --robot regime --folds 4              # багатовіконний walk-forward (4 фолди)
+uv run lab research --robot ema --folds 4                 # те саме для baseline
 ```
 
 Вивід walk-forward:
@@ -128,6 +136,19 @@ uv run lab research --synthetic --bars 1200 --walk-forward # walk-forward на �
 walk-forward (grid): parameters selected on in-sample only; report out-of-sample. tried=6 selected=... IS=[...] OOS=[...]
 in-sample (selection only) fills=117 ending=109331.62479635
 out-of-sample (report this) fills=51 ending=100814.86162670
+```
+
+Вивід багатовіконного walk-forward (`--folds 4`) — спершу кожен фолд окремо, потім агрегат:
+
+```
+multi-window walk-forward (grid): 4 rolling folds, parameters re-selected on each fold's own in-sample window; report the out-of-sample aggregate. windows=[..., ...]
+fold 0 OOS=[2025-11-22, 2026-02-04) fills=163 return=6.01% buy_hold=-17.49% selected=...
+fold 1 OOS=[2026-02-04, 2026-04-19) fills=69 return=-1.13% buy_hold=3.81% selected=...
+fold 2 OOS=[2026-04-19, 2026-07-02) fills=53 return=-6.23% buy_hold=-29.33% selected=...
+fold 3 OOS=[2026-07-02, 2026-09-14) fills=56 return=3.65% buy_hold=53.00% selected=...
+out-of-sample aggregate profitable=2/4 mean=0.58% median=1.26% worst=-6.23% best=6.01%
+baseline buy&hold mean=2.50% oos_fills=341
+folds=4 profitable=2/4 mean_oos=0.58% median_oos=1.26% worst=-6.23% best=6.01% mean_buy_hold=2.50% (does not beat buy&hold) oos_fills=341
 ```
 
 Вивід повного прогону / синтетики:
@@ -149,6 +170,8 @@ regime synthetic backtest with fees (maker=0.0002 taker=0.0005), 50ms latency, 2
 | `bar_count must be >= 150 so indicators can warm up` | Замало барів (regime 150, pairs 200, решта 50) |
 | `walk-forward dates require --is-start --is-end --oos-start --oos-end` | Задано не всі чотири дати |
 | `in-sample must not overlap out-of-sample` | IS заходить у OOS |
+| `multi-window runs derive their own windows; drop --is-start/--oos-start` | Явні дати разом із `--folds N >= 2` — багатовіконний прогін будує вікна сам |
+| `<N> bars cannot fill <F> folds at in_sample_fraction=... with embargo_bars=...` | Замало барів на таку кількість фолдів → менше `--folds`, менший `--is-fraction` або довша історія |
 | `unknown stress slice 'xxx'; use one of: covid2020, ftx2022, etf2024` | Друкарська помилка в `--slice` |
 | `unsupported instrument_id: XXX` | Інструмент не в списку симуляції |
 | `unsupported bar interval 'xx'` | `BAR_INTERVAL` не з набору `1m/5m/15m/1h/4h/1d` |
@@ -241,7 +264,8 @@ uv run lab research --synthetic --bars 800 --tearsheet reports/synthetic.html
 
 Створює HTML-тиршит (крива капіталу, просадки, угоди) і друкує `tearsheet_saved=<шлях>`.
 Потрібен extra `visualization`. Якщо `plotly` немає — прогін не падає, лише попередження в лог.
-У walk-forward зберігається тиршит **out-of-sample** прогону.
+У walk-forward зберігається тиршит **out-of-sample** прогону. У багатовіконному прогоні
+(`--folds N >= 2`) зберігається тиршит **останнього** фолда.
 
 ### `--optuna [--trials N]` — байєсівська оптимізація параметрів
 
@@ -288,6 +312,42 @@ out-of-sample (report this) fills=2 ending=99900.20080881
 
 Зверніть увагу на розрив: IS +172%, OOS −0.1%. Це не стратегія, це демонстрація того,
 як виглядає перенавчання на синтетиці.
+
+### `--folds N` — багатовіконний (ковзний) walk-forward
+
+```bash
+uv run lab research --robot regime --folds 4
+uv run lab research --robot ema --folds 4
+uv run lab research --synthetic --bars 5000 --folds 2
+```
+
+`--folds 1` (типово) — це стара поведінка: **одна** нарізка (перші `--is-fraction` історії на підбір,
+решта на звіт). Одна нарізка дає одне число з однієї ділянки історії, тому не відрізняє перевагу
+від випадковості. `N >= 2` запускає окремий walk-forward на кожен фолд і друкує
+**агрегат out-of-sample**: скільки фолдів у плюсі, середнє/медіану, найгірший і найкращий фолд,
+сумарну кількість філів і порівняння з buy&hold.
+
+Як розкладаються вікна:
+
+- перший in-sample блок займає `--is-fraction` історії (типово 70%), далі розрив `--embargo-bars`,
+  далі `N` однакових послідовних out-of-sample блоків, які заповнюють залишок;
+- фолд *i* підбирає параметри на in-sample-вікні, що **зсувається на один OOS-блок уперед**, і
+  звітує на блоці, який іде за ним — тобто це прогноз, а не повторне читання тих самих даних;
+- останній фолд забирає остачу від ділення націло, тому фінальне вікно завжди доходить до
+  найсвіжішого бару;
+- сума OOS-блоків усіх фолдів дорівнює тому самому OOS-вікну, яке дала б одна нарізка — просто
+  порізаному на частини.
+
+Що ще варто знати:
+
+- працює для каталогу й для `--synthetic`, для однолегових роботів (`regime`, `ema`) і для `pairs`;
+- з `--tearsheet` зберігається тиршит **лише останнього** фолда, а не зведений;
+- ціна: `--robot regime --folds 4` на каталозі з ~23.7 тис. годинних барів — **≈86 с**
+  (4 фолди × 6 кандидатів сітки на in-sample-вікнах по ~16.6 тис. барів). Звичайний єдиний спліт —
+  кілька секунд, тому для швидких ітерацій лишайте `--folds 1`;
+- явні дати (`--is-start/--is-end/--oos-start/--oos-end`) з `--folds N >= 2` дають помилку
+  `multi-window runs derive their own windows` — багатовіконний прогін будує вікна сам;
+- реальний результат і висновки — [05 §4](05-roboty.md#4-багатовіконний-walk-forward-чи-була-перевага-взагалі).
 
 ## Змінні середовища: швидка шпаргалка
 
@@ -346,6 +406,7 @@ uv run lab ingest --start 2025-01-01 --symbols ETHUSDT,BTCUSDT
 uv run lab research --robot ema          # baseline
 uv run lab research                      # основний прогін
 uv run lab research --robot pairs
+uv run lab research --robot regime --folds 4   # чи витримує результат нарізку на 4 вікна
 ```
 
 **Стрес-тести на довгій історії:**

@@ -90,6 +90,37 @@ def test_cli_robot_without_adapter_fails_closed(robot: str) -> None:
     assert main(["research", "--robot", robot, "--synthetic", "--bars", "200"]) == 1
 
 
+@pytest.mark.parametrize("folds", ["0", "-3"])
+def test_cli_rejects_a_non_positive_fold_count(folds: str) -> None:
+    """`--folds 0` used to fall through to the single split and report one window."""
+    assert main(["research", "--synthetic", "--bars", "200", "--folds", folds]) == 1
+
+
+def test_cli_multi_window_rejects_an_explicit_window() -> None:
+    """Multi-window derives its own windows; mixing in explicit dates must fail closed."""
+    assert (
+        main(
+            [
+                "research",
+                "--synthetic",
+                "--bars",
+                "600",
+                "--folds",
+                "2",
+                "--is-start",
+                "2024-01-01",
+                "--is-end",
+                "2024-06-01",
+                "--oos-start",
+                "2024-06-01",
+                "--oos-end",
+                "2024-12-01",
+            ]
+        )
+        == 1
+    )
+
+
 @pytest.mark.parametrize("robot", ["regime", "ema", "pairs"])
 def test_cli_wired_robots_are_supported(robot: str) -> None:
     for item in RobotName:

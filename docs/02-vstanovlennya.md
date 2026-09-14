@@ -163,7 +163,7 @@ uv run lab paper --bars 500
 ## 4. Перевірка, що все працює
 
 ```bash
-uv run pytest                       # 149 тестів, включно з локальним рушієм (без мережі)
+uv run pytest                       # 164 тести, включно з локальним рушієм (без мережі)
 uv run ruff check --fix && uv run ruff format   # стиль і форматування
 uv run mypy src tests               # сувора типізація (strict = true)
 ```

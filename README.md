@@ -75,9 +75,15 @@ uv run lab research --tearsheet reports/tearsheet.html
 
 # 5. Сповіщення в Telegram / Webhook після завершення або при спрацюванні лімітів:
 uv run lab research --optuna --trials 20 --notify
+
+# 6. Багатовіконний walk-forward: N ковзних фолдів і агрегат out-of-sample.
+#    Одна нарізка дає одне число з однієї ділянки історії; це дає розподіл.
+uv run lab research --robot regime --folds 4
 ```
 
 `lab research` за замовчуванням читає catalog і робить walk-forward. Друкує окремо in-sample (лише вибір параметрів) і out-of-sample (це і є звіт). Не дивись на in-sample як на результат.
+
+`--folds N` (N ≥ 2) виконує окремий walk-forward на кожному з N ковзних фолдів — на кожному фолді параметри підбираються заново на його власному in-sample — і друкує агрегат out-of-sample разом із планкою `buy&hold`. Станом на зараз жоден із трьох роботів цю планку не обганяє; деталі — [docs/05 §4](docs/05-roboty.md).
 
 Повний прогін на всій вибірці (це **не** out-of-sample):
 

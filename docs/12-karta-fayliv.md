@@ -73,8 +73,8 @@
 | `risk.py` | `RiskLimits`, `AccountSnapshot`, `RiskDecision` | Жорсткі ліміти, стан рахунку, рішення про вхід |
 | `portfolio_risk.py` | `fractional_kelly_cap()`, `historical_var()`, `historical_cvar()` | Фракційний Келлі, історичні VaR/CVaR |
 | `kill_switch.py` | `KillSwitch`, `NoOpKillSwitch` | Протокол аварійної зупинки (у research — заглушка) |
-| `metrics.py` | `BacktestMetrics`, `compute_metrics()` | Комісії, максимальна просадка, оборот, `sharpe_like` |
-| `walk_forward.py` | `WalkForwardWindow`, `WalkForwardSplit`, `bars_in_range()`, `split_by_window()`, `anchored_window()` | Вікна IS/OOS, embargo, нарізка барів (без підглядання) |
+| `metrics.py` | `BacktestMetrics`, `compute_metrics()`, `buy_and_hold_return()` | Комісії, максимальна просадка, оборот, `sharpe_like`; `buy_and_hold_return()` — дохідність простого утримання інструменту за вікно (планка для кожного фолда walk-forward) |
+| `walk_forward.py` | `WalkForwardWindow`, `WalkForwardSplit`, `bars_in_range()`, `split_by_window()`, `anchored_window()`, `rolling_windows()` | Вікна IS/OOS, embargo, нарізка барів (без підглядання); `rolling_windows()` — N ковзних фолдів (вікно підбору зсувається на один OOS-блок уперед, останній фолд забирає остачу від ділення націло) |
 | `stress_slices.py` | `StressSliceName`, `StressSlice`, `STRESS_SLICES`, `resolve_stress_slice()` | `covid2020`, `ftx2022`, `etf2024` |
 | `align.py` | `align_bars_inner_join()`, `split_aligned_by_window()` | Вирівнювання кількох серій за часом (inner join) |
 | `fees.py` | `FeeSchedule` | Розклад комісій; `binance_spot_vip0()`, `binance_usdm_vip0()` |
@@ -86,9 +86,9 @@
 
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
-| `dtos.py` | `BacktestRequest`, `BacktestReport`, `IngestRequest`, `IngestReport`, `WalkForwardRequest`, `WalkForwardReport`, `SelectedParams`, `ResearchBacktestPort`, `BarFeed`, `selected_from_request()`, `apply_selected()` | Усі структури даних; протоколи рушія й фіду; застосування підібраних параметрів |
+| `dtos.py` | `BacktestRequest`, `BacktestReport`, `IngestRequest`, `IngestReport`, `WalkForwardRequest`, `WalkForwardReport`, `WalkForwardFold`, `MultiWindowReport`, `SelectedParams`, `ResearchBacktestPort`, `BarFeed`, `selected_from_request()`, `apply_selected()` | Усі структури даних; протоколи рушія й фіду; застосування підібраних параметрів. `WalkForwardFold` — один ковзний фолд; `MultiWindowReport` — агрегат OOS: `oos_returns`, `profitable_folds`, `mean_oos_return`, `median_oos_return`, `worst_oos_return`, `best_oos_return`, `mean_buy_and_hold_return`, `total_oos_fills`, `beats_buy_and_hold()` (`None`, коли щось із двох боків не вимірюється) і `summary_line()` |
 | `run_research_backtest.py` | `RunResearchBacktest` | Один прогін; перевірка мінімуму барів (`_minimum_bars`) |
-| `run_walk_forward.py` | `RunWalkForward` | Повний цикл IS/OOS із grid search; `_require_warmup()` |
+| `run_walk_forward.py` | `RunWalkForward` | Повний цикл IS/OOS із grid search; `_require_warmup()`; `execute_multi()` — багатовіконний прогін: окремий walk-forward на кожен фолд і агрегат OOS (відхиляє `folds < 2` і явне `window`; працює і для `pairs`) |
 | `param_grid.py` | `iter_param_grid()` | Сітки: regime 6, ema 4, pairs 3 |
 | `score.py` | `in_sample_score()` | Оцінка кандидата = `ending_balance` (відсутній → −1) |
 | `risk.py` | `size_position()`, `stop_distance()`, `evaluate_entry()`, `effective_risk_fraction()`, `require_simulated_mode()` | Розмір позиції, стоп, запобіжники, Келлі-обмеження, заборона live |
@@ -153,9 +153,10 @@
 | `unit/test_regime_classifier.py` | ER, нахил, гістерезис, прогрів |
 | `unit/test_regime_router.py` | Маршрутизація режимів, `FLAT` при зміні |
 | `unit/test_risk.py` | `size_position`, `stop_distance`, `evaluate_entry`, Келлі, VaR, live-заборона |
-| `unit/test_run_walk_forward.py` | Вибір параметрів на IS, звіт на OOS, embargo |
+| `unit/test_run_walk_forward.py` | Вибір параметрів на IS, звіт на OOS, embargo; `execute_multi()`: окремий walk-forward на кожен фолд, зсув вікна підбору, відмова при `folds < 2` і при явному вікні |
 | `unit/test_synthetic_bars.py` | Детермінованість, валідність, структура режимів |
-| `unit/test_walk_forward.py` | Вікна, нарізка, overlap-помилки |
+| `unit/test_walk_forward.py` | Вікна, нарізка, overlap-помилки; `rolling_windows()`: ковзне вікно підбору з точними очікуваними межами (100 барів, `folds=4`, `fraction=0.5`, `embargo=2` → IS `[0:50]`, OOS `[52:64]`), розрив embargo, досягання останнього бару, відсутність перекриття IS/OOS, відмова при забагато фолдів / поганій частці / нулі фолдів |
+| `unit/test_multi_window_report.py` | Агрегат `MultiWindowReport`: арифметика середнього/медіани/найгіршого/найкращого, порівняння з buy&hold, шлях «невідомо» (коли один бік не вимірюється) і рядок `summary_line()` |
 | `unit/test_optuna_optimizer.py` | Оптимізатор Optuna: кількість trials, вибір параметрів для кожного робота |
 | `unit/test_alerts.py` | Нотифікатори: успіх, HTTP-помилка, виняток, композиція (з моками `httpx`) |
 | `unit/test_orderbook_microstructure.py` | OBI (скаляр і список рівнів), micro-price, Polars-трансформація |
@@ -165,10 +166,10 @@
 Запуск:
 
 ```bash
-uv run pytest                                      # усі 149 тестів
+uv run pytest                                      # усі 164 тести
 uv run pytest tests/unit -q                        # лише швидкі
 uv run pytest tests/integration -q                 # лише рушій (локально, без мережі)
-uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%; поточне — 84.12%)
+uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%; поточне — 83.70%)
 ```
 
 ---

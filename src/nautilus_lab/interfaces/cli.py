@@ -207,6 +207,10 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
     trials = getattr(args, "trials", 20)
     should_notify = getattr(args, "notify", False)
     folds = getattr(args, "folds", 1)
+    if folds < 1:
+        # Without this, --folds 0 silently fell through to the single-split path and
+        # reported one window as if the request had been honoured.
+        raise ValueError(f"--folds must be >= 1, got {folds}")
 
     if args.synthetic:
         if getattr(args, "walk_forward", False) or optuna_enabled or folds > 1:
@@ -370,11 +374,15 @@ def _optional_window(args: argparse.Namespace) -> WalkForwardWindow | None:
 
 def _print_multi_window(report: MultiWindowReport) -> None:
     print(report.notes)
+    # Full ISO timestamps, not dates: on intraday bars an out-of-sample block can be
+    # hours long, and a date-only label would print the same day for every fold.
     for fold in report.folds:
         window = fold.window
         print(
-            f"fold {fold.index} OOS=[{window.out_of_sample_start.date()}, "
-            f"{window.out_of_sample_end.date()}) fills={fold.out_of_sample.fills} "
+            f"fold {fold.index} "
+            f"OOS=[{window.out_of_sample_start.isoformat()}, "
+            f"{window.out_of_sample_end.isoformat()}) "
+            f"fills={fold.out_of_sample.fills} "
             f"return={_pct(fold.oos_return)} buy_hold={_pct(fold.buy_and_hold_return)} "
             f"selected={fold.selected.label()}"
         )

@@ -1,7 +1,9 @@
+import random
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from nautilus_lab.domain.bars import OhlcvBar
-from nautilus_lab.domain.pairs.pairs_trading import PairsTrading
+from nautilus_lab.domain.pairs.pairs_trading import PairsTrading, _PairState
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.signals import SignalSide
 from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_cointegrated_pair
@@ -93,3 +95,110 @@ def _broken_bar(bar: OhlcvBar) -> OhlcvBar:
         close=shock,
         volume=bar.volume,
     )
+
+
+def _count_fits(robot: PairsTrading, pairs: list[tuple[OhlcvBar, OhlcvBar]]) -> int:
+    """Run the robot and count how many ADF fits it performed."""
+    calls = [0]
+    original = robot._fit_state
+
+    def spy() -> _PairState | None:
+        calls[0] += 1
+        return original()
+
+    robot._fit_state = spy  # type: ignore[method-assign]
+    for bar_a, bar_b in pairs:
+        robot.on_bars(bar_a, bar_b)
+    return calls[0]
+
+
+def _never_cointegrated(count: int) -> list[tuple[OhlcvBar, OhlcvBar]]:
+    """Two unrelated random walks, so the gate stays closed.
+
+    Scaling one leg by a constant would *not* work here: it keeps the pair cointegrated
+    (the hedge ratio just divides by the same factor), which is what made an earlier
+    version of this helper silently test nothing.
+    """
+    random_a = random.Random(1)
+    random_b = random.Random(2)
+    origin = datetime(2024, 1, 1, tzinfo=UTC)
+    price_a = price_b = 100.0
+    bars: list[tuple[OhlcvBar, OhlcvBar]] = []
+    for index in range(count):
+        price_a += random_a.gauss(0.0, 1.0)
+        price_b += random_b.gauss(0.0, 1.0)
+        ts_utc = origin + timedelta(hours=index)
+        bars.append(
+            (
+                _walk_bar("ETH/USDT.SIM", price_a, ts_utc),
+                _walk_bar("BTC/USDT.SIM", price_b, ts_utc),
+            )
+        )
+    return bars
+
+
+def _walk_bar(instrument_id: str, price: float, ts_utc: datetime) -> OhlcvBar:
+    close = Decimal(repr(round(price, 6)))
+    return OhlcvBar(
+        instrument_id=instrument_id,
+        ts_utc=ts_utc,
+        open=close,
+        high=close + Decimal("0.1"),
+        low=close - Decimal("0.1"),
+        close=close,
+        volume=Decimal("1"),
+    )
+
+
+_NEVER_LOOKBACK = 60
+
+
+def test_a_failed_refit_backs_off_instead_of_probing_every_bar() -> None:
+    """A closed gate must not turn `refit_every_bars` into a per-bar fit.
+
+    Probing every bar ran an ADF fit on ~75% of bars instead of the ~4% that
+    `refit_every_bars=24` implies, which is what made a rolling refit take over an hour
+    per walk-forward. The threshold here is what separates the two regimes: the intended
+    cadence is `bars / refit_every`, the regressed one is `bars`.
+    """
+    refit_every = 10
+    bars = _never_cointegrated(120)
+    robot = PairsTrading(
+        leg_a="ETH/USDT.SIM",
+        leg_b="BTC/USDT.SIM",
+        params=PairsParams(
+            lookback=_NEVER_LOOKBACK,
+            z_entry=Decimal("1.5"),
+            refit_every_bars=refit_every,
+        ),
+    )
+
+    fits = _count_fits(robot, bars)
+
+    assert fits > 0, "the robot never even tried to fit"
+    assert fits <= 3 * (len(bars) // refit_every), (
+        f"{fits} fits for {len(bars)} bars means the robot probes per bar rather than "
+        f"per refit interval ({refit_every})"
+    )
+
+
+def test_refit_zero_keeps_the_legacy_per_bar_probe() -> None:
+    """`refit_every_bars=0` disables the cadence, and the old timing must survive.
+
+    With refitting switched off the robot has no other way to ever enter, so once the
+    window is full it keeps probing on every bar.
+    """
+    bars = _never_cointegrated(120)
+    robot = PairsTrading(
+        leg_a="ETH/USDT.SIM",
+        leg_b="BTC/USDT.SIM",
+        params=PairsParams(
+            lookback=_NEVER_LOOKBACK,
+            z_entry=Decimal("1.5"),
+            refit_every_bars=0,
+        ),
+    )
+
+    fits = _count_fits(robot, bars)
+
+    assert fits >= len(bars) - _NEVER_LOOKBACK - 1

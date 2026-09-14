@@ -40,17 +40,19 @@ class PairsTrading:
         if not self._closes_a.full:
             return None
         if self._state is None:
-            # Retry cadence has two regimes. Before the *first* successful fit the robot
-            # probes every bar, so it enters as soon as the pair becomes cointegrated.
-            # After a periodic refit fails it waits a full refit interval instead, so
-            # `refit_every_bars` keeps meaning what it says: re-testing every bar ran a
-            # fit on ~75% of bars rather than ~4%, which turned a rolling refit into an
-            # hour-long walk-forward.
+            # `refit_every_bars` governs how often cointegration is re-evaluated, in both
+            # directions: while the robot is waiting to enter a pair for the first time,
+            # and after a periodic refit has closed the gate on a pair it already holds.
+            # Probing every bar in the second case ran a fit on ~75% of bars instead of
+            # the ~4% that `refit_every_bars=24` implies, which turned a rolling refit
+            # into an hour-long walk-forward. `0` disables the cadence entirely, keeping
+            # the legacy per-bar probe.
             if self._bars_until_retry > 0:
                 self._bars_until_retry -= 1
                 return None
             self._state = self._fit_state()
             if self._state is None:
+                self._bars_until_retry = max(self._params.refit_every_bars - 1, 0)
                 return None
             self._bars_since_refit = 0
             self._bars_until_retry = 0

@@ -22,12 +22,19 @@ print('embargo:', s.embargo_bars)
 
 ### `bar timestamps must be strictly increasing`
 
-**Найчастіша проблема проєкту.** Причина: у каталозі **дублікати барів** з однаковими мітками часу.
+Причина: у каталозі **дублікати барів** з однаковими мітками часу — тобто два parquet-файли
+покривають ті самі години. Так бувало, коли `lab ingest` запускали двічі в один каталог із вікнами,
+що перекриваються: кожен запуск створював **новий** файл, і завантажувач бачив обидва.
 
-Найімовірніше ви запускали `lab ingest` двічі в один каталог із вікнами, що перекриваються.
-Кожен запуск створює новий parquet-файл, і завантажувач бачить обидва.
+**Це вже виправлено.** `write()` більше не дописує з `skip_disjoint_check=True`: спершу він
+викликає `delete_data_range` для свого діапазону (ідемпотентна заміна), а `load()` дедуплікує за
+`ts_utc` і сортує. Тому повторний ingest із перекриттям більше не створює дублікатів, а каталог,
+у якому файли-дублікати вже лежать, усе одно завантажиться — `load()` їх прибере. Якщо ви бачите
+цю помилку, у вас код, старіший за виправлення. Лікування — або **оновитися** (новий `load()`
+дедуплікує такий каталог), або **перезалити** дані: повторити `ingest` на тому вікні, яке
+перекривалося (запис замінить свій діапазон), чи почати з чистої теки.
 
-Діагностика:
+Діагностика (чи є дублікати зараз):
 
 ```bash
 .venv/bin/python - <<'PY'
@@ -42,7 +49,7 @@ print("bars:", len(bars), "unique:", len(counts),
 PY
 ```
 
-Якщо `duplicates > 0` — лікування:
+Якщо `duplicates > 0` — каталог зібраний старим кодом, і найпростіше перезалити його:
 
 ```bash
 rm -rf catalog
@@ -56,7 +63,8 @@ uv run lab ingest --start 2025-01-01 --symbols ETHUSDT --catalog catalog_fresh
 uv run lab research --catalog catalog_fresh
 ```
 
-**Профілактика:** один каталог = один ingest. Інше вікно → `--catalog` з новою текою.
+**Профілактика:** правило «один каталог = один ingest» більше не обов'язкове, але окрема тека на
+кожне вікно (`--catalog`) лишається найпростішим способом тримати каталог передбачуваним.
 Після кожного ingest запускайте перевірку з [04 §Крок 2](04-tsykl-doslidzhennya.md#крок-2-sanity-check--перевірка-цілісності-даних).
 
 ---
@@ -280,31 +288,69 @@ uv run lab research --slice ftx2022 >/dev/null 2>&1; echo "exit=$?"
 
 ### `--robot pairs` дає `fills=0`
 
-Робот не торгував, бо пара не пройшла ворота коінтеграції. Перевірте руками:
+Ворота коінтеграції тепер **справжні** (розбір баґу — [07 §5](07-yak-stvoryty-strategiyu.md#5-приклад-2-замінити-спрощений-adf-на-справжній)),
+тому `fills=0` більше **не** означає «зламаний ADF». Реальних причин три:
+
+| # | Причина | Поріг |
+|---|---------|-------|
+| 1 | Пара не проходить ворота коінтеграції: справжній ADF p-value **вищий** за поріг | `adf_pvalue_max` (типово `0.05`) |
+| 2 | Підігнаний період напіврозпаду **довший** за поріг | `max_half_life_bars` (типово `240`) |
+| 3 | Z-оцінка за весь прогін жодного разу не досягла порогу входу | `z_entry` (типово `2.0`) |
+
+Перевірте, чи ворота взагалі можуть відкритися на вашому каталозі:
 
 ```bash
 .venv/bin/python - <<'PY'
+from decimal import Decimal
+from pathlib import Path
+
 from nautilus_lab.domain.pairs.cointegration import fit_cointegration
 from nautilus_lab.domain.pairs.ou import fit_ou_half_life
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
-from pathlib import Path
 
+LOOKBACK = 120
 store = NautilusParquetCatalog(Path("catalog"))
 a = store.load(bar_type="ETH/USDT.SIM-1-HOUR-LAST-EXTERNAL")
 b = store.load(bar_type="BTC/USDT.SIM-1-HOUR-LAST-EXTERNAL")
-n = min(len(a), len(b), 120)
-y = tuple(x.close for x in a[:n])
-x = tuple(v.close for v in b[:n])
-coint = fit_cointegration(y, x)
-spread = tuple(i - coint.intercept - coint.hedge_ratio * j for i, j in zip(y, x, strict=True))
-ou = fit_ou_half_life(spread)
-print("ADF p-value:", coint.adf_pvalue, "(поріг 0.05)")
-print("half-life:", ou.half_life_bars, "(поріг 240)")
+
+
+def gate(start: int) -> tuple[Decimal, Decimal]:
+    y = tuple(bar.close for bar in a[start : start + LOOKBACK])
+    x = tuple(bar.close for bar in b[start : start + LOOKBACK])
+    coint = fit_cointegration(y, x)
+    spread = tuple(i - coint.intercept - coint.hedge_ratio * j for i, j in zip(y, x, strict=True))
+    return coint.adf_pvalue, fit_ou_half_life(spread).half_life_bars
+
+
+p, half_life = gate(0)
+print(f"перше вікно: p={p} half-life={half_life}")
+
+for start in range(len(a) - LOOKBACK + 1):
+    p, half_life = gate(start)
+    if p <= Decimal("0.05") and half_life <= Decimal("240"):
+        print(f"ворота відкрилися на вікні, що закінчується баром {start + LOOKBACK - 1}")
+        break
+else:
+    print("ворота не відкрилися жодного разу")
 PY
 ```
 
-Якщо `ADF p-value = 0.50` — спрацював спрощений тест. Лікування: замінити ADF на `statsmodels.coint`
-([07 §5](07-yak-stvoryty-strategiyu.md#5-приклад-2-замінити-спрощений-adf-на-справжній)).
+Як читати вивід:
+
+- `перше вікно ... ` — це ще **не** діагноз: робот пробує зсунуті вікна далі (див. нижче);
+- `ворота відкрилися на вікні ...` — ворота працюють, і `fills=0` найімовірніше означає причину 3:
+  `z_entry` не досягався. Робот коректно чекав — це не помилка;
+- `ворота не відкрилися жодного разу` — причини 1 або 2: пара на цьому вікні справді
+  некоінтегрована або повертається надто повільно. Це **не** баґ — ворота fail closed. Послаблювати
+  `adf_pvalue_max` «щоб заторгувало» не можна: ви вимкнете саме ту перевірку, яка й робить
+  пару-стратегію осмисленою.
+
+> **Відоме обмеження.** Фіт коінтеграції робиться **не** один раз на фіксованому вікні: якщо ворота
+> не відкрилися, робот пробує знову на наступному барі зі зсунутим на один бар вікном `lookback` —
+> і так до першого успіху. Але після першого успішного фіту β, μ і σ **заморожуються назавжди**:
+> коінтеграція більше ніколи не переоцінюється. Тому «пара була коінтегрована весь час» і «пара
+> проходить ворота зараз» — різні твердження: якщо зв'язок зламався пізніше, робот цього не
+> побачить. Деталі — [05 §3.4](05-roboty.md#34-ворота-якості-чому-робот-може-не-торгувати-взагалі).
 
 ### Синтетичний прогін дає +3251% прибутку
 
@@ -399,7 +445,7 @@ uv run lab research --catalog catalog_5m
 | Walk-forward, 5088 барів, `--optuna --trials 5` | ~9 с |
 | `--synthetic --bars 800 --tearsheet …` | ~2 с + генерація HTML (файл ~4 МБ) |
 | `ingest` 7 місяців по 1h, два символи | ~6.5 с |
-| `pytest` (128 тестів, разом із рушієм) | ~4 с |
+| `pytest` (149 тестів, разом із рушієм) | ~7 с |
 
 Час зростає лінійно з кількістю кандидатів у сітці (кожен кандидат — окремий прогін рушія на IS).
 
@@ -411,7 +457,8 @@ catalog/data/currency_pair/<INSTRUMENT>/<...>.parquet                      # о�
 ```
 
 Тека `catalog/` у `.gitignore` — дані не потрапляють у git. Файли можна копіювати між машинами,
-але **не можна** писати в той самий каталог двічі з перекриттям (див. першу помилку вище).
+а повторний запис у той самий каталог із перекриттям тепер безпечний: `write()` замінює свій
+діапазон, а `load()` дедуплікує (див. першу помилку вище).
 
 ### Як додати новий інструмент (наприклад SOLUSDT)?
 

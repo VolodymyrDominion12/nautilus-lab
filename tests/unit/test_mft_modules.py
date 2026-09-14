@@ -96,7 +96,9 @@ def test_pairs_trading_emits_spread_signal() -> None:
     for bar_a, bar_b in zip(data["ETH/USDT.SIM"], data["BTC/USDT.SIM"], strict=True):
         if robot.on_bars(bar_a, bar_b) is not None:
             signals += 1
-    assert signals >= 0
+    # `>= 0` used to sit here: no implementation could ever fail it, and it hid the
+    # unreachable ADF gate that stopped this robot from trading on any input at all.
+    assert signals > 0
 
 
 def test_bar_vpin_detects_toxic_bucket() -> None:

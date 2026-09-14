@@ -54,6 +54,13 @@ addopts = "-q --strict-markers"
 markers = [
     "integration: local engine I/O, no network",
 ]
+filterwarnings = [
+    # Raised inside nautilus_trader/backtest/engine.pyx (pd.Timestamp.utcnow) and
+    # surfaced on our `engine.run()` line. Nautilus declares pandas>=2.3.3 but still
+    # uses the pre-3.0 API, so this is theirs to fix; filtering only this one message
+    # keeps deprecations from our own code visible.
+    "ignore:Timestamp.utcnow is deprecated:DeprecationWarning",
+]
 
 [tool.ruff]
 target-version = "py312"

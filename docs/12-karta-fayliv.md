@@ -43,7 +43,7 @@
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
 | `pairs/params.py` | `PairsParams` | Ноги, lookback, `z_entry`/`z_exit`, ворота (half-life, ADF) |
-| `pairs/cointegration.py` | `CointegrationResult`, `fit_cointegration()` | OLS-хедж-коефіцієнт + спрощений ADF на залишках |
+| `pairs/cointegration.py` | `CointegrationResult`, `fit_cointegration()`, `critical_values()`, `p_value_from_statistic()` | OLS-хедж-коефіцієнт + **справжній ADF** на залишках: t-відношення коефіцієнта при `e_{t−1}`, критичні значення й p-value з квантилів МакКіннона (2010), порядок лагів за BIC. Поле `adf_lags` у `CointegrationResult` зберігає обраний лаг; `critical_values(nobs)` віддає три межі, `p_value_from_statistic(t, nobs)` — p-value |
 | `pairs/ou.py` | `OuFit`, `fit_ou_half_life()`, `z_score()` | Дискретний фіт процесу О-У, період напіврозпаду, Z-оцінка |
 | `pairs/pairs_trading.py` | `PairsTrading` | Сигнали входу/виходу по спреду + time stop |
 
@@ -113,7 +113,7 @@
 | `alerts.py` | `AlertNotifier`, `NullAlertNotifier`, `TelegramAlertNotifier`, `WebhookAlertNotifier`, `CompositeAlertNotifier`, `build_notifier()` | Сповіщення про завершення прогону; `httpx`, fail-safe |
 | `orderbook_microstructure.py` | `compute_order_book_imbalance()`, `compute_micro_price()`, `compute_microstructure_dataframe()` | Мікроструктура на float/Polars (векторні обчислення), окремо від доменної версії на `Decimal` |
 | `paper_trading.py` | `PaperOrderLog`, `PaperTradingLogger` | Журнал гіпотетичних ордерів |
-| `nautilus/parquet_catalog.py` | `NautilusParquetCatalog` | `write()`, `load()`; валідація кожного бару |
+| `nautilus/parquet_catalog.py` | `NautilusParquetCatalog` | `write()`, `load()`; валідація кожного бару; `write()` спершу **видаляє перекритий діапазон** (`delete_data_range`) — повторний ingest замінює вікно, а не додає другий файл; `load()` дедуплікує за `ts_utc` (останнє входження) і сортує за часом, тому старі каталоги лишаються читабельними |
 | `nautilus/bar_feed.py` | `ResearchBarFeed` | Каталог або синтетика; `load()`, `load_multi()`; стрес-вікна; inner-join |
 | `nautilus/bar_convert.py` | `to_engine_bars()`, `to_domain_bar()`, `datetime_to_nanos()`, `nanos_to_datetime()` | Доменний бар ↔ нативний `Bar` |
 | `nautilus/instrument.py` | `resolve_instrument()`, `binance_symbol_to_instrument_id()`, `eth_usdt_sim()`, `btc_usdt_sim()`, `eth_usdt_perp_sim()` | Описи інструментів симуляції |
@@ -142,6 +142,7 @@
 | `unit/test_bars.py` | Валідація OHLCV, UTC, монотонність, майбутні бари |
 | `unit/test_binance_klines.py` | Парсинг kline, пагінація, помилкові відповіді |
 | `unit/test_cli.py` | `live` fail-closed, `paper` працює, часткові дати → код 1, `parse_utc`, роботи без адаптера (`funding`/`ml_obi`/`glft`/`tri_scan`) → код 1 |
+| `unit/test_cointegration.py` | ADF-ворота `pairs`: коінтегрована пара проходить, два незалежні random walk — ні; статистика є **t-відношенням**, а не сирим коефіцієнтом; критичні значення збігаються з МакКінноном; p-value рівно 0.05 у 5%-точці й монотонна за статистикою; білий шум обирає 0 лагів; детермінізм; валідація входу |
 | `unit/test_donchian.py` | Пробої вгору/вниз, вихід за EMA, відсутність підглядання |
 | `unit/test_ema_crossover.py` | Прогрів, перетин, валідація періодів |
 | `unit/test_ingest.py` | Use case ingest: fetch → write, порожня відповідь → помилка |
@@ -158,16 +159,16 @@
 | `unit/test_optuna_optimizer.py` | Оптимізатор Optuna: кількість trials, вибір параметрів для кожного робота |
 | `unit/test_alerts.py` | Нотифікатори: успіх, HTTP-помилка, виняток, композиція (з моками `httpx`) |
 | `unit/test_orderbook_microstructure.py` | OBI (скаляр і список рівнів), micro-price, Polars-трансформація |
-| `integration/test_research_backtest.py` | Реальний рушій Nautilus: синтетичний прогін, roundtrip каталогу, pairs, порожній каталог → fail closed |
+| `integration/test_research_backtest.py` | Реальний рушій Nautilus: синтетичний прогін, roundtrip каталогу, pairs, порожній каталог → fail closed; повторний ingest перекритого вікна замінює дані, а не дублює їх; `load()` дедуплікує каталог, у якому вже лежать перекриті файли |
 | `integration/test_tearsheet_generation.py` | Генерація HTML-тиршита: файл створюється, непорожній, шлях повертається у звіті |
 
 Запуск:
 
 ```bash
-uv run pytest                                      # усі 128 тестів
+uv run pytest                                      # усі 149 тестів
 uv run pytest tests/unit -q                        # лише швидкі
 uv run pytest tests/integration -q                 # лише рушій (локально, без мережі)
-uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%)
+uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%; поточне — 84.12%)
 ```
 
 ---

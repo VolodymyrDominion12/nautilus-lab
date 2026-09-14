@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from nautilus_trader.model.data import BarType
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from nautilus_trader.persistence.catalog.singleton import clear_singleton_instances
 
@@ -15,7 +16,9 @@ from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.risk import RiskLimits
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
+from nautilus_lab.infrastructure.nautilus.bar_convert import to_engine_bars
 from nautilus_lab.infrastructure.nautilus.bar_feed import ResearchBarFeed
+from nautilus_lab.infrastructure.nautilus.instrument import resolve_instrument
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.nautilus.synthetic_bars import synthetic_regime_ohlcv
 
@@ -137,6 +140,57 @@ def test_pairs_synthetic_backtest_runs() -> None:
     )
     assert report.fills >= 0
     assert "pairs" in report.notes
+
+
+@pytest.mark.integration
+def test_reingesting_an_overlapping_window_replaces_instead_of_duplicating(
+    tmp_path: Path,
+) -> None:
+    """A second ingest over an overlapping window must not break the catalog.
+
+    `write_data` runs with `skip_disjoint_check=True`, so appending produced two
+    files covering the same timestamps. `bars()` merges every matching file, so the
+    next load raised "bar timestamps must be strictly increasing" — a message that
+    says nothing about the real cause.
+    """
+    clear_singleton_instances(ParquetDataCatalog)
+    bar_type = "ETH/USDT.SIM-1-HOUR-LAST-EXTERNAL"
+    bars = synthetic_regime_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=11)
+    store = NautilusParquetCatalog(tmp_path)
+    store.write(bars, bar_type=bar_type)
+
+    clear_singleton_instances(ParquetDataCatalog)
+    store.write(list(bars[100:]), bar_type=bar_type)
+
+    clear_singleton_instances(ParquetDataCatalog)
+    loaded = store.load(bar_type=bar_type)
+    assert [bar.ts_utc for bar in loaded] == [bar.ts_utc for bar in bars]
+
+
+@pytest.mark.integration
+def test_load_deduplicates_a_catalog_with_overlapping_files(tmp_path: Path) -> None:
+    """Catalogs written before the fix must still be readable."""
+    clear_singleton_instances(ParquetDataCatalog)
+    bar_type = "ETH/USDT.SIM-1-HOUR-LAST-EXTERNAL"
+    bars = synthetic_regime_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=11)
+    store = NautilusParquetCatalog(tmp_path)
+    store.write(bars, bar_type=bar_type)
+
+    clear_singleton_instances(ParquetDataCatalog)
+    ParquetDataCatalog(str(tmp_path)).write_data(
+        to_engine_bars(
+            list(bars[100:]),
+            bar_type=BarType.from_str(bar_type),
+            instrument=resolve_instrument("ETH/USDT.SIM"),
+        ),
+        skip_disjoint_check=True,
+    )
+
+    clear_singleton_instances(ParquetDataCatalog)
+    loaded = store.load(bar_type=bar_type)
+    timestamps = [bar.ts_utc for bar in loaded]
+    assert timestamps == sorted({bar.ts_utc for bar in bars})
+    assert len(timestamps) == len(set(timestamps))
 
 
 @pytest.mark.integration

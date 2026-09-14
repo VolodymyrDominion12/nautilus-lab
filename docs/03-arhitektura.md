@@ -154,7 +154,7 @@ BacktestReport  →  друк у консоль
 | Індикатори | `ema.py`, `atr.py`, `windows.py`, `volatility.py` | EMA (з SMA-сідом), ATR Вайлдера, HAR-RV |
 | Класифікація режиму | `regime.py` | `RegimeClassifier` (ER Кауфмана + нахил EMA + гістерезис), `RegimeParams`, `RobotName` |
 | Стратегії | `donchian.py`, `mean_reversion.py`, `ema_crossover.py`, `regime_router.py` | Пробій, повернення до середнього, перетин EMA, маршрутизатор між ними |
-| Пари | `pairs/cointegration.py`, `pairs/ou.py`, `pairs/pairs_trading.py`, `pairs/params.py` | Коінтеграція (OLS+спрощений ADF), процес О-У, торгівля спредом |
+| Пари | `pairs/cointegration.py`, `pairs/ou.py`, `pairs/pairs_trading.py`, `pairs/params.py` | Коінтеграція (OLS + справжній ADF: t-відношення, квантили МакКіннона, лаги за BIC), процес О-У, торгівля спредом |
 | Мікроструктура | `order_book.py`, `microstructure.py`, `vpin.py`, `hawkes.py`, `ml_obi_strategy.py` | Знімок книги, OBI/WOFI/fade, VPIN-кошики, інтенсивність Хоукса, ML-стратегія |
 | Інші стратегії | `funding.py`, `glft.py`, `triangular_arb.py` | Funding cash-and-carry, GLFT-котировки, пошук від'ємних циклів |
 | Ризик | `risk.py`, `portfolio_risk.py`, `kill_switch.py` | Ліміти, Келлі, VaR/CVaR, вимикач |

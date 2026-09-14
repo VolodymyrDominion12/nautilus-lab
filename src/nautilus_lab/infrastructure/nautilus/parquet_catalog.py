@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
-from nautilus_trader.model.data import BarType
+from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
@@ -38,6 +38,17 @@ class NautilusParquetCatalog:
         nautilus_type = BarType.from_str(bar_type)
         engine_bars = to_engine_bars(list(bars), bar_type=nautilus_type, instrument=instrument)
         catalog = self._catalog()
+        # Replace, do not append. `write_data` is called with skip_disjoint_check=True,
+        # so a second ingest over an overlapping window would leave two files covering
+        # the same timestamps. `bars()` merges every matching file, so reading such a
+        # catalog yields a non-monotonic series and fails `validate_bar` with a message
+        # ("bar timestamps must be strictly increasing") that hides the real cause.
+        catalog.delete_data_range(
+            data_cls=Bar,
+            identifier=bar_type,
+            start=datetime_to_nanos(bars[0].ts_utc),
+            end=datetime_to_nanos(bars[-1].ts_utc),
+        )
         catalog.write_data([instrument], skip_disjoint_check=True)
         catalog.write_data(engine_bars, skip_disjoint_check=True)
         return len(engine_bars)
@@ -60,14 +71,22 @@ class NautilusParquetCatalog:
                 f"no bars in catalog {self._path} for {bar_type}. Run `lab ingest` first."
             )
         instrument_id = str(raw[0].bar_type.instrument_id)
-        domain: list[OhlcvBar] = []
-        previous_ts: datetime | None = None
+        # Deduplicate defensively: catalogs written before `write()` became idempotent
+        # can still hold overlapping files. Bars are keyed by timestamp, so the last
+        # occurrence of a timestamp wins — deterministic, and it keeps such a catalog
+        # readable instead of failing on an ordering invariant.
+        by_timestamp: dict[datetime, OhlcvBar] = {}
         for item in raw:
             bar = to_domain_bar(item, instrument_id)
             if start is not None and bar.ts_utc < start:
                 continue
             if end is not None and bar.ts_utc >= end:
                 continue
+            by_timestamp[bar.ts_utc] = bar
+        domain: list[OhlcvBar] = []
+        previous_ts: datetime | None = None
+        for ts_utc in sorted(by_timestamp):
+            bar = by_timestamp[ts_utc]
             validate_bar(bar, previous_ts=previous_ts, now=bar.ts_utc)
             domain.append(bar)
             previous_ts = bar.ts_utc

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
@@ -83,6 +84,7 @@ class WalkForwardRequest:
     use_optuna: bool = False
     optuna_trials: int = 20
     tearsheet_path: str | None = None
+    folds: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +115,109 @@ class WalkForwardReport:
     out_of_sample: BacktestReport
     window: WalkForwardWindow
     notes: str
+
+
+@dataclass(frozen=True, slots=True)
+class WalkForwardFold:
+    """One rolling fold: parameters chosen on its in-sample block, scored on its OOS."""
+
+    index: int
+    selected: SelectedParams
+    candidates_tried: int
+    in_sample: BacktestReport
+    out_of_sample: BacktestReport
+    window: WalkForwardWindow
+    oos_return: Decimal | None = None
+    buy_and_hold_return: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MultiWindowReport:
+    """Out-of-sample results from several consecutive folds.
+
+    A single anchored split reports one number from one stretch of history, which
+    cannot separate an edge from luck — the same robot scored +14.9% and -10.1% on
+    two different out-of-sample stretches of the same symbol. The aggregate here is
+    the honest summary: how often the robot made money out of sample, how far the
+    folds disagree, and how it compares with simply holding the instrument.
+    """
+
+    folds: tuple[WalkForwardFold, ...]
+    starting_equity: Decimal
+    notes: str
+
+    @property
+    def oos_returns(self) -> tuple[Decimal, ...]:
+        return tuple(fold.oos_return for fold in self.folds if fold.oos_return is not None)
+
+    @property
+    def profitable_folds(self) -> int:
+        return sum(1 for value in self.oos_returns if value > 0)
+
+    @property
+    def mean_oos_return(self) -> Decimal | None:
+        values = self.oos_returns
+        if not values:
+            return None
+        return sum(values, Decimal("0")) / Decimal(len(values))
+
+    @property
+    def median_oos_return(self) -> Decimal | None:
+        values = self.oos_returns
+        return statistics.median(values) if values else None
+
+    @property
+    def worst_oos_return(self) -> Decimal | None:
+        values = self.oos_returns
+        return min(values) if values else None
+
+    @property
+    def best_oos_return(self) -> Decimal | None:
+        values = self.oos_returns
+        return max(values) if values else None
+
+    @property
+    def mean_buy_and_hold_return(self) -> Decimal | None:
+        values = tuple(
+            fold.buy_and_hold_return for fold in self.folds if fold.buy_and_hold_return is not None
+        )
+        if not values:
+            return None
+        return sum(values, Decimal("0")) / Decimal(len(values))
+
+    @property
+    def total_oos_fills(self) -> int:
+        return sum(fold.out_of_sample.fills for fold in self.folds)
+
+    def beats_buy_and_hold(self) -> bool | None:
+        """True when the robot out-earned holding the instrument on average.
+
+        None when either side is unmeasurable — never guess a verdict.
+        """
+        robot = self.mean_oos_return
+        baseline = self.mean_buy_and_hold_return
+        if robot is None or baseline is None:
+            return None
+        return robot > baseline
+
+    def summary_line(self) -> str:
+        """One-line out-of-sample verdict, safe to paste into a notification."""
+
+        def percent(value: Decimal | None) -> str:
+            return "n/a" if value is None else f"{value * 100:.2f}%"
+
+        verdict = self.beats_buy_and_hold()
+        comparison = (
+            "n/a" if verdict is None else "beats buy&hold" if verdict else "does not beat buy&hold"
+        )
+        return (
+            f"folds={len(self.folds)} profitable={self.profitable_folds}/{len(self.folds)} "
+            f"mean_oos={percent(self.mean_oos_return)} "
+            f"median_oos={percent(self.median_oos_return)} "
+            f"worst={percent(self.worst_oos_return)} best={percent(self.best_oos_return)} "
+            f"mean_buy_hold={percent(self.mean_buy_and_hold_return)} ({comparison}) "
+            f"oos_fills={self.total_oos_fills}"
+        )
 
 
 class ResearchBacktestPort(Protocol):

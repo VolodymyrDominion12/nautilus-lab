@@ -96,6 +96,75 @@ def anchored_window(
     )
 
 
+def rolling_windows(
+    bars: Sequence[OhlcvBar],
+    *,
+    folds: int,
+    in_sample_fraction: Decimal,
+    embargo_bars: int = 0,
+) -> tuple[WalkForwardWindow, ...]:
+    """One window per fold, with the selection window sliding behind each OOS block.
+
+    A single anchored split reports one number from one stretch of history, so it
+    cannot separate an edge from luck: the same robot scored +14.9% and -10.1% on two
+    different out-of-sample stretches of the same pair of symbols.
+
+    Layout: the first in-sample block spans ``in_sample_fraction`` of the bars, then a
+    one-fold embargo gap, then ``folds`` contiguous out-of-sample blocks filling the
+    rest. Fold *i* selects on ``[i * per_fold, i * per_fold + in_sample_bars)`` and
+    reports on the block that follows it, so the selection window slides forward by
+    one OOS block per fold and every fold is a genuine forecast rather than a re-read
+    of the same selection data. The last fold absorbs the integer-division remainder,
+    so the final window always reaches the most recent bar.
+    """
+    if folds < 1:
+        raise InvalidWindowError("folds must be >= 1")
+    if in_sample_fraction <= 0 or in_sample_fraction >= 1:
+        raise InvalidWindowError("in_sample_fraction must be in (0, 1)")
+    if embargo_bars < 0:
+        raise InvalidWindowError("embargo_bars must be >= 0")
+    total = len(bars)
+    if total < 3:
+        raise InvalidWindowError("need at least 3 bars to roll windows")
+
+    ordered = tuple(bars)
+    in_sample_bars = int(
+        (Decimal(total) * in_sample_fraction).to_integral_value(rounding=ROUND_DOWN)
+    )
+    per_fold = (total - in_sample_bars - embargo_bars) // folds
+    if in_sample_bars < 1 or per_fold < 1:
+        raise InvalidWindowError(
+            f"{total} bars cannot fill {folds} folds at in_sample_fraction="
+            f"{in_sample_fraction} with embargo_bars={embargo_bars}; "
+            "use fewer folds, a smaller in_sample_fraction or more bars"
+        )
+
+    windows: list[WalkForwardWindow] = []
+    last_index = total - 1
+    for fold in range(folds):
+        is_start = fold * per_fold
+        is_end = is_start + in_sample_bars
+        oos_start = is_end + embargo_bars
+        oos_end = total if fold == folds - 1 else oos_start + per_fold
+        # `out_of_sample_end` is exclusive, so a mid-series fold ends exactly on the
+        # next bar's open. Only the final fold needs the +1 microsecond, which is what
+        # makes the very last bar part of the window at all.
+        oos_end_ts = (
+            ordered[last_index].ts_utc + timedelta(microseconds=1)
+            if oos_end >= total
+            else ordered[oos_end].ts_utc
+        )
+        windows.append(
+            WalkForwardWindow(
+                in_sample_start=ordered[is_start].ts_utc,
+                in_sample_end=ordered[is_end].ts_utc,
+                out_of_sample_start=ordered[oos_start].ts_utc,
+                out_of_sample_end=oos_end_ts,
+            )
+        )
+    return tuple(windows)
+
+
 def _require_utc(ts: datetime, name: str) -> None:
     if ts.tzinfo is None:
         raise InvalidWindowError(f"{name} must be timezone-aware UTC")

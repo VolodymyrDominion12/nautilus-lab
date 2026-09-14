@@ -145,6 +145,7 @@ def walk_forward_request(
     tearsheet_path: str | None = None,
     use_optuna: bool = False,
     optuna_trials: int = 20,
+    folds: int = 1,
 ) -> WalkForwardRequest:
     backtest = research_request(
         cfg,
@@ -164,4 +165,5 @@ def walk_forward_request(
         use_optuna=use_optuna,
         optuna_trials=optuna_trials,
         tearsheet_path=tearsheet_path,
+        folds=folds,
     )

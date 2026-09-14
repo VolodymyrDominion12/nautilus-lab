@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from nautilus_lab.application.dtos import BacktestReport, WalkForwardReport
+from nautilus_lab.application.dtos import BacktestReport, MultiWindowReport, WalkForwardReport
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_paper import RunPaperResearch
 from nautilus_lab.application.scan_triangular import scan_triangular_opportunities
@@ -118,6 +118,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Number of Optuna trials (default: 20)",
     )
     research.add_argument(
+        "--folds",
+        type=int,
+        default=1,
+        help=(
+            "Rolling walk-forward folds. >= 2 runs one walk-forward per fold and "
+            "reports the out-of-sample aggregate instead of a single split"
+        ),
+    )
+    research.add_argument(
         "--notify",
         action="store_true",
         help="Send notification on completion via Telegram/Webhook",
@@ -197,24 +206,34 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
     optuna_enabled = getattr(args, "optuna", False)
     trials = getattr(args, "trials", 20)
     should_notify = getattr(args, "notify", False)
+    folds = getattr(args, "folds", 1)
 
     if args.synthetic:
-        if getattr(args, "walk_forward", False) or optuna_enabled:
+        if getattr(args, "walk_forward", False) or optuna_enabled or folds > 1:
             window = _optional_window(args)
-            wf = walk_forward_use_case(cfg).execute(
-                walk_forward_request(
-                    cfg,
-                    robot=robot,
-                    source=BarOrigin.SYNTHETIC,
-                    bar_count=args.bars,
-                    window=window,
-                    in_sample_fraction=args.is_fraction,
-                    stress_slice=args.slice,
-                    tearsheet_path=tearsheet,
-                    use_optuna=optuna_enabled,
-                    optuna_trials=trials,
-                )
+            request = walk_forward_request(
+                cfg,
+                robot=robot,
+                source=BarOrigin.SYNTHETIC,
+                bar_count=args.bars,
+                window=window,
+                in_sample_fraction=args.is_fraction,
+                stress_slice=args.slice,
+                tearsheet_path=tearsheet,
+                use_optuna=optuna_enabled,
+                optuna_trials=trials,
+                folds=folds,
             )
+            use_case = walk_forward_use_case(cfg)
+            if folds > 1:
+                multi = use_case.execute_multi(request)
+                _print_multi_window(multi)
+                if should_notify:
+                    notifier(cfg).notify(
+                        f"Synthetic multi-window walk-forward complete: {multi.summary_line()}"
+                    )
+                return 0
+            wf = use_case.execute(request)
             _print_walk_forward(wf)
             if should_notify:
                 notifier(cfg).notify(
@@ -245,18 +264,27 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         walk_forward = False
     if walk_forward:
         window = _optional_window(args)
-        wf = walk_forward_use_case(cfg).execute(
-            walk_forward_request(
-                cfg,
-                robot=robot,
-                window=window,
-                in_sample_fraction=args.is_fraction,
-                stress_slice=args.slice,
-                tearsheet_path=tearsheet,
-                use_optuna=optuna_enabled,
-                optuna_trials=trials,
-            )
+        request = walk_forward_request(
+            cfg,
+            robot=robot,
+            window=window,
+            in_sample_fraction=args.is_fraction,
+            stress_slice=args.slice,
+            tearsheet_path=tearsheet,
+            use_optuna=optuna_enabled,
+            optuna_trials=trials,
+            folds=folds,
         )
+        use_case = walk_forward_use_case(cfg)
+        if folds > 1:
+            multi = use_case.execute_multi(request)
+            _print_multi_window(multi)
+            if should_notify:
+                notifier(cfg).notify(
+                    f"Catalog multi-window walk-forward complete: {multi.summary_line()}"
+                )
+            return 0
+        wf = use_case.execute(request)
         _print_walk_forward(wf)
         if should_notify:
             notifier(cfg).notify(
@@ -338,6 +366,32 @@ def _optional_window(args: argparse.Namespace) -> WalkForwardWindow | None:
         out_of_sample_start=parse_utc(args.oos_start),
         out_of_sample_end=parse_utc(args.oos_end),
     )
+
+
+def _print_multi_window(report: MultiWindowReport) -> None:
+    print(report.notes)
+    for fold in report.folds:
+        window = fold.window
+        print(
+            f"fold {fold.index} OOS=[{window.out_of_sample_start.date()}, "
+            f"{window.out_of_sample_end.date()}) fills={fold.out_of_sample.fills} "
+            f"return={_pct(fold.oos_return)} buy_hold={_pct(fold.buy_and_hold_return)} "
+            f"selected={fold.selected.label()}"
+        )
+    print(
+        f"out-of-sample aggregate profitable={report.profitable_folds}/{len(report.folds)} "
+        f"mean={_pct(report.mean_oos_return)} median={_pct(report.median_oos_return)} "
+        f"worst={_pct(report.worst_oos_return)} best={_pct(report.best_oos_return)}"
+    )
+    print(
+        f"baseline buy&hold mean={_pct(report.mean_buy_and_hold_return)} "
+        f"oos_fills={report.total_oos_fills}"
+    )
+    print(report.summary_line())
+
+
+def _pct(value: Decimal | None) -> str:
+    return "n/a" if value is None else f"{value * 100:.2f}%"
 
 
 def _print_backtest(report: BacktestReport) -> None:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from math import sqrt
+
+from nautilus_lab.domain.bars import OhlcvBar
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,6 +14,21 @@ class BacktestMetrics:
     max_drawdown: Decimal
     turnover: Decimal
     sharpe_like: Decimal | None
+
+
+def buy_and_hold_return(bars: Sequence[OhlcvBar]) -> Decimal | None:
+    """Close-to-close return of simply holding the instrument across the window.
+
+    Every walk-forward fold needs this baseline: a long-only robot that returns 4%
+    while the instrument returned 12% has not added value, it has just taken
+    directional risk. Returns None when the window is too short to measure.
+    """
+    if len(bars) < 2:
+        return None
+    first = bars[0].close
+    if first == 0:
+        return None
+    return (bars[-1].close - first) / first
 
 
 def compute_metrics(

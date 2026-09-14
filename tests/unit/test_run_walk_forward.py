@@ -1,6 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
 
+import pytest
+
 from nautilus_lab.application.dtos import (
     BacktestReport,
     BacktestRequest,
@@ -9,10 +11,12 @@ from nautilus_lab.application.dtos import (
 )
 from nautilus_lab.application.run_walk_forward import RunWalkForward
 from nautilus_lab.application.score import in_sample_score
-from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
+from nautilus_lab.domain.errors import InvalidWindowError
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.risk import RiskLimits
 from nautilus_lab.domain.trading_mode import TradingMode
+from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.nautilus.synthetic_bars import synthetic_ohlcv
 
 
@@ -100,3 +104,138 @@ def test_selected_from_request_copies_regime_fields() -> None:
     selected = selected_from_request(request)
     assert selected.donchian_period == request.regime.donchian_period
     assert selected.bb_k == request.regime.bb_k
+
+
+# --- multi-window ------------------------------------------------------------------
+
+
+def _balance_for(bars_slice: list[OhlcvBar]) -> Decimal:
+    """Balance keyed to the window's first bar, so each fold gets a distinct result."""
+    return Decimal("100000") + Decimal(bars_slice[0].ts_utc.toordinal() % 100)
+
+
+class _WindowEngine:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(self, request: BacktestRequest, folded: list[OhlcvBar]) -> BacktestReport:
+        self.calls += 1
+        return BacktestReport(
+            fills=len(folded),
+            positions=1,
+            ending_balance=_balance_for(folded),
+            notes="fake",
+        )
+
+    def run_spread(
+        self,
+        request: BacktestRequest,
+        bars_by_instrument: dict[str, list[OhlcvBar]],
+    ) -> BacktestReport:
+        raise AssertionError("spread engine must not run")
+
+
+class _SingleSeriesFeed:
+    def __init__(self, bars: list[OhlcvBar]) -> None:
+        self._bars = bars
+
+    def load(self, request: BacktestRequest) -> list[OhlcvBar]:
+        return self._bars
+
+    def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
+        return {request.instrument_id: self._bars}
+
+
+def _multi_request(bars: list[OhlcvBar], *, folds: int = 3) -> WalkForwardRequest:
+    return WalkForwardRequest(
+        backtest=BacktestRequest(
+            mode=TradingMode.RESEARCH,
+            instrument_id="ETH/USDT.SIM",
+            bar_count=len(bars),
+            starting_equity=Decimal("100000"),
+            risk=_limits(),
+            robot=RobotName.EMA,
+            source=BarOrigin.CATALOG,
+        ),
+        in_sample_fraction=Decimal("0.5"),
+        folds=folds,
+    )
+
+
+def test_execute_multi_runs_one_walk_forward_per_fold_with_sliding_selection() -> None:
+    """The point of the feature: each fold must select on its own in-sample window."""
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=900, seed=5)
+    engine = _WindowEngine()
+    request = _multi_request(bars)
+
+    report = RunWalkForward(engine, _SingleSeriesFeed(bars)).execute_multi(request)
+
+    assert len(report.folds) == 3
+    assert [fold.index for fold in report.folds] == [0, 1, 2]
+
+    in_sample_starts = [fold.window.in_sample_start for fold in report.folds]
+    assert in_sample_starts == sorted(in_sample_starts)
+    assert len(set(in_sample_starts)) == 3, "folds must not re-read the same selection data"
+
+    out_of_sample_starts = [fold.window.out_of_sample_start for fold in report.folds]
+    assert out_of_sample_starts == sorted(out_of_sample_starts)
+    for earlier, later in zip(report.folds, report.folds[1:], strict=False):
+        assert earlier.window.out_of_sample_end <= later.window.out_of_sample_start
+
+    # Every fold really ran a grid search on its in-sample block, plus one OOS run.
+    assert engine.calls == 3 * (report.folds[0].candidates_tried + 1)
+
+
+def test_execute_multi_derives_returns_and_baseline_per_fold() -> None:
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=900, seed=5)
+    engine = _WindowEngine()
+    request = _multi_request(bars)
+
+    report = RunWalkForward(engine, _SingleSeriesFeed(bars)).execute_multi(request)
+
+    for fold in report.folds:
+        expected = (
+            _balance_for([_bar_at(bars, fold.window.out_of_sample_start)]) - Decimal("100000")
+        ) / Decimal("100000")
+        assert fold.oos_return == expected
+        assert fold.buy_and_hold_return is not None
+        assert fold.out_of_sample.fills > 0
+
+    assert report.profitable_folds + (len(report.folds) - report.profitable_folds) == 3
+    assert report.mean_oos_return is not None
+    assert report.median_oos_return is not None
+    assert report.mean_buy_and_hold_return is not None
+    assert report.total_oos_fills == sum(fold.out_of_sample.fills for fold in report.folds)
+    assert "multi-window walk-forward" in report.notes
+    assert "mean_oos=" in report.summary_line()
+
+
+def _bar_at(bars: list[OhlcvBar], ts_utc: datetime) -> OhlcvBar:
+    for bar in bars:
+        if bar.ts_utc == ts_utc:
+            return bar
+    raise AssertionError(f"no bar at {ts_utc.isoformat()}")
+
+
+def test_execute_multi_rejects_a_single_fold() -> None:
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=5)
+    use_case = RunWalkForward(_WindowEngine(), _SingleSeriesFeed(bars))
+    with pytest.raises(ValueError, match="folds >= 2"):
+        use_case.execute_multi(_multi_request(bars, folds=1))
+
+
+def test_execute_multi_rejects_an_explicit_window() -> None:
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=5)
+    use_case = RunWalkForward(_WindowEngine(), _SingleSeriesFeed(bars))
+    request = WalkForwardRequest(
+        backtest=_multi_request(bars).backtest,
+        window=WalkForwardWindow(
+            in_sample_start=bars[0].ts_utc,
+            in_sample_end=bars[100].ts_utc,
+            out_of_sample_start=bars[100].ts_utc,
+            out_of_sample_end=bars[-1].ts_utc,
+        ),
+        folds=2,
+    )
+    with pytest.raises(InvalidWindowError, match="derive their own windows"):
+        use_case.execute_multi(request)

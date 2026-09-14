@@ -10,6 +10,7 @@ from nautilus_lab.domain.walk_forward import (
     WalkForwardWindow,
     anchored_window,
     bars_in_range,
+    rolling_windows,
     split_by_window,
 )
 
@@ -92,3 +93,78 @@ def test_anchored_window_uses_first_fraction_for_selection() -> None:
 
     assert len(split.in_sample) == 7
     assert len(split.out_of_sample) == 3
+
+
+# --- rolling multi-window folds ----------------------------------------------------
+
+
+def _series(count: int) -> list[OhlcvBar]:
+    origin = datetime(2024, 1, 1, tzinfo=UTC)
+    return [_bar(origin + timedelta(days=index)) for index in range(count)]
+
+
+def test_rolling_windows_slide_the_selection_window_forward() -> None:
+    """Each fold must select on its own data, not re-read the first in-sample block.
+
+    With 100 bars, fraction 0.5 and embargo 2, the in-sample block is 50 bars and each
+    out-of-sample block is (100 - 50 - 2) // 4 = 12 bars, so the folds are
+    IS[0:50]/OOS[52:64], IS[12:62]/OOS[64:76], IS[24:74]/OOS[76:88], IS[36:86]/OOS[88:100].
+    """
+    bars = _series(100)
+    windows = rolling_windows(bars, folds=4, in_sample_fraction=Decimal("0.5"), embargo_bars=2)
+
+    assert len(windows) == 4
+    sizes = [
+        (
+            len(bars_in_range(bars, start=w.in_sample_start, end=w.in_sample_end)),
+            len(bars_in_range(bars, start=w.out_of_sample_start, end=w.out_of_sample_end)),
+        )
+        for w in windows
+    ]
+    assert sizes == [(50, 12), (50, 12), (50, 12), (50, 12)]
+
+    starts = [w.in_sample_start for w in windows]
+    assert starts == sorted(starts)
+    assert len(set(starts)) == 4
+
+
+def test_rolling_windows_leave_an_embargo_gap() -> None:
+    bars = _series(100)
+    windows = rolling_windows(bars, folds=4, in_sample_fraction=Decimal("0.5"), embargo_bars=2)
+    for window in windows:
+        in_sample = bars_in_range(bars, start=window.in_sample_start, end=window.in_sample_end)
+        out_of_sample = bars_in_range(
+            bars, start=window.out_of_sample_start, end=window.out_of_sample_end
+        )
+        gap = out_of_sample[0].ts_utc - in_sample[-1].ts_utc
+        assert gap == timedelta(days=3)  # one bar of separation plus the 2-bar embargo
+
+
+def test_rolling_windows_reach_the_most_recent_bar() -> None:
+    bars = _series(100)
+    windows = rolling_windows(bars, folds=3, in_sample_fraction=Decimal("0.6"), embargo_bars=0)
+    last = windows[-1]
+    assert last.out_of_sample_end > bars[-1].ts_utc
+    assert last.out_of_sample_end <= bars[-1].ts_utc + timedelta(microseconds=1)
+
+
+def test_rolling_windows_never_overlap_in_sample_and_out_of_sample() -> None:
+    bars = _series(120)
+    for window in rolling_windows(bars, folds=5, in_sample_fraction=Decimal("0.5"), embargo_bars=3):
+        split = split_by_window(bars, window)
+        assert split.in_sample[-1].ts_utc < split.out_of_sample[0].ts_utc
+
+
+def test_rolling_windows_reject_more_folds_than_bars_can_fill() -> None:
+    with pytest.raises(InvalidWindowError, match="cannot fill"):
+        rolling_windows(_series(40), folds=10, in_sample_fraction=Decimal("0.9"))
+
+
+def test_rolling_windows_reject_bad_fraction() -> None:
+    with pytest.raises(InvalidWindowError, match="in_sample_fraction"):
+        rolling_windows(_series(100), folds=2, in_sample_fraction=Decimal("1"))
+
+
+def test_rolling_windows_reject_zero_folds() -> None:
+    with pytest.raises(InvalidWindowError, match="folds must be"):
+        rolling_windows(_series(100), folds=0, in_sample_fraction=Decimal("0.5"))

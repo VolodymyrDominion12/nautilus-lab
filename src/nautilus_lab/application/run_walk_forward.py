@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 
 from nautilus_lab.application.dtos import (
     BacktestReport,
     BacktestRequest,
     BarFeed,
+    MultiWindowReport,
     ResearchBacktestPort,
     SelectedParams,
+    WalkForwardFold,
     WalkForwardReport,
     WalkForwardRequest,
     apply_selected,
@@ -18,10 +20,14 @@ from nautilus_lab.application.param_grid import iter_param_grid
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.score import in_sample_score
 from nautilus_lab.domain.align import split_aligned_by_window
+from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.errors import InvalidWindowError
+from nautilus_lab.domain.metrics import buy_and_hold_return
 from nautilus_lab.domain.regime import RobotName, require_backtest_support
 from nautilus_lab.domain.walk_forward import (
     WalkForwardWindow,
     anchored_window,
+    rolling_windows,
     split_by_window,
 )
 
@@ -84,6 +90,136 @@ class RunWalkForward:
             run_oos=lambda candidate: self._engine.run_spread(candidate, oos_bars),
         )
 
+    def execute_multi(self, request: WalkForwardRequest) -> MultiWindowReport:
+        """Run one walk-forward per rolling fold and aggregate the out-of-sample folds.
+
+        Each fold re-selects parameters on its own in-sample window, so the reported
+        spread across folds is a forecast spread rather than one number from one
+        arbitrary split. The aggregate is what a single run cannot give: how often the
+        robot made money out of sample and how it compares with simply holding.
+        """
+        require_simulated_mode(request.backtest.mode)
+        require_backtest_support(request.backtest.robot)
+        if request.folds < 2:
+            raise ValueError("multi-window walk-forward needs folds >= 2")
+        if request.window is not None:
+            raise InvalidWindowError(
+                "multi-window runs derive their own windows; drop --is-start/--oos-start"
+            )
+        embargo = request.embargo_bars or request.backtest.embargo_bars
+
+        if request.backtest.robot is RobotName.PAIRS:
+            return self._execute_pairs_multi(request, embargo)
+        return self._execute_single_multi(request, embargo)
+
+    def _execute_single_multi(
+        self,
+        request: WalkForwardRequest,
+        embargo: int,
+    ) -> MultiWindowReport:
+        bars = self._feed.load(request.backtest)
+        windows = rolling_windows(
+            bars,
+            folds=request.folds,
+            in_sample_fraction=request.in_sample_fraction,
+            embargo_bars=embargo,
+        )
+        folds = [
+            self._evaluate_single_fold(request, index, bars, window)
+            for index, window in enumerate(windows)
+        ]
+        return _multi_report(request, folds, len(windows))
+
+    def _evaluate_single_fold(
+        self,
+        request: WalkForwardRequest,
+        index: int,
+        bars: Sequence[OhlcvBar],
+        window: WalkForwardWindow,
+    ) -> WalkForwardFold:
+        split = split_by_window(bars, window)
+        _require_warmup(request.backtest.robot, len(split.in_sample), f"fold {index} in-sample")
+        _require_warmup(
+            request.backtest.robot, len(split.out_of_sample), f"fold {index} out-of-sample"
+        )
+        return self._run_fold(
+            request,
+            index,
+            window,
+            run_is=lambda candidate: self._engine.run(candidate, list(split.in_sample)),
+            run_oos=lambda candidate: self._engine.run(candidate, list(split.out_of_sample)),
+            oos_reference=split.out_of_sample,
+        )
+
+    def _execute_pairs_multi(
+        self,
+        request: WalkForwardRequest,
+        embargo: int,
+    ) -> MultiWindowReport:
+        all_bars = self._feed.load_multi(request.backtest)
+        leg_a = request.backtest.pairs.leg_a
+        windows = rolling_windows(
+            list(all_bars[leg_a]),
+            folds=request.folds,
+            in_sample_fraction=request.in_sample_fraction,
+            embargo_bars=embargo,
+        )
+        folds = [
+            self._evaluate_pairs_fold(request, index, all_bars, window)
+            for index, window in enumerate(windows)
+        ]
+        return _multi_report(request, folds, len(windows))
+
+    def _evaluate_pairs_fold(
+        self,
+        request: WalkForwardRequest,
+        index: int,
+        all_bars: dict[str, list[OhlcvBar]],
+        window: WalkForwardWindow,
+    ) -> WalkForwardFold:
+        leg_a = request.backtest.pairs.leg_a
+        is_bars, oos_bars = split_aligned_by_window(all_bars, window)
+        _require_warmup(request.backtest.robot, len(is_bars[leg_a]), f"fold {index} in-sample")
+        _require_warmup(request.backtest.robot, len(oos_bars[leg_a]), f"fold {index} out-of-sample")
+        return self._run_fold(
+            request,
+            index,
+            window,
+            run_is=lambda candidate: self._engine.run_spread(candidate, is_bars),
+            run_oos=lambda candidate: self._engine.run_spread(candidate, oos_bars),
+            oos_reference=oos_bars[leg_a],
+        )
+
+    def _run_fold(
+        self,
+        request: WalkForwardRequest,
+        index: int,
+        window: WalkForwardWindow,
+        *,
+        run_is: Callable[[BacktestRequest], BacktestReport],
+        run_oos: Callable[[BacktestRequest], BacktestReport],
+        oos_reference: Sequence[OhlcvBar],
+    ) -> WalkForwardFold:
+        best_params, best_is_report, tried = self._select(request, run_is)
+        selected_request = apply_selected(request.backtest, best_params)
+        # Only the final fold owns the tearsheet path, otherwise every fold would
+        # overwrite the same file and the last one would look like the only result.
+        if request.tearsheet_path and index == request.folds - 1:
+            from dataclasses import replace
+
+            selected_request = replace(selected_request, tearsheet_path=request.tearsheet_path)
+        oos = run_oos(selected_request)
+        return WalkForwardFold(
+            index=index,
+            selected=best_params,
+            candidates_tried=tried,
+            in_sample=best_is_report,
+            out_of_sample=oos,
+            window=window,
+            oos_return=_window_return(oos, request.backtest.starting_equity),
+            buy_and_hold_return=buy_and_hold_return(oos_reference),
+        )
+
     def _select_and_evaluate(
         self,
         request: WalkForwardRequest,
@@ -92,16 +228,7 @@ class RunWalkForward:
         run_is: Callable[[BacktestRequest], BacktestReport],
         run_oos: Callable[[BacktestRequest], BacktestReport],
     ) -> WalkForwardReport:
-        if request.use_optuna:
-            from nautilus_lab.application.optuna_optimizer import OptunaParamOptimizer
-
-            optimizer = OptunaParamOptimizer(
-                n_trials=request.optuna_trials,
-                seed=request.backtest.seed,
-            )
-            best_params, best_is_report, tried = optimizer.optimize(request.backtest, run_is)
-        else:
-            best_params, best_is_report, tried = self._grid_search_params(request, run_is)
+        best_params, best_is_report, tried = self._select(request, run_is)
 
         selected_request = apply_selected(request.backtest, best_params)
         if request.tearsheet_path:
@@ -118,6 +245,21 @@ class RunWalkForward:
             window=window,
             notes=_notes(window, best_params, tried, is_optuna=request.use_optuna),
         )
+
+    def _select(
+        self,
+        request: WalkForwardRequest,
+        run_is: Callable[[BacktestRequest], BacktestReport],
+    ) -> tuple[SelectedParams, BacktestReport, int]:
+        if request.use_optuna:
+            from nautilus_lab.application.optuna_optimizer import OptunaParamOptimizer
+
+            optimizer = OptunaParamOptimizer(
+                n_trials=request.optuna_trials,
+                seed=request.backtest.seed,
+            )
+            return optimizer.optimize(request.backtest, run_is)
+        return self._grid_search_params(request, run_is)
 
     def _grid_search_params(
         self,
@@ -142,6 +284,32 @@ class RunWalkForward:
             raise ValueError("parameter grid is empty")
 
         return best_params, best_is_report, tried
+
+
+def _window_return(report: BacktestReport, starting_equity: Decimal) -> Decimal | None:
+    """Fraction gained or lost over one fold. None when the engine reported no balance."""
+    if report.ending_balance is None or starting_equity <= 0:
+        return None
+    return (report.ending_balance - starting_equity) / starting_equity
+
+
+def _multi_report(
+    request: WalkForwardRequest,
+    folds: Sequence[WalkForwardFold],
+    fold_count: int,
+) -> MultiWindowReport:
+    method = "optuna" if request.use_optuna else "grid"
+    first, last = folds[0], folds[-1]
+    return MultiWindowReport(
+        folds=tuple(folds),
+        starting_equity=request.backtest.starting_equity,
+        notes=(
+            f"multi-window walk-forward ({method}): {fold_count} rolling folds, parameters "
+            f"re-selected on each fold's own in-sample window; report the out-of-sample "
+            f"aggregate. windows=[{first.window.in_sample_start.isoformat()}, "
+            f"{last.window.out_of_sample_end.isoformat()})"
+        ),
+    )
 
 
 def _require_warmup(robot: RobotName, bar_count: int, fold: str) -> None:

@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from nautilus_lab.domain.errors import InvalidHypothesisError
+from nautilus_lab.domain.factor_dsl import parse_recipe, recipe_complexity
 from nautilus_lab.domain.formulaic_alphas import FEATURE_NAMES
 from nautilus_lab.domain.hypothesis import Hypothesis, parse_hypotheses
 from nautilus_lab.domain.ports import ChatCompleter

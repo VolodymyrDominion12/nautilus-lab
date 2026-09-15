@@ -180,6 +180,15 @@ def test_summarise_reports_flagged_proposals() -> None:
     assert "research/journal.md" in text
 
 
+def test_summarise_compiles_valid_formulas_and_flags_shallow_ones() -> None:
+    text = summarise(_run(_FakeCompleter(_HYPOTHESES_JSON)))
+    assert "complexity:" in text
+    payload = json.loads(_HYPOTHESES_JSON)
+    payload[0]["formula"] = "momentum_10"
+    shallow = summarise(_run(_FakeCompleter(json.dumps(payload))))
+    assert "COMPILE ERROR:" in shallow
+
+
 def test_endpoint_host_of_strips_credentials_and_path() -> None:
     assert endpoint_host_of("https://api.deepseek.com/v1") == "api.deepseek.com"
     assert endpoint_host_of("http://127.0.0.1:11434/v1") == "127.0.0.1:11434"

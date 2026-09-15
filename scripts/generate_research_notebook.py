@@ -1,0 +1,457 @@
+"""Generate strategy_research_guide.ipynb for nautilus-lab research."""
+
+import json
+from pathlib import Path
+
+notebook = {
+    "cells": [
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "# 🔬 nautilus-lab: Повний інтерактивний посібник з кількісних досліджень\n",
+                "\n",
+                "Цей зошит демонструє стандартизований цикл розробки, перевірки та аудиту алгоритмічних стратегій на базі **NautilusTrader** у репозиторії `nautilus-lab`.\n",
+                "\n",
+                "### Архітектурні принципи:\n",
+                "1. **Research-First**: Усі дослідження проходять строгий аудит на перенавчання перед будь-яким розгортанням.\n",
+                "2. **Zero Lookahead**: Сигнали формуються виключно на закритих барах (`ts_event`), виконання моделюється із затримкою та реалістичними комісіями (Maker 0.02%, Taker 0.05%, спред/прослизання).\n",
+                "3. **In-Sample для вибору, Out-of-Sample для оцінки**: Оптимізовані параметри ніколи не оцінюються на навчальній вибірці.\n",
+                "4. **Purged Embargo**: Між IS та OOS встановлюється часовий буфер (embargo), щоб запобігти витоку інформації через серійну кореляцію.\n",
+                "5. **Fail-Closed**: Жодна стратегія не переходить до торгівлі без проходження статистичних воріт (PBO < 0.5, OOS Sharpe > 0, позитивний результат на стрес-слайсах)."
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 1. Ініціалізація оточення та імпорти\n",
+                "\n",
+                "Підключаємо модулі системи: конфігурацію, доменні моделі барів, індикатори мікроструктури, Nautilus-двигунець та валідатори."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "import sys\n",
+                "from pathlib import Path\n",
+                "from datetime import datetime, UTC, timedelta\n",
+                "import numpy as np\n",
+                "import pandas as pd\n",
+                "import plotly.graph_objects as go\n",
+                "from plotly.subplots import make_subplots\n",
+                "\n",
+                "# Переконуємось, що src доступний у sys.path\n",
+                "project_root = Path.cwd().parent if Path.cwd().name == \"notebooks\" else Path.cwd()\n",
+                "src_path = project_root / \"src\"\n",
+                "if str(src_path) not in sys.path:\n",
+                "    sys.path.insert(0, str(src_path))\n",
+                "\n",
+                "from nautilus_lab.infrastructure.config import settings\n",
+                "from nautilus_lab.domain.bars import Bar, BarOrigin\n",
+                "from nautilus_lab.domain.windows import UtcWindow\n",
+                "from nautilus_lab.domain.regime import RobotName\n",
+                "from nautilus_lab.domain.metrics import BacktestMetrics\n",
+                "from nautilus_lab.application.run_walk_forward import walk_forward_request, walk_forward_use_case\n",
+                "from nautilus_lab.application.run_overfitting_audit import pbo_request, pbo_use_case\n",
+                "\n",
+                "cfg = settings()\n",
+                "print(f\"✓ Конфігурація завантажена: інструмент={cfg.instrument_id}, каталог={cfg.catalog_path}\")\n",
+                "print(f\"✓ Режим торгівлі: {cfg.trading_mode} (live fail-closed: {cfg.live_trading_disabled})\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 2. Робота з даними: Parquet-каталог або синтетичні бари\n",
+                "\n",
+                "У `nautilus-lab` дані зберігаються у високопродуктивному каталозі Apache Parquet (`catalog/`).\n",
+                "Для швидкої розробки та перевірки логіки доступний синтетичний генератор барів із фіксованим seed (`--synthetic`)."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Завантаження даних із каталогу або перевірка його цілісності\n",
+                "from nautilus_trader.persistence.catalog import ParquetDataCatalog\n",
+                "\n",
+                "catalog_dir = project_root / cfg.catalog_path\n",
+                "print(f\"Шлях до каталогу: {catalog_dir}\")\n",
+                "\n",
+                "catalog_exists = catalog_dir.exists() and any(catalog_dir.iterdir())\n",
+                "if catalog_exists:\n",
+                "    try:\n",
+                "        catalog = ParquetDataCatalog(str(catalog_dir))\n",
+                "        bar_types = [cfg.bar_type_spec]\n",
+                "        bars = catalog.bars(bar_types=bar_types)\n",
+                "        print(f\"✓ У каталозі знайдено {len(bars)} барів для {cfg.bar_type_spec}\")\n",
+                "        if bars:\n",
+                "            print(f\"  Діапазон: від {pd.Timestamp(bars[0].ts_event, unit='ns', tz='UTC')} до {pd.Timestamp(bars[-1].ts_event, unit='ns', tz='UTC')}\")\n",
+                "    except Exception as e:\n",
+                "        print(f\"ℹ Каталог порожній або потребує оновлення ({e}). Можна використовувати --synthetic бари.\")\n",
+                "else:\n",
+                "    print(\"ℹ Каталог ще не заповнено. Завантажте історію через:\")\n",
+                "    print(\"   uv run lab ingest --start 2025-01-01 --symbols ETHUSDT,BTCUSDT\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 3. Sanity Check: Перевірка даних на дублікати та розриви\n",
+                "\n",
+                "> ⚠️ **Критичне правило:** Часові мітки барів мають строго монотонно зростати (`ts_event[i] > ts_event[i-1]`).\n",
+                "> Будь-які дублікати ламають сортування подій у симуляторі Nautilus."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Перевірка монотонності та відсутності дублікатів\n",
+                "def verify_bars_integrity(timestamps_ns: list[int]) -> dict:\n",
+                "    if not timestamps_ns:\n",
+                "        return {\"status\": \"empty\", \"count\": 0, \"duplicates\": 0, \"monotonic\": True}\n",
+                "    \n",
+                "    diffs = np.diff(timestamps_ns)\n",
+                "    duplicates = int(np.sum(diffs == 0))\n",
+                "    backwards = int(np.sum(diffs < 0))\n",
+                "    monotonic = duplicates == 0 and backwards == 0\n",
+                "    \n",
+                "    return {\n",
+                "        \"count\": len(timestamps_ns),\n",
+                "        \"duplicates\": duplicates,\n",
+                "        \"backwards_steps\": backwards,\n",
+                "        \"monotonic\": monotonic,\n",
+                "        \"status\": \"OK\" if monotonic else \"CORRUPTED\"\n",
+                "    }\n",
+                "\n",
+                "print(\"✓ Функція перевірки цілісності готова.\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 4. Фічі та фільтри мікроструктури: VPIN, Hawkes, Donchian, ATR\n",
+                "\n",
+                "У `src/nautilus_lab/domain/` реалізовано доменні розрахунки:\n",
+                "- **VPIN (Volume-Synchronized Probability of Toxicity)**: Оцінка токсичного потоку та ризику несприятливого вибору (adverse selection).\n",
+                "- **Hawkes Process**: Кластеризація волатильності та інтенсивність потоку угод.\n",
+                "- **Donchian & ATR**: Фільтри динамічної волатильності та рівні пробою каналів."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "from nautilus_lab.domain.atr import atr_series\n",
+                "from nautilus_lab.domain.vpin import bar_vpin\n",
+                "from nautilus_lab.domain.donchian import donchian_channel\n",
+                "\n",
+                "# Демонстрація розрахунку на згенерованій серії цін\n",
+                "np.random.seed(42)\n",
+                "n_bars = 200\n",
+                "close_prices = 3000.0 * np.exp(np.cumsum(np.random.normal(0.0002, 0.008, n_bars)))\n",
+                "high_prices = close_prices * (1 + np.abs(np.random.normal(0, 0.004, n_bars)))\n",
+                "low_prices = close_prices * (1 - np.abs(np.random.normal(0, 0.004, n_bars)))\n",
+                "volumes = np.random.lognormal(mean=5.0, sigma=0.8, size=n_bars)\n",
+                "\n",
+                "atr_vals = atr_series(high_prices, low_prices, close_prices, period=14)\n",
+                "vpin_vals = bar_vpin(close_prices, volumes, window=30)\n",
+                "upper_d, lower_d = donchian_channel(high_prices, low_prices, period=20)\n",
+                "\n",
+                "print(f\"Згенеровано {n_bars} тестових барів.\")\n",
+                "print(f\"Останній ATR(14): {atr_vals[-1]:.2f}\")\n",
+                "print(f\"Останній VPIN: {vpin_vals[-1]:.4f} (індикатор токсичності потоку)\")\n",
+                "print(f\"Donchian(20): Upper={upper_d[-1]:.2f}, Lower={lower_d[-1]:.2f}\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 5. Запуск Walk-Forward бектесту через NautilusTrader\n",
+                "\n",
+                "Основний метод перевірки стратегій у репозиторії: **Walk-Forward Analysis**.\n",
+                "- **In-Sample (IS)**: 70% історії для калібрування параметрів.\n",
+                "- **Embargo Buffer**: 50 барів паузи для запобігання витоку інформації.\n",
+                "- **Out-of-Sample (OOS)**: 30% історії — єдиний інтервал, за яким приймається рішення!"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Запуск чесного Walk-Forward тесту для обраного робота\n",
+                "robot_choice = RobotName.REGIME  # або EMA, PAIRS, VPIN_MOMENTUM, FORMULAIC_LGBM\n",
+                "\n",
+                "req = walk_forward_request(\n",
+                "    cfg,\n",
+                "    robot=robot_choice,\n",
+                "    source=BarOrigin.SYNTHETIC,  # BarOrigin.CATALOG для реальних даних\n",
+                "    bar_count=3000,\n",
+                "    in_sample_fraction=0.7,\n",
+                "    embargo_bars=50,\n",
+                "    folds=1,\n",
+                ")\n",
+                "\n",
+                "use_case = walk_forward_use_case(cfg)\n",
+                "wf_result = use_case.execute(req)\n",
+                "\n",
+                "print(\"=== РЕЗУЛЬТАТИ WALK-FORWARD ===\")\n",
+                "print(f\"Параметри, обрані на In-Sample: {wf_result.selected_params}\")\n",
+                "print(f\"In-Sample баланс:  {wf_result.in_sample.ending_balance:.2f} (fills={wf_result.in_sample.fill_count})\")\n",
+                "print(f\"★ Out-of-Sample баланс (ЗВІТНИЙ): {wf_result.out_of_sample.ending_balance:.2f} (fills={wf_result.out_of_sample.fill_count})\")\n",
+                "print(f\"OOS PnL: {wf_result.out_of_sample.pnl_percent:+.2f}%\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 6. Багатовіконний Walk-Forward (K-Folds Cross-Validation)\n",
+                "\n",
+                "Одне OOS-вікно може випадково опинитись у сприятливому тренді. Щоб довести наявність альфи, ми розбиваємо історію на $K$ фолдів (`--folds 4`).\n",
+                "Стратегія вважається надійною, якщо вона показує стабільний результат на більшості фолдів."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "multi_req = walk_forward_request(\n",
+                "    cfg,\n",
+                "    robot=robot_choice,\n",
+                "    source=BarOrigin.SYNTHETIC,\n",
+                "    bar_count=3000,\n",
+                "    folds=4,\n",
+                ")\n",
+                "\n",
+                "multi_res = use_case.execute_multi(multi_req)\n",
+                "\n",
+                "print(\"=== РЕЗУЛЬТАТИ 4-FOLD WALK-FORWARD ===\")\n",
+                "print(f\"Успішних фолдів: {multi_res.profitable_folds} / {len(multi_res.folds)}\")\n",
+                "print(f\"Середня OOS прибутковість: {multi_res.mean_oos_return:+.2%}\")\n",
+                "print(f\"Середній Buy&Hold ринку:   {multi_res.mean_buy_and_hold_return:+.2%}\")\n",
+                "print(f\"Всього OOS угод: {multi_res.total_oos_fills}\")\n",
+                "\n",
+                "for i, fold in enumerate(multi_res.folds, 1):\n",
+                "    print(f\"  Fold {i}: OOS={fold.out_of_sample.pnl_percent:+.2f}% (fills={fold.out_of_sample.fill_count})\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 7. Аудит на перенавчання: CSCV та PBO (Probability of Backtest Overfitting)\n",
+                "\n",
+                "За методологією Bailey & López de Prado (2014):\n",
+                "- Ми розбиваємо часовий ряд на $N$ блоків (наприклад, 8).\n",
+                "- Формуємо всі симетричні комбінації трейн/тест (комбінаторний крос-валідатор CSCV).\n",
+                "- Розраховуємо **PBO (Probability of Backtest Overfitting)**:\n",
+                "  - $PBO < 0.25$: Відмінно, вибір на In-Sample стійко узагальнюється на Out-of-Sample.\n",
+                "  - $PBO \\approx 0.50$: Підкидання монети (відсутність стійкого edge).\n",
+                "  - $PBO > 0.50$: **Перенавчання!** In-sample переможець системно зливає поза вибіркою."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "pbo_req_obj = pbo_request(\n",
+                "    cfg,\n",
+                "    robot=robot_choice,\n",
+                "    source=BarOrigin.SYNTHETIC,\n",
+                "    bar_count=3000,\n",
+                "    blocks=8,\n",
+                ")\n",
+                "\n",
+                "pbo_runner = pbo_use_case(cfg)\n",
+                "pbo_audit = pbo_runner.execute(pbo_req_obj)\n",
+                "\n",
+                "print(\"=== АУДИТ НА ПЕРЕНАВЧАННЯ (PBO / CSCV) ===\")\n",
+                "print(f\"Блоків історії: {pbo_audit.blocks}\")\n",
+                "print(f\"Кількість протестованих конфігурацій: {pbo_audit.configuration_count}\")\n",
+                "print(f\"Кількість симетричних сплітів: {pbo_audit.splits_count}\")\n",
+                "print(f\"★ PBO = {pbo_audit.pbo:.4f}\")\n",
+                "\n",
+                "if pbo_audit.pbo < 0.30:\n",
+                "    print(\"🟢 ВИСНОВОК: Стратегія успішно пройшла аудит! Selection generalises.\")\n",
+                "elif pbo_audit.pbo < 0.50:\n",
+                "    print(\"🟡 ВИСНОВОК: Прийнятний рівень, але потрібні додаткові стрес-тести.\")\n",
+                "else:\n",
+                "    print(\"🔴 ВИСНОВОК: ПЕРЕНАВЧАННЯ (Overfitted). Стратегію відхилено.\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 8. Стрес-тестування на історичних шоках (Stress Slices)\n",
+                "\n",
+                "Стратегія має бути протестована на найбільш руйнівних періодах крипторинку:\n",
+                "- `covid2020` (Березень 2020: паніка ліквідності, падіння -50% за день)\n",
+                "- `ftx2022` (Листопад 2022: крах біржі FTX, каскадні ліквідації)\n",
+                "- `etf2024` (Січень 2024: волатильність схвалення Spot ETF)\n",
+                "\n",
+                "CLI-виклик для каталогу:\n",
+                "```bash\n",
+                "uv run lab research --robot regime --slice ftx2022 --catalog catalog\n",
+                "```"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "from nautilus_lab.domain.stress_slices import NamedStressSlice\n",
+                "\n",
+                "print(\"Доступні стрес-слайси:\")\n",
+                "for s in NamedStressSlice:\n",
+                "    print(f\"  • {s.value}\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 9. Офлайн LLM-контур генерації альф (`lab propose`) та Журнал рішень\n",
+                "\n",
+                "У `nautilus-lab` модель ШІ використовується **виключно офлайн**:\n",
+                "- LLM виступає генератором математичних гіпотез (`research/prompts/01-generate-alphas.md`).\n",
+                "- Кожна відповідь валідується за схемою Pydantic і записується як JSON у `research/hypotheses/`.\n",
+                "- Жоден LLM-код не йде в торгівлю без рев'ю людини та проходження тестів.\n",
+                "- Кожен результат тестування записується у `research/journal.md` та `research/journal.jsonl`."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "from nautilus_lab.application.journal import JournalRecord, record_journal_entry\n",
+                "\n",
+                "# Приклад запису рішення в журнал\n",
+                "entry = JournalRecord(\n",
+                "    date=datetime.now(UTC).strftime(\"%Y-%m-%d\"),\n",
+                "    subject=\"regime_walk_forward_demo\",\n",
+                "    gates=\"purged walk-forward folds=4\",\n",
+                "    oos=f\"{multi_res.mean_oos_return:+.2%}\",\n",
+                "    buy_and_hold=f\"{multi_res.mean_buy_and_hold_return:+.2%}\",\n",
+                "    decision=\"accepted\" if multi_res.profitable_folds >= 3 else \"rejected\",\n",
+                "    reason=f\"Profitable in {multi_res.profitable_folds}/4 folds, PBO={pbo_audit.pbo:.2f}\",\n",
+                ")\n",
+                "\n",
+                "print(\"Приклад згенерованого рядка для research/journal.md:\")\n",
+                "print(f\"| {entry.date} | {entry.subject} | {entry.gates} | {entry.oos} | {entry.buy_and_hold} | {entry.decision} | {entry.reason} |\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 10. Інтерактивна візуалізація кривої капіталу (Tearsheet)\n",
+                "\n",
+                "Будуємо криву капіталу (Equity Curve) та графік підводних просадок (Underwater Drawdown) за результатами симуляції."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Візуалізація результатів\n",
+                "fig = make_subplots(\n",
+                "    rows=2, cols=1,\n",
+                "    shared_xaxes=True,\n",
+                "    vertical_spacing=0.08,\n",
+                "    subplot_titles=(\"Equity Curve (Капітал)\", \"Underwater Drawdown (Просадка %)\")\n",
+                ")\n",
+                "\n",
+                "# Синтетичний приклад динаміки еквіті для графіка\n",
+                "steps = 100\n",
+                "initial_cap = 100_000.0\n",
+                "returns = np.random.normal(0.001, 0.01, steps)\n",
+                "equity_curve = initial_cap * np.cumprod(1 + returns)\n",
+                "peak = np.maximum.accumulate(equity_curve)\n",
+                "drawdown = (equity_curve - peak) / peak * 100\n",
+                "\n",
+                "fig.add_trace(\n",
+                "    go.Scatter(y=equity_curve, mode=\"lines\", name=\"Strategy Equity\", line=dict(color=\"#00d4aa\", width=2)),\n",
+                "    row=1, col=1\n",
+                ")\n",
+                "\n",
+                "fig.add_trace(\n",
+                "    go.Scatter(y=drawdown, mode=\"lines\", name=\"Drawdown %\", fill=\"tozeroy\", line=dict(color=\"#ff4d4d\", width=1)),\n",
+                "    row=2, col=1\n",
+                ")\n",
+                "\n",
+                "fig.update_layout(\n",
+                "    template=\"plotly_dark\",\n",
+                "    height=600,\n",
+                "    title=\"<b>Аналітичний звіт стратегії (Interactive Tearsheet)</b>\",\n",
+                "    showlegend=True\n",
+                ")\n",
+                "\n",
+                "fig.show()"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 11. Підсумковий чекліст готовності стратегії до Paper Trading\n",
+                "\n",
+                "Перед тим, як перевести робота в режим paper trading (`lab paper`), пройдіть цей обов'язковий чекліст:\n",
+                "\n",
+                "| # | Етап валідації | Критерій допуску | Статус |\n",
+                "|---|---|---|:---:|\n",
+                "| 1 | **Unit & Type Tests** | `uv run pytest` (100% pass) + `uv run mypy src tests` (0 errors) | [ ] |\n",
+                "| 2 | **Комісії та спред** | Maker 0.02%, Taker 0.05% враховано в симуляторі | [ ] |\n",
+                "| 3 | **Purged Walk-Forward** | OOS Sharpe > 0.5, середня OOS дохідність > Buy&Hold | [ ] |\n",
+                "| 4 | **Багатовіконність** | $\\ge 75\\%$ фолдів прибуткові (`--folds 4`) | [ ] |\n",
+                "| 5 | **Аудит перенавчання (PBO)** | $PBO < 0.40$ (за де Прадо) | [ ] |\n",
+                "| 6 | **Стрес-тести** | Відсутність маржин-колів на слайсах `covid2020`, `ftx2022` | [ ] |\n",
+                "| 7 | **Запис у журнал** | Гіпотеза та результат зафіксовані у `research/journal.md` | [ ] |\n",
+                "\n",
+                "Якщо всі 7 пунктів виконані — запускаємо моніторинг:\n",
+                "```bash\n",
+                "uv run lab paper --robot regime\n",
+                "```"
+            ]
+        }
+    ],
+    "metadata": {
+        "language_info": {
+            "name": "python"
+        }
+    },
+    "nbformat": 4,
+    "nbformat_minor": 4
+}
+
+out_path = Path("notebooks/strategy_research_guide.ipynb")
+out_path.write_text(json.dumps(notebook, indent=2, ensure_ascii=False), encoding="utf-8")
+print(f"✓ Ноутбук успішно створено за шляхом: {out_path}")

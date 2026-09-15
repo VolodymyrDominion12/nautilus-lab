@@ -19,7 +19,7 @@ from nautilus_lab.infrastructure.nautilus.bar_convert import to_engine_bars
 from nautilus_lab.infrastructure.nautilus.instrument import resolve_instrument
 from nautilus_lab.infrastructure.nautilus.signal_strategy import SignalRobot, SignalRobotConfig
 from nautilus_lab.infrastructure.nautilus.spread_strategy import SpreadRobot, SpreadRobotConfig
-from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
+from nautilus_lab.infrastructure.timeframe import interval_from_bar_type, nautilus_bar_type
 
 
 class NautilusResearchBacktest:
@@ -88,7 +88,7 @@ class NautilusResearchBacktest:
             raise ValueError(f"missing bars for pair {leg_a}/{leg_b}")
         instrument_a = resolve_instrument(leg_a, fees=request.fee_schedule)
         instrument_b = resolve_instrument(leg_b, fees=request.fee_schedule)
-        interval = _interval_from_bar_type(request.bar_type)
+        interval = interval_from_bar_type(request.bar_type)
         bar_type_a = BarType.from_str(nautilus_bar_type(leg_a, interval))
         bar_type_b = BarType.from_str(nautilus_bar_type(leg_b, interval))
         data_a = to_engine_bars(bars_a, bar_type=bar_type_a, instrument=instrument_a)
@@ -245,19 +245,3 @@ def _fees_paid(fills_report: object) -> Decimal:
             total += Decimal(amount)
         return total
     return Decimal("0")
-
-
-def _interval_from_bar_type(bar_type: str) -> str:
-    if "1-HOUR" in bar_type:
-        return "1h"
-    if "1-MINUTE" in bar_type:
-        return "1m"
-    if "5-MINUTE" in bar_type:
-        return "5m"
-    if "15-MINUTE" in bar_type:
-        return "15m"
-    if "4-HOUR" in bar_type:
-        return "4h"
-    if "1-DAY" in bar_type:
-        return "1d"
-    return "1h"

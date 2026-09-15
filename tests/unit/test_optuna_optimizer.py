@@ -88,3 +88,65 @@ def test_optuna_optimizer_pairs() -> None:
     best_params, _best_report, trials = optimizer.optimize(request, mock_run_is)
     assert trials == 3
     assert best_params.z_entry >= Decimal("1.2")
+
+
+def test_regime_trials_never_violate_the_enter_above_exit_invariant() -> None:
+    """`RegimeParams` requires enter_trend_er > exit_trend_er.
+
+    Sampling the two thresholds independently threw away roughly a third of every
+    study: those trials died inside `apply_selected` instead of being scored.
+    """
+    optimizer = OptunaParamOptimizer(n_trials=25, seed=7)
+    request = _dummy_request(RobotName.REGIME)
+    seen: list[tuple[Decimal, Decimal]] = []
+
+    def mock_run_is(candidate: BacktestRequest) -> BacktestReport:
+        seen.append((candidate.regime.enter_trend_er, candidate.regime.exit_trend_er))
+        return BacktestReport(
+            fills=1,
+            positions=1,
+            ending_balance=Decimal("100000"),
+            notes="mock run",
+        )
+
+    optimizer.optimize(request, mock_run_is)
+    assert len(seen) == 25  # every trial reached the objective
+    assert all(enter > exit_ for enter, exit_ in seen)
+
+
+def test_vpin_momentum_trials_search_vpin_parameters() -> None:
+    """`--optuna --robot vpin_momentum` used to vary regime fields the robot ignores."""
+    optimizer = OptunaParamOptimizer(n_trials=6, seed=11)
+    request = _dummy_request(RobotName.VPIN_MOMENTUM)
+    seen: list[int] = []
+
+    def mock_run_is(candidate: BacktestRequest) -> BacktestReport:
+        seen.append(candidate.vpin_momentum_ema_period)
+        return BacktestReport(
+            fills=1,
+            positions=1,
+            ending_balance=Decimal("100000"),
+            notes="mock run",
+        )
+
+    optimizer.optimize(request, mock_run_is)
+    assert len(set(seen)) > 1
+
+
+def test_formulaic_trials_search_the_threshold() -> None:
+    optimizer = OptunaParamOptimizer(n_trials=6, seed=13)
+    request = _dummy_request(RobotName.FORMULAIC_LGBM)
+    seen: list[Decimal] = []
+
+    def mock_run_is(candidate: BacktestRequest) -> BacktestReport:
+        seen.append(candidate.formulaic_threshold)
+        return BacktestReport(
+            fills=1,
+            positions=1,
+            ending_balance=Decimal("100000"),
+            notes="mock run",
+        )
+
+    optimizer.optimize(request, mock_run_is)
+    assert len(set(seen)) > 1
+    assert all(Decimal("0.35") <= value <= Decimal("0.75") for value in seen)

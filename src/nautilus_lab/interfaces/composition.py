@@ -4,9 +4,15 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from nautilus_lab.application.dtos import BacktestRequest, IngestRequest, WalkForwardRequest
+from nautilus_lab.application.dtos import (
+    BacktestRequest,
+    IngestRequest,
+    OverfitAuditRequest,
+    WalkForwardRequest,
+)
 from nautilus_lab.application.ingest_historical_bars import IngestHistoricalBars
 from nautilus_lab.application.risk import require_simulated_mode
+from nautilus_lab.application.run_overfitting_audit import RunOverfitAudit
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
 from nautilus_lab.application.run_walk_forward import RunWalkForward
 from nautilus_lab.domain.bars import BarOrigin
@@ -47,6 +53,32 @@ def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
 def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
     resolved = cfg or settings()
     return RunWalkForward(NautilusResearchBacktest(), ResearchBarFeed(catalog(resolved)))
+
+
+def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
+    resolved = cfg or settings()
+    return RunOverfitAudit(NautilusResearchBacktest(), ResearchBarFeed(catalog(resolved)))
+
+
+def overfit_audit_request(
+    cfg: Settings,
+    *,
+    bar_count: int,
+    robot: RobotName | None = None,
+    source: BarOrigin = BarOrigin.CATALOG,
+    blocks: int = 8,
+    stress_slice: str | None = None,
+) -> OverfitAuditRequest:
+    return OverfitAuditRequest(
+        backtest=research_request(
+            cfg,
+            bar_count=bar_count,
+            robot=robot,
+            source=source,
+            stress_slice=stress_slice,
+        ),
+        blocks=blocks,
+    )
 
 
 def ingest_use_case(cfg: Settings | None = None) -> IngestHistoricalBars:

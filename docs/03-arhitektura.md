@@ -49,7 +49,7 @@ grep -rn "Settings" src/nautilus_lab/domain/           # нічого не зн�
 ```python
 OhlcvBar(
     instrument_id="ETH/USDT.SIM",
-    ts_utc=datetime(..., tzinfo=UTC),   # час закриття бару, строго UTC
+    ts_utc=datetime(..., tzinfo=UTC),  # час закриття бару, строго UTC
     open=Decimal("3500.00"),
     high=Decimal("3510.00"),
     low=Decimal("3495.00"),
@@ -68,7 +68,12 @@ OhlcvBar(
 ### `Signal` — намір стратегії (`domain/signals.py`)
 
 ```python
-Signal(instrument_id="ETH/USDT.SIM", side=SignalSide.BUY, bar_ts_utc=..., reason="donchian breakout long")
+Signal(
+    instrument_id="ETH/USDT.SIM",
+    side=SignalSide.BUY,
+    bar_ts_utc=...,
+    reason="donchian breakout long",
+)
 ```
 
 `SignalSide` — це `BUY`, `SELL` або `FLAT` (вийти в кеш). **Немає поля «кількість»** — навмисно.
@@ -227,5 +232,6 @@ BacktestReport  →  друк у консоль
 
 ## 6. Далі
 
+- UML-діаграми шарів, класів і сценаріїв → [uml/README.md](uml/README.md)
 - Повний перелік файлів з описами → [12-karta-fayliv.md](12-karta-fayliv.md)
 - Як додати свій шар у цю архітектуру → [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)

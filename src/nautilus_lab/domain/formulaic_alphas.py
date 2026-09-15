@@ -14,10 +14,13 @@ class FormulaicAlphaEngine:
     def __init__(self, *, history: int = 30) -> None:
         if history < MIN_HISTORY:
             raise ValueError(f"history must be >= {MIN_HISTORY}")
+        self._history = history
         self._closes = RollingWindow(history + 1)
         self._highs = RollingWindow(history)
         self._lows = RollingWindow(history)
         self._volumes = RollingWindow(history)
+        # Only the most recent `history` returns are ever read (`vol_10`, `vol_20`,
+        # `vol_of_vol`), so the list is trimmed instead of growing for the whole run.
         self._returns: list[Decimal] = []
 
     @property
@@ -30,6 +33,8 @@ class FormulaicAlphaEngine:
             prev = closes[-1]
             if prev > 0:
                 self._returns.append((bar.close - prev) / prev)
+                if len(self._returns) > self._history:
+                    del self._returns[0]
         self._closes.push(bar.close)
         self._highs.push(bar.high)
         self._lows.push(bar.low)

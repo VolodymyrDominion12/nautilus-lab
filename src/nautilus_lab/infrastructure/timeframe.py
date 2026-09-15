@@ -18,3 +18,20 @@ def nautilus_bar_type(instrument_id: str, interval: str) -> str:
         allowed = ", ".join(NAUTILUS_BAR_SPEC)
         raise ValueError(f"unsupported bar interval {interval!r}; use one of: {allowed}")
     return f"{instrument_id}-{spec}-LAST-EXTERNAL"
+
+
+def interval_from_bar_type(bar_type: str) -> str:
+    """Inverse of `nautilus_bar_type` for any interval in `NAUTILUS_BAR_SPEC`.
+
+    The spec is matched as a whole `-SPEC-` segment, never as a bare substring:
+    `"15-MINUTE"` contains `"5-MINUTE"`, so a prefix test would silently read a
+    quarter-hour series as five-minute. Longest spec first keeps that ordering
+    explicit instead of relying on the delimiter alone.
+    """
+    for interval, spec in sorted(NAUTILUS_BAR_SPEC.items(), key=lambda item: -len(item[1])):
+        if f"-{spec}-" in bar_type:
+            return interval
+    allowed = ", ".join(NAUTILUS_BAR_SPEC)
+    raise ValueError(
+        f"cannot read a bar interval out of {bar_type!r}; expected a spec from: {allowed}"
+    )

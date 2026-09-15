@@ -75,6 +75,7 @@
 | `kill_switch.py` | `KillSwitch`, `NoOpKillSwitch` | Протокол аварійної зупинки (у research — заглушка) |
 | `metrics.py` | `BacktestMetrics`, `compute_metrics()`, `buy_and_hold_return()` | Комісії, максимальна просадка, оборот, `sharpe_like`; `buy_and_hold_return()` — дохідність простого утримання інструменту за вікно (планка для кожного фолда walk-forward) |
 | `walk_forward.py` | `WalkForwardWindow`, `WalkForwardSplit`, `bars_in_range()`, `split_by_window()`, `anchored_window()`, `rolling_windows()` | Вікна IS/OOS, embargo, нарізка барів (без підглядання); `rolling_windows()` — N ковзних фолдів (вікно підбору зсувається на один OOS-блок уперед, останній фолд забирає остачу від ділення націло) |
+| `overfitting.py` | `CscvResult`, `probability_of_backtest_overfitting()` | PBO/CSCV: із матриці `блоки × конфігурації` рахує частку симетричних розбиттів, де переможець in-sample упав у нижню половину out-of-sample. Дошка розбиттів, де всі конфігурації рівні, **пропускається** (нічия не обирає нічого), тому неінформативна матриця дає `undefined`, а не «PBO=1» |
 | `stress_slices.py` | `StressSliceName`, `StressSlice`, `STRESS_SLICES`, `resolve_stress_slice()` | `covid2020`, `ftx2022`, `etf2024` |
 | `align.py` | `align_bars_inner_join()`, `split_aligned_by_window()` | Вирівнювання кількох серій за часом (inner join) |
 | `fees.py` | `FeeSchedule` | Розклад комісій; `binance_spot_vip0()`, `binance_usdm_vip0()` |
@@ -96,7 +97,8 @@
 | `run_paper.py` | `RunPaperResearch` | Лог гіпотетичних ордерів (без рушія) |
 | `train_classifier.py` | `PurgedFold`, `purged_k_fold()`, `label_direction()` | Purged K-fold із embargo і розмітка напрямку |
 | `scan_triangular.py` | `scan_triangular_opportunities()` | Обгортка над пошуком циклів (fee на кожне ребро) |
-| `optuna_optimizer.py` | `OptunaParamOptimizer` | Байєсівська оптимізація (TPE) на in-sample: `optimize(request, run_is)` → `(params, report, trials)` |
+| `optuna_optimizer.py` | `OptunaParamOptimizer` | Байєсівська оптимізація (TPE) на in-sample: `optimize(request, run_is)` → `(params, report, trials)`. Окремі гілки простору пошуку для `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`; `exit_trend_er` обмежений зверху через `enter_trend_er`, бо `RegimeParams` вимагає `enter > exit` |
+| `run_overfitting_audit.py` | `RunOverfitAudit`, `BlockRunner` | Аудит перенавчання: ріже історію на `blocks` послідовних блоків, проганяє кожну конфігурацію сітки на кожному блоці (окремо для однолегових роботів і для `pairs` — там усі ноги ріжуться за однаковими індексами), будує матрицю й віддає її в `probability_of_backtest_overfitting()` |
 
 ---
 
@@ -105,7 +107,7 @@
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
 | `settings.py` | `Settings` | Pydantic-конфіг із `.env`; `risk_limits()`, `fee_schedule()`, `regime_params()`, `pairs_params()` |
-| `timeframe.py` | `NAUTILUS_BAR_SPEC`, `nautilus_bar_type()` | `1h` → `1-HOUR`, побудова `bar_type` |
+| `timeframe.py` | `NAUTILUS_BAR_SPEC`, `nautilus_bar_type()`, `interval_from_bar_type()` | `1h` → `1-HOUR`, побудова `bar_type`; `interval_from_bar_type()` — обернена функція, шукає специфікацію як **цілий сегмент** `-SPEC-` (підрядковий пошук читав `15-MINUTE` як `5-MINUTE`) |
 | `binance_klines.py` | `BinancePublicKlines`, `UrllibJsonClient`, `parse_binance_kline()` | Публічний REST klines із пагінацією |
 | `binance_funding.py` | `BinancePublicFunding` | Історія ставок фінансування (fapi) |
 | `lightgbm_classifier.py` | `HeuristicDirectionClassifier`, `LightGBMDirectionClassifier` | Rule-based fallback і опційний LightGBM |
@@ -157,7 +159,9 @@
 | `unit/test_synthetic_bars.py` | Детермінованість, валідність, структура режимів |
 | `unit/test_walk_forward.py` | Вікна, нарізка, overlap-помилки; `rolling_windows()`: ковзне вікно підбору з точними очікуваними межами (100 барів, `folds=4`, `fraction=0.5`, `embargo=2` → IS `[0:50]`, OOS `[52:64]`), розрив embargo, досягання останнього бару, відсутність перекриття IS/OOS, відмова при забагато фолдів / поганій частці / нулі фолдів |
 | `unit/test_multi_window_report.py` | Агрегат `MultiWindowReport`: арифметика середнього/медіани/найгіршого/найкращого, порівняння з buy&hold, шлях «невідомо» (коли один бік не вимірюється) і рядок `summary_line()` |
-| `unit/test_optuna_optimizer.py` | Оптимізатор Optuna: кількість trials, вибір параметрів для кожного робота |
+| `unit/test_optuna_optimizer.py` | Оптимізатор Optuna: кількість trials, вибір параметрів для кожного робота; `regime` ніколи не порушує `enter_trend_er > exit_trend_er`; `vpin_momentum` і `formulaic_lgbm` справді перебирають свої параметри |
+| `unit/test_overfitting.py` | PBO/CSCV: домінантна конфігурація → PBO 0; антикорельовані блоки → PBO 1; нічийні розбиття не рахуються; одна конфігурація → `undefined`; нерівна матриця й порожня матриця → помилка |
+| `unit/test_audit_fixes.py` | Регресії на знайдені аудитом помилки: `15m` ≠ `5m`, перпетуал у `bar_type`, невідомий інтервал → помилка, рекурсія Вайлдера в ATR, VaR-квантиль, недосяжний поріг funding, нульовий `index_price`, зсув GLFT від інвентарю. Деталі — [15](15-audit-vypravlennya.md) |
 | `unit/test_alerts.py` | Нотифікатори: успіх, HTTP-помилка, виняток, композиція (з моками `httpx`) |
 | `unit/test_orderbook_microstructure.py` | OBI (скаляр і список рівнів), micro-price, Polars-трансформація |
 | `integration/test_research_backtest.py` | Реальний рушій Nautilus: синтетичний прогін, roundtrip каталогу, pairs, порожній каталог → fail closed; повторний ingest перекритого вікна замінює дані, а не дублює їх; `load()` дедуплікує каталог, у якому вже лежать перекриті файли |
@@ -180,7 +184,7 @@ uv run pytest --cov --cov-report=term-missing      # з покриттям (по
 |------|-------------|
 | `README.md` | Короткий вступ і швидкий старт |
 | `Стратегії MFT Криптоторгівлі 2026.md` | Вихідний дослідницький документ: ідеї, математика, інфраструктура, податки |
-| `docs/` | Ця документація |
+| `docs/` | Ця документація, включно з [uml/](uml/README.md) |
 | `pyproject.toml` | Залежності, extras (`dev`, `ml`, `research`, `visualization`, `alerts`), налаштування ruff/mypy/pytest/coverage |
 | `.env.example` | Шаблон усіх змінних з коментарями |
 | `.env` | Ваші локальні налаштування (у `.gitignore`) |
@@ -205,4 +209,5 @@ uv run pytest --cov --cov-report=term-missing      # з покриттям (по
 ## Куди йти далі
 
 - Створити свою стратегію → [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)
+- UML-діаграми → [uml/README.md](uml/README.md)
 - Повернутися до змісту → [README.md](README.md)

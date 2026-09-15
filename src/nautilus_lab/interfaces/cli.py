@@ -25,6 +25,8 @@ from nautilus_lab.interfaces.composition import (
     ingest_request,
     ingest_use_case,
     notifier,
+    overfit_audit_request,
+    overfit_audit_use_case,
     research_request,
     research_use_case,
     settings,
@@ -131,6 +133,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Send notification on completion via Telegram/Webhook",
     )
+    research.add_argument(
+        "--pbo",
+        action="store_true",
+        help=(
+            "Overfitting audit (PBO/CSCV): score every grid configuration on every "
+            "history block and report how often the in-sample winner fails out of sample"
+        ),
+    )
+    research.add_argument(
+        "--pbo-blocks",
+        type=int,
+        default=8,
+        help="Contiguous history blocks for --pbo (default: 8)",
+    )
 
     paper = sub.add_parser("paper", help="Paper trading: log hypothetical orders only")
     paper.add_argument("--bars", type=int, default=500, help="Synthetic bar count")
@@ -211,6 +227,9 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         # Without this, --folds 0 silently fell through to the single-split path and
         # reported one window as if the request had been honoured.
         raise ValueError(f"--folds must be >= 1, got {folds}")
+
+    if getattr(args, "pbo", False):
+        return _run_pbo(cfg, args, robot)
 
     if args.synthetic:
         if getattr(args, "walk_forward", False) or optuna_enabled or folds > 1:
@@ -313,6 +332,38 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         notifier(cfg).notify(
             f"Full-sample backtest complete: fills={report.fills} ending={report.ending_balance}"
         )
+    return 0
+
+
+def _run_pbo(cfg: Settings, args: argparse.Namespace, robot: RobotName | None) -> int:
+    blocks = getattr(args, "pbo_blocks", 8)
+    if blocks < 2:
+        raise ValueError(f"--pbo-blocks must be >= 2, got {blocks}")
+    if getattr(args, "tearsheet", None):
+        # There is no single "the" run to draw: the audit simulates blocks x
+        # configurations. Failing loudly beats writing a tearsheet of whichever run
+        # happened to finish last and calling it the audit's result.
+        raise ValueError(
+            "--pbo simulates many runs (blocks x configurations), so --tearsheet has "
+            "nothing single to draw; use one or the other"
+        )
+    request = overfit_audit_request(
+        cfg,
+        bar_count=args.bars,
+        robot=robot,
+        source=BarOrigin.SYNTHETIC if args.synthetic else BarOrigin.CATALOG,
+        blocks=blocks,
+        stress_slice=args.slice,
+    )
+    report = overfit_audit_use_case(cfg).execute(request)
+    print(report.notes)
+    print(f"blocks={report.blocks} configurations={report.configuration_count}")
+    for index, label in enumerate(report.labels):
+        cells = " ".join(_pct(row[index]) for row in report.block_returns)
+        print(f"  [{index}] {label} :: {cells}")
+    print(report.summary_line())
+    if getattr(args, "notify", False):
+        notifier(cfg).notify(f"Overfitting audit complete: {report.summary_line()}")
     return 0
 
 

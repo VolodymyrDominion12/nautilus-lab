@@ -13,6 +13,7 @@
 | [docs/01-osnovy.md](docs/01-osnovy.md) | Що це, базові поняття бектесту, глосарій |
 | [docs/02-vstanovlennya.md](docs/02-vstanovlennya.md) | Встановлення, `.env`, усі змінні, швидкий старт |
 | [docs/03-arhitektura.md](docs/03-arhitektura.md) | Шари системи і повний ланцюг даних |
+| [docs/uml/](docs/uml/README.md) | UML-діаграми: як працює застосунок (класи, послідовності, стани) |
 | [docs/04-tsykl-doslidzhennya.md](docs/04-tsykl-doslidzhennya.md) | **Повний цикл дослідження** на реальних даних, з прикладами виводу |
 | [docs/05-roboty.md](docs/05-roboty.md) | Кожен робот: логіка, параметри, реальні результати |
 | [docs/06-ryzyk-metryky.md](docs/06-ryzyk-metryky.md) | Ризик-менеджмент, розмір позиції, метрики |
@@ -23,6 +24,7 @@
 | [docs/10-cli-dovidnyk.md](docs/10-cli-dovidnyk.md) | Довідник усіх команд і прапорців |
 | [docs/11-troubleshooting-faq.md](docs/11-troubleshooting-faq.md) | Типові помилки, дивна поведінка, часті питання |
 | [docs/12-karta-fayliv.md](docs/12-karta-fayliv.md) | Карта всіх модулів і публічного API |
+| [docs/15-audit-vypravlennya.md](docs/15-audit-vypravlennya.md) | Аудит коректності: знайдені помилки логіки та як їх виправлено |
 
 ## Що всередині
 
@@ -80,6 +82,10 @@ uv run lab research --optuna --trials 20 --notify
 # 6. Багатовіконний walk-forward: N ковзних фолдів і агрегат out-of-sample.
 #    Одна нарізка дає одне число з однієї ділянки історії; це дає розподіл.
 uv run lab research --robot regime --folds 4
+
+# 7. Аудит перенавчання (PBO/CSCV): чи взагалі щось значить підбір параметрів.
+#    Рахує ймовірність того, що переможець in-sample провалиться out-of-sample.
+uv run lab research --robot regime --pbo
 ```
 
 `lab research` за замовчуванням читає catalog і робить walk-forward. Друкує окремо in-sample (лише вибір параметрів) і out-of-sample (це і є звіт). Не дивись на in-sample як на результат.

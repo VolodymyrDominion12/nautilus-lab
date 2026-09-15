@@ -78,6 +78,41 @@ class OptunaParamOptimizer:
                     z_entry=base.z_entry,
                     z_exit=base.z_exit,
                 )
+            elif request.robot is RobotName.VPIN_MOMENTUM:
+                params = SelectedParams(
+                    fast_ema=base.fast_ema,
+                    slow_ema=base.slow_ema,
+                    donchian_period=base.donchian_period,
+                    bb_period=base.bb_period,
+                    bb_k=base.bb_k,
+                    enter_trend_er=base.enter_trend_er,
+                    exit_trend_er=base.exit_trend_er,
+                    z_entry=base.z_entry,
+                    z_exit=base.z_exit,
+                    vpin_ema_period=trial.suggest_int("vpin_ema_period", 20, 100, step=10),
+                    vpin_atr_multiple=Decimal(
+                        str(round(trial.suggest_float("vpin_atr_multiple", 1.0, 4.0, step=0.5), 2))
+                    ),
+                )
+            elif request.robot is RobotName.FORMULAIC_LGBM:
+                params = SelectedParams(
+                    fast_ema=base.fast_ema,
+                    slow_ema=base.slow_ema,
+                    donchian_period=base.donchian_period,
+                    bb_period=base.bb_period,
+                    bb_k=base.bb_k,
+                    enter_trend_er=base.enter_trend_er,
+                    exit_trend_er=base.exit_trend_er,
+                    z_entry=base.z_entry,
+                    z_exit=base.z_exit,
+                    formulaic_threshold=Decimal(
+                        str(
+                            round(
+                                trial.suggest_float("formulaic_threshold", 0.35, 0.75, step=0.05), 2
+                            )
+                        )
+                    ),
+                )
             else:
                 donchian = trial.suggest_int("donchian_period", 10, 50, step=5)
                 bb_period = trial.suggest_int("bb_period", 10, 50, step=5)
@@ -85,8 +120,26 @@ class OptunaParamOptimizer:
                 enter_er = Decimal(
                     str(round(trial.suggest_float("enter_trend_er", 0.20, 0.45, step=0.05), 2))
                 )
+                # `RegimeParams` requires enter_trend_er > exit_trend_er. Sampling the two
+                # independently threw away roughly a third of every study: those trials died
+                # on the invariant instead of being scored, and a dead trial teaches the TPE
+                # sampler nothing. Bounding exit by the already-drawn enter keeps every trial
+                # a real observation.
                 exit_er = Decimal(
-                    str(round(trial.suggest_float("exit_trend_er", 0.10, 0.25, step=0.05), 2))
+                    str(
+                        round(
+                            trial.suggest_float(
+                                "exit_trend_er",
+                                0.10,
+                                # Round the bound to the grid, otherwise binary float
+                                # arithmetic hands Optuna `0.35000000000000003` and it
+                                # warns that the range is not divisible by the step.
+                                round(float(enter_er) - 0.05, 2),
+                                step=0.05,
+                            ),
+                            2,
+                        )
+                    )
                 )
                 params = SelectedParams(
                     fast_ema=base.fast_ema,

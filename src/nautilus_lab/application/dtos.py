@@ -239,6 +239,72 @@ class ResearchBacktestPort(Protocol):
     ) -> BacktestReport: ...
 
 
+@dataclass(frozen=True, slots=True)
+class OverfitAuditRequest:
+    """One CSCV audit: score every grid configuration on every contiguous block."""
+
+    backtest: BacktestRequest
+    blocks: int = 8
+
+    def __post_init__(self) -> None:
+        if self.blocks < 2:
+            raise ValueError("blocks must be >= 2 for a symmetric split")
+
+
+@dataclass(frozen=True, slots=True)
+class OverfitAuditReport:
+    """Probability of backtest overfitting, plus the matrix it was computed from.
+
+    `block_returns` is `blocks x configurations`; a `None` cell means the engine
+    reported no balance for that run, which is scored as the worst possible outcome
+    instead of being silently dropped (dropping it would shorten the matrix and
+    quietly change which configurations are compared).
+    """
+
+    pbo: Decimal
+    split_count: int
+    configuration_count: int
+    blocks: int
+    block_returns: tuple[tuple[Decimal | None, ...], ...]
+    labels: tuple[str, ...]
+    notes: str
+
+    @property
+    def is_meaningful(self) -> bool:
+        return self.configuration_count >= 2 and self.split_count >= 2
+
+    def best_configuration_index(self) -> int:
+        """Index of the configuration with the best mean score across all blocks."""
+        totals = [
+            sum(
+                (value for value in column if value is not None),
+                Decimal("0"),
+            )
+            for column in zip(*self.block_returns, strict=True)
+        ]
+        best = 0
+        for index in range(1, len(totals)):
+            if totals[index] > totals[best]:
+                best = index
+        return best
+
+    def summary_line(self) -> str:
+        if not self.is_meaningful:
+            return (
+                f"PBO undefined: {self.configuration_count} configurations x "
+                f"{self.blocks} blocks (need >= 2 configurations)"
+            )
+        verdict = (
+            "selection generalises"
+            if self.pbo < Decimal("0.5")
+            else "selection is no better than chance"
+        )
+        return (
+            f"PBO={self.pbo} over {self.split_count} splits x "
+            f"{self.configuration_count} configurations on {self.blocks} blocks ({verdict})"
+        )
+
+
 class BarFeed(Protocol):
     def load(self, request: BacktestRequest) -> list[OhlcvBar]: ...
 

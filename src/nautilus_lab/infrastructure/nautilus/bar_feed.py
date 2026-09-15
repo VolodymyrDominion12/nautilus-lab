@@ -13,7 +13,7 @@ from nautilus_lab.infrastructure.nautilus.synthetic_bars import (
     synthetic_regime_ohlcv,
 )
 from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_cointegrated_pair
-from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
+from nautilus_lab.infrastructure.timeframe import interval_from_bar_type, nautilus_bar_type
 
 
 class ResearchBarFeed:
@@ -48,7 +48,7 @@ class ResearchBarFeed:
             bars = _synthetic(request)
             return {request.instrument_id: bars}
         start, end = _stress_window(request)
-        interval = _interval_from_request(request)
+        interval = interval_from_bar_type(request.bar_type)
         ids = request.instrument_ids or (request.pairs.leg_a, request.pairs.leg_b)
         raw: dict[str, list[OhlcvBar]] = {}
         for instrument_id in ids:
@@ -77,11 +77,3 @@ def _stress_window(request: BacktestRequest) -> tuple[datetime | None, datetime 
         slice_ = resolve_stress_slice(request.stress_slice)
         return slice_.start, slice_.end
     return request.start, request.end
-
-
-def _interval_from_request(request: BacktestRequest) -> str:
-    if "-1-HOUR-" in request.bar_type:
-        return "1h"
-    if "-1-MINUTE-" in request.bar_type:
-        return "1m"
-    return "1h"

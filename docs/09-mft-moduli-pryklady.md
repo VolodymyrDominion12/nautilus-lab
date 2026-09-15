@@ -54,10 +54,23 @@ from nautilus_lab.domain.hawkes import ExponentialHawkes
 hawkes = ExponentialHawkes(
     baseline=Decimal("0.1"), alpha=Decimal("0.5"), beta=Decimal("1"), toxic_threshold=Decimal("2")
 )
-events = [("buy", Decimal("1.0")), ("buy", Decimal("0.4")), ("buy", Decimal("0.3")), ("sell", Decimal("5.0"))]
+events = [
+    ("buy", Decimal("1.0")),
+    ("buy", Decimal("0.4")),
+    ("buy", Decimal("0.3")),
+    ("sell", Decimal("5.0")),
+]
 for side, dt in events:
     intensity = hawkes.on_trade(side=side, dt_seconds=dt)
-    print(side, "buy:", intensity.buy_intensity, "sell:", intensity.sell_intensity, "toxic:", intensity.toxic_flow)
+    print(
+        side,
+        "buy:",
+        intensity.buy_intensity,
+        "sell:",
+        intensity.sell_intensity,
+        "toxic:",
+        intensity.toxic_flow,
+    )
 ```
 
 **Вивід:**
@@ -96,12 +109,14 @@ def snap(bids, asks, ts=ts):
         bids=tuple(BookLevel(Decimal(p), Decimal(q)) for p, q in bids),
         asks=tuple(BookLevel(Decimal(p), Decimal(q)) for p, q in asks),
     )
-    book.validate()          # перевіряє перевернуту/перехрещену книгу
+    book.validate()  # перевіряє перевернуту/перехрещену книгу
     return book
 
 
 prev = snap([("3500", "10"), ("3499", "8")], [("3501", "6"), ("3502", "5")])
-curr = snap([("3500", "4"), ("3499", "3")], [("3501", "9"), ("3502", "7")], ts + timedelta(minutes=1))
+curr = snap(
+    [("3500", "4"), ("3499", "3")], [("3501", "9"), ("3502", "7")], ts + timedelta(minutes=1)
+)
 
 print("OBI:", order_book_imbalance(curr))
 print("WOFI:", weighted_order_flow_imbalance(curr, prev))
@@ -130,10 +145,10 @@ from nautilus_lab.infrastructure.lightgbm_classifier import HeuristicDirectionCl
 
 robot = MlObiStrategy(
     instrument_id="ETH/USDT.SIM",
-    classifier=HeuristicDirectionClassifier(),   # замініть на LightGBMDirectionClassifier(model_path=...)
+    classifier=HeuristicDirectionClassifier(),  # замініть на LightGBMDirectionClassifier(model_path=...)
     threshold=Decimal("0.55"),
 )
-for book in (prev, curr):                        # змінні з прикладу 3
+for book in (prev, curr):  # змінні з прикладу 3
     signal = robot.on_book(book)
     print(None if signal is None else (signal.side.value, signal.reason))
 ```
@@ -166,7 +181,9 @@ mm = GlftMarketMaker(
 )
 for inventory in (Decimal("0"), Decimal("10"), Decimal("-10")):
     quote = mm.quote(
-        mid=Decimal("3500"), inventory=inventory, volatility=Decimal("0.02"),
+        mid=Decimal("3500"),
+        inventory=inventory,
+        volatility=Decimal("0.02"),
         ts_utc=datetime(2025, 1, 1, tzinfo=UTC),
     )
     print(f"inventory={inventory:>4}  bid={quote.bid_price}  ask={quote.ask_price}")
@@ -199,7 +216,7 @@ strategy = FundingCashAndCarry(
 signal = strategy.on_funding(
     FundingSnapshot(
         instrument="ETHUSDT",
-        funding_rate=Decimal("0.002"),     # 0.2% за 8 годин — дуже високий рівень
+        funding_rate=Decimal("0.002"),  # 0.2% за 8 годин — дуже високий рівень
         mark_price=Decimal("3510"),
         index_price=Decimal("3500"),
         ts_utc=datetime(2025, 1, 1, tzinfo=UTC),
@@ -277,10 +294,26 @@ from decimal import Decimal
 
 from nautilus_lab.domain.portfolio_risk import fractional_kelly_cap, historical_cvar, historical_var
 
-kelly = fractional_kelly_cap(win_rate=Decimal("0.55"), reward_risk=Decimal("1.5"), fraction=Decimal("0.25"))
+kelly = fractional_kelly_cap(
+    win_rate=Decimal("0.55"), reward_risk=Decimal("1.5"), fraction=Decimal("0.25")
+)
 print("фракційний Келлі:", kelly)
 
-returns = tuple(Decimal(x) for x in ("-0.031", "-0.012", "-0.004", "0.002", "0.007", "0.011", "-0.02", "0.004", "0.001", "-0.008"))
+returns = tuple(
+    Decimal(x)
+    for x in (
+        "-0.031",
+        "-0.012",
+        "-0.004",
+        "0.002",
+        "0.007",
+        "0.011",
+        "-0.02",
+        "0.004",
+        "0.001",
+        "-0.008",
+    )
+)
 print("VaR 99%:", historical_var(returns), "CVaR 99%:", historical_cvar(returns))
 ```
 
@@ -336,7 +369,9 @@ from nautilus_lab.infrastructure.egarch_forecast import egarch_forecast_volatili
 from nautilus_lab.infrastructure.nautilus.synthetic_bars import synthetic_regime_ohlcv
 
 bars = synthetic_regime_ohlcv(instrument_id="ETH/USDT.SIM", count=500, seed=3)
-returns = tuple(float((bars[i].close - bars[i - 1].close) / bars[i - 1].close) for i in range(1, len(bars)))
+returns = tuple(
+    float((bars[i].close - bars[i - 1].close) / bars[i - 1].close) for i in range(1, len(bars))
+)
 print("EGARCH прогноз σ:", egarch_forecast_volatility(returns))
 ```
 
@@ -355,7 +390,7 @@ EGARCH прогноз σ: 0.0697386893007272
 ```python
 from arch import arch_model
 
-model = arch_model(list(returns), vol="GARCH", p=1, o=1, q=1, rescale=False)   # GJR-GARCH
+model = arch_model(list(returns), vol="GARCH", p=1, o=1, q=1, rescale=False)  # GJR-GARCH
 ```
 
 ## 11. Purged K-fold і розмітка для ML
@@ -515,12 +550,14 @@ print("OBI 2 рівні:", compute_order_book_imbalance([10.0, 5.0], [5.0, 5.0])
 print("micro-price:", compute_micro_price(3500.0, 30.0, 3502.0, 10.0))
 
 # 3. Пакетна обробка знімків книги
-book = pl.DataFrame({
-    "bid_price": [3500.0, 3500.0, 3500.0],
-    "bid_volume": [10.0, 4.0, 2.0],
-    "ask_price": [3501.0, 3501.0, 3501.0],
-    "ask_volume": [6.0, 9.0, 1.0],
-})
+book = pl.DataFrame(
+    {
+        "bid_price": [3500.0, 3500.0, 3500.0],
+        "bid_volume": [10.0, 4.0, 2.0],
+        "ask_price": [3501.0, 3501.0, 3501.0],
+        "ask_volume": [6.0, 9.0, 1.0],
+    }
+)
 print(compute_microstructure_dataframe(book).select("spread", "spread_bps", "obi", "micro_price"))
 ```
 
@@ -554,9 +591,9 @@ shape: (3, 5)
 from nautilus_lab.infrastructure.alerts import build_notifier
 
 notifier = build_notifier(
-    telegram_token="123456:ABC...",     # або None
-    telegram_chat_id="123456789",       # або None
-    webhook_url=None,                    # або https://hooks.slack.com/...
+    telegram_token="123456:ABC...",  # або None
+    telegram_chat_id="123456789",  # або None
+    webhook_url=None,  # або https://hooks.slack.com/...
 )
 print(notifier.notify("backtest complete: OOS=100814.86", level="INFO"))
 ```

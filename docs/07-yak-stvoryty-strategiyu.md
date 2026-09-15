@@ -110,8 +110,8 @@ class VpinMomentum:
 
         if self._direction != 0:
             self._bars_in_position += 1
-            self._extreme = max(self._extreme, bar.high) if self._direction > 0 else min(
-                self._extreme, bar.low
+            self._extreme = (
+                max(self._extreme, bar.high) if self._direction > 0 else min(self._extreme, bar.low)
             )
             stop = (
                 self._extreme - self._atr_multiple * atr
@@ -261,7 +261,7 @@ class RobotName(StrEnum):
     ML_OBI = "ml_obi"
     GLFT = "glft"
     TRI_SCAN = "tri_scan"
-    VPIN_MOMENTUM = "vpin_momentum"     # <-- додано
+    VPIN_MOMENTUM = "vpin_momentum"  # <-- додано
 ```
 
 Після цього `uv run lab research --help` покаже нову опцію в `--robot` без жодних правок у CLI.
@@ -284,19 +284,20 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
 ```python
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
 
+
 def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter | VpinMomentum:
     robot = RobotName(config.robot)
     if robot is RobotName.EMA:
-        return EmaCrossover(...)              # як було
+        return EmaCrossover(...)  # як було
     if robot is RobotName.VPIN_MOMENTUM:
         return VpinMomentum(
             instrument_id=str(config.instrument_id),
-            bucket_volume=config.vpin_bucket_volume,       # поле вже існує
-            toxic_threshold=config.vpin_toxic_threshold,   # поле вже існує
+            bucket_volume=config.vpin_bucket_volume,  # поле вже існує
+            toxic_threshold=config.vpin_toxic_threshold,  # поле вже існує
             ema_period=config.vpin_momentum_ema_period,
             atr_multiple=config.vpin_momentum_atr_multiple,
         )
-    ...                                        # гілка RegimeRouter як була
+    ...  # гілка RegimeRouter як була
 ```
 
 > **Порада для чистоти.** Замість розширення union-типу можна оголосити в `domain/ports.py`
@@ -307,10 +308,10 @@ def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter | Vpi
 (у виклику `SignalRobotConfig(...)` у методі `run`):
 
 ```python
-                vpin_bucket_volume=request.vpin_bucket_volume,
-                vpin_toxic_threshold=request.vpin_toxic_threshold,
-                vpin_momentum_ema_period=request.vpin_momentum_ema_period,        # <-- додано
-                vpin_momentum_atr_multiple=request.vpin_momentum_atr_multiple,    # <-- додано
+vpin_bucket_volume = (request.vpin_bucket_volume,)
+vpin_toxic_threshold = (request.vpin_toxic_threshold,)
+vpin_momentum_ema_period = (request.vpin_momentum_ema_period,)  # <-- додано
+vpin_momentum_atr_multiple = (request.vpin_momentum_atr_multiple,)  # <-- додано
 ```
 
 ### Крок 5: запуск (мінімальний шлях)
@@ -336,19 +337,19 @@ uv run lab research --robot vpin_momentum
 однаковий результат, тобто витрачений час. Додайте власну гілку в `application/param_grid.py`:
 
 ```python
-    if request.robot is RobotName.VPIN_MOMENTUM:
-        for ema_period in (30, 50, 80):
-            yield SelectedParams(
-                fast_ema=base.fast_ema,
-                slow_ema=base.slow_ema,
-                donchian_period=base.donchian_period,
-                bb_period=base.bb_period,
-                bb_k=base.bb_k,
-                enter_trend_er=base.enter_trend_er,
-                exit_trend_er=base.exit_trend_er,
-                vpin_ema_period=ema_period,          # поле треба додати в SelectedParams
-            )
-        return
+if request.robot is RobotName.VPIN_MOMENTUM:
+    for ema_period in (30, 50, 80):
+        yield SelectedParams(
+            fast_ema=base.fast_ema,
+            slow_ema=base.slow_ema,
+            donchian_period=base.donchian_period,
+            bb_period=base.bb_period,
+            bb_k=base.bb_k,
+            enter_trend_er=base.enter_trend_er,
+            exit_trend_er=base.exit_trend_er,
+            vpin_ema_period=ema_period,  # поле треба додати в SelectedParams
+        )
+    return
 ```
 
 **Прогалина 2 — мінімум барів.** `application/run_research_backtest.py::_minimum_bars()` і
@@ -423,8 +424,8 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
 4. **`interfaces/composition.py`** — `research_request()` передає значення з `Settings`:
 
 ```python
-        vpin_momentum_ema_period=cfg.vpin_momentum_ema_period,
-        vpin_momentum_atr_multiple=cfg.vpin_momentum_atr_multiple,
+vpin_momentum_ema_period = (cfg.vpin_momentum_ema_period,)
+vpin_momentum_atr_multiple = (cfg.vpin_momentum_atr_multiple,)
 ```
 
 5. **`infrastructure/nautilus/backtest_runner.py`** — як у кроці 4в.
@@ -589,23 +590,21 @@ uv run lab research --robot pairs                      # fills мають бут
 статистику минулих угод у `effective_risk_fraction()` (`signal_strategy.py`):
 
 ```python
-    # у SignalRobot: накопичуйте результати закритих угод
-    self._wins = 0
-    self._losses = 0
-    self._gross_profit = Decimal("0")
-    self._gross_loss = Decimal("0")
+# у SignalRobot: накопичуйте результати закритих угод
+self._wins = 0
+self._losses = 0
+self._gross_profit = Decimal("0")
+self._gross_loss = Decimal("0")
 
-    # у on_bar перед size_position(...)
-    if self._wins + self._losses >= 30:            # мінімум статистики
-        win_rate = Decimal(self._wins) / Decimal(self._wins + self._losses)
-        reward_risk = (
-            self._gross_profit / self._gross_loss if self._gross_loss > 0 else Decimal("3")
-        )
-        risk_fraction = effective_risk_fraction(
-            self._limits, win_rate=win_rate, reward_risk=reward_risk
-        )
-    else:
-        risk_fraction = effective_risk_fraction(self._limits)
+# у on_bar перед size_position(...)
+if self._wins + self._losses >= 30:  # мінімум статистики
+    win_rate = Decimal(self._wins) / Decimal(self._wins + self._losses)
+    reward_risk = self._gross_profit / self._gross_loss if self._gross_loss > 0 else Decimal("3")
+    risk_fraction = effective_risk_fraction(
+        self._limits, win_rate=win_rate, reward_risk=reward_risk
+    )
+else:
+    risk_fraction = effective_risk_fraction(self._limits)
 ```
 
 Заповнювати статистику треба в `on_position_closed` (подія Nautilus про закриття позиції).

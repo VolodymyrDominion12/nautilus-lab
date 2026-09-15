@@ -109,7 +109,8 @@ PPO-портфелі, автономні агенти на Uniswap v4. **nautilu
 | Fractional Kelly | ✅ opt-in `USE_FRACTIONAL_KELLY` |
 | HAR-RV vol-scaling | ✅ opt-in `USE_VOL_SCALING` |
 | CFA / ensemble | 🟡 `ensemble_vote` — заплановано після валідації окремих роботів |
-| PBO / CSCV | 🔴 (див. scalper-hft для повного аудиту) |
+| PBO / CSCV | ✅ `domain/overfitting.py` + `application/run_overfitting_audit.py`, прапорець `--pbo` (див. [15](15-audit-vypravlennya.md), [08 §2.2](08-mft-2026-vidpovidnist.md)) |
+| Turnover / cost-aware selection | 🔴 `in_sample_score()` ранжує за `ending_balance` і **ігнорує** `fees_paid` та `turnover`, які `compute_metrics()` уже рахує — найдешевший важіль із цього документа |
 
 ---
 
@@ -127,6 +128,7 @@ PPO-портфелі, автономні агенти на Uniswap v4. **nautilu
 | DRL портфель | 🔴 | — |
 | Kelly / vol / CVaR overlays | ✅ opt-in | `application/risk.py`, adapters |
 | Formulaic LGBM robot | ✅ | `domain/formulaic_lgbm_strategy.py` |
+| PBO / CSCV | ✅ | `domain/overfitting.py`, `--pbo` |
 | DeFi / TEE / agents | ⚪ | — |
 
 ---
@@ -181,10 +183,23 @@ uv run python scripts/train_formulaic_lgbm.py --catalog catalog --output models/
 uv run lab research --robot formulaic_lgbm
 ```
 
+### Перевірити, чи підбір параметрів узагалі щось значить
+
+```bash
+# PBO/CSCV: 8 блоків історії, кожна конфігурація сітки оцінюється на кожному блоці
+uv run lab research --robot regime --pbo --pbo-blocks 8
+```
+
+Це прямий практичний висновок із розділу про перенавчання: замість віри в те, що
+«сітка з 6 комбінацій безпечна», інструмент дає одне число — як часто переможець
+in-sample провалюється out-of-sample. Деталі й реальний результат — [15](15-audit-vypravlennya.md).
+
 ---
 
 ## 9. Куди йти далі
 
+- Що виправлено під час аудиту коду (знайдені помилки) → [15-audit-vypravlennya.md](15-audit-vypravlennya.md)
+- Як LLM/LRM-модель реально допомагає в торгівлі (ролі, контури, промпти, пастки) → [14-llm-model-u-torhivli.md](14-llm-model-u-torhivli.md)
 - MFT-мапа (VPIN, GLFT, funding) → [08-mft-2026-vidpovidnist.md](08-mft-2026-vidpovidnist.md)
 - Новий робот покроково → [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)
 - Приклади MFT-модулів → [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md)

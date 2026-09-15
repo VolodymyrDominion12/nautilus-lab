@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 
 
 def fractional_kelly_cap(
@@ -28,13 +28,21 @@ def historical_var(
     *,
     confidence: Decimal = Decimal("0.99"),
 ) -> Decimal | None:
-    """Historical VaR as a positive loss fraction at the given confidence."""
+    """Historical VaR as a positive loss fraction at the given confidence.
+
+    The tail index is the empirical ``1 - confidence`` quantile, taken with a
+    ceiling so the bucket always contains at least one observation. Truncating
+    instead (``int((1 - confidence) * n)``) skipped the single worst return on a
+    100-point sample and returned the *second* worst, understating exactly the loss
+    the circuit breaker in ``evaluate_entry`` exists to catch.
+    """
     if not returns:
         return None
     if confidence <= 0 or confidence >= 1:
         raise ValueError("confidence must be in (0, 1)")
     sorted_returns = sorted(returns)
-    index = int((Decimal("1") - confidence) * Decimal(len(sorted_returns)))
+    tail = (Decimal("1") - confidence) * Decimal(len(sorted_returns))
+    index = int(tail.to_integral_value(rounding=ROUND_CEILING)) - 1
     index = max(0, min(index, len(sorted_returns) - 1))
     worst = sorted_returns[index]
     return -worst if worst < 0 else Decimal("0")

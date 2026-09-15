@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     kelly_min_trades: int = 30
     use_cvar_breaker: bool = False
     max_cvar_99: Decimal = Decimal("0.05")
+    use_ratchet: bool = False
+    ratchet_arm_pct: Decimal = Decimal("0.0125")
     pairs_refit_every: int = 0
     vpin_momentum_ema_period: int = 50
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
@@ -111,6 +113,8 @@ class Settings(BaseSettings):
             kelly_min_trades=self.kelly_min_trades,
             use_cvar_breaker=self.use_cvar_breaker,
             max_cvar_99=self.max_cvar_99,
+            use_ratchet=self.use_ratchet,
+            ratchet_arm_pct=self.ratchet_arm_pct,
         )
 
     def pairs_params(self) -> PairsParams:

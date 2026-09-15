@@ -20,8 +20,10 @@ from nautilus_lab.domain.ratchet_stop import (
     RatchetParams,
     initial_ratchet,
     ratchet_hit,
+    step_ratchet,
     update_ratchet,
 )
+from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.signals import SignalSide
 
 
@@ -288,3 +290,75 @@ def test_short_ratchet_hits_when_price_rallies_through_the_ceiling() -> None:
 def test_ratchet_params_reject_inverted_lock_levels() -> None:
     with pytest.raises(InvalidRiskError, match="below its trigger"):
         RatchetParams(lock_levels=((Decimal("0.08"), Decimal("0.09")),))
+
+
+def _ohlc(
+    *,
+    high: Decimal,
+    low: Decimal,
+    close: Decimal,
+    open_: Decimal | None = None,
+    hour: int = 0,
+) -> OhlcvBar:
+    open_price = open_ if open_ is not None else close
+    return OhlcvBar(
+        instrument_id="ETH/USDT.SIM",
+        ts_utc=datetime(2024, 1, 1, hour, tzinfo=UTC),
+        open=open_price,
+        high=high,
+        low=low,
+        close=close,
+        volume=Decimal("10"),
+    )
+
+
+def test_step_ratchet_flattens_on_a_wick_through_the_stop() -> None:
+    """Close can finish above the stop; the low of the same closed bar still counts."""
+    params = RatchetParams(max_loss_pct=Decimal("0.01"))
+    state = initial_ratchet(entry_price=Decimal("100"), side=SignalSide.BUY, params=params)
+    updated, hit = step_ratchet(
+        state,
+        _ohlc(high=Decimal("100.5"), low=Decimal("98.5"), close=Decimal("100.2")),
+        params,
+    )
+    assert hit
+    assert updated is None
+
+
+def test_step_ratchet_checks_the_stop_known_at_bar_open() -> None:
+    """A wick to 99.2 must not hit a 99 stop even if the close would later arm to 100."""
+    params = RatchetParams(max_loss_pct=Decimal("0.01"), arm_pct=Decimal("0.0125"))
+    state = initial_ratchet(entry_price=Decimal("100"), side=SignalSide.BUY, params=params)
+    updated, hit = step_ratchet(
+        state,
+        _ohlc(high=Decimal("101.5"), low=Decimal("99.2"), close=Decimal("101.30")),
+        params,
+    )
+    assert not hit
+    assert updated is not None
+    assert updated.armed
+    assert updated.stop_price == Decimal("100")
+
+
+def test_step_ratchet_short_hits_on_the_high() -> None:
+    params = RatchetParams(max_loss_pct=Decimal("0.01"))
+    state = initial_ratchet(entry_price=Decimal("100"), side=SignalSide.SELL, params=params)
+    updated, hit = step_ratchet(
+        state,
+        _ohlc(high=Decimal("101.5"), low=Decimal("99.5"), close=Decimal("100.1")),
+        params,
+    )
+    assert hit
+    assert updated is None
+
+
+def test_overlay_ratchet_params_take_stop_pct_from_limits() -> None:
+    overlay = RiskOverlay(use_ratchet=True, ratchet_arm_pct=Decimal("0.02"))
+    params = overlay.ratchet_params(stop_pct=Decimal("0.015"))
+    assert params.max_loss_pct == Decimal("0.015")
+    assert params.arm_pct == Decimal("0.02")
+
+
+def test_overlay_rejects_a_non_positive_arm() -> None:
+    with pytest.raises(InvalidRiskError, match="ratchet_arm_pct"):
+        RiskOverlay(ratchet_arm_pct=Decimal("0"))

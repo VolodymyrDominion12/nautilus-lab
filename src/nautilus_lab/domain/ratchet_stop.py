@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import InvalidRiskError
 from nautilus_lab.domain.signals import SignalSide
 
@@ -101,6 +102,26 @@ def ratchet_hit(state: RatchetState, price: Decimal) -> bool:
     if state.side is SignalSide.BUY:
         return price <= state.stop_price
     return price >= state.stop_price
+
+
+def step_ratchet(
+    state: RatchetState,
+    bar: OhlcvBar,
+    params: RatchetParams,
+) -> tuple[RatchetState | None, bool]:
+    """Advance one closed bar. `(None, True)` means the stop was hit — flatten.
+
+    The stop that was known *entering* the bar is checked against the adverse
+    extreme (low for a long, high for a short). Only if it holds is the floor
+    updated from the close. The strategy never sees this; the adapter does.
+    """
+    adverse = bar.low if state.side is SignalSide.BUY else bar.high
+    if ratchet_hit(state, adverse):
+        return None, True
+    updated = update_ratchet(state, bar.close, params)
+    if ratchet_hit(updated, bar.close):
+        return None, True
+    return updated, False
 
 
 def _favourable_pct(state: RatchetState, price: Decimal) -> Decimal:

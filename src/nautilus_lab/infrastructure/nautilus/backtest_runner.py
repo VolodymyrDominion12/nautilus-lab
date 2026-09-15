@@ -66,6 +66,8 @@ class NautilusResearchBacktest:
                 kelly_min_trades=request.risk_overlay.kelly_min_trades,
                 use_cvar_breaker=request.risk_overlay.use_cvar_breaker,
                 max_cvar_99=request.risk_overlay.max_cvar_99,
+                use_ratchet=request.risk_overlay.use_ratchet,
+                ratchet_arm_pct=request.risk_overlay.ratchet_arm_pct,
             ),
         )
         return self._execute(

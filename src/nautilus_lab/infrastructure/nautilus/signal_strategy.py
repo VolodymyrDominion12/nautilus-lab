@@ -22,6 +22,7 @@ from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
+from nautilus_lab.domain.ratchet_stop import RatchetState, initial_ratchet, step_ratchet
 from nautilus_lab.domain.regime import RegimeParams, RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
@@ -76,6 +77,8 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     kelly_min_trades: int = 30
     use_cvar_breaker: bool = False
     max_cvar_99: Decimal = Decimal("0.05")
+    use_ratchet: bool = False
+    ratchet_arm_pct: Decimal = Decimal("0.0125")
 
 
 class SignalRobot(Strategy):  # type: ignore[misc]
@@ -100,6 +103,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             kelly_min_trades=config.kelly_min_trades,
             use_cvar_breaker=config.use_cvar_breaker,
             max_cvar_99=config.max_cvar_99,
+            use_ratchet=config.use_ratchet,
+            ratchet_arm_pct=config.ratchet_arm_pct,
         )
         self._previous_ts: datetime | None = None
         self._day_start_equity: Decimal | None = None
@@ -114,6 +119,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._atr = AverageTrueRange(14)
         self._har = HarRealizedVolatility()
         self._previous_close: Decimal | None = None
+        self._ratchet: RatchetState | None = None
 
     def on_start(self) -> None:
         self.subscribe_bars(self.config.bar_type)
@@ -134,6 +140,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             if self._previous_equity is not None and self._previous_equity > 0:
                 self._returns.append((equity - self._previous_equity) / self._previous_equity)
             self._previous_equity = equity
+
+        if self._apply_ratchet(domain_bar, equity):
+            return
 
         if signal is None:
             return
@@ -198,6 +207,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self.submit_order(order)
         self._turnover += domain_bar.close * qty
         self._entry_equity = equity
+        self._arm_ratchet(domain_bar, SignalSide.BUY if desired_buy else SignalSide.SELL)
 
     def on_stop(self) -> None:
         self._flatten(self._equity())
@@ -211,11 +221,36 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         return self._turnover
 
     def _flatten(self, equity: Decimal | None) -> None:
+        self._ratchet = None
         if not self._is_flat():
             if equity is not None and self._entry_equity is not None:
                 self._trade_stats.record(equity - self._entry_equity)
                 self._entry_equity = None
             self.close_all_positions(self.config.instrument_id)
+
+    def _apply_ratchet(self, bar: OhlcvBar, equity: Decimal | None) -> bool:
+        """Run the overlay stop. True = flattened this bar; skip the robot's action."""
+        if not self._overlay.use_ratchet:
+            return False
+        if self._is_flat() or self._ratchet is None:
+            self._ratchet = None
+            return False
+        params = self._overlay.ratchet_params(stop_pct=self._limits.stop_pct)
+        self._ratchet, hit = step_ratchet(self._ratchet, bar, params)
+        if not hit:
+            return False
+        self._flatten(equity)
+        return True
+
+    def _arm_ratchet(self, bar: OhlcvBar, side: SignalSide) -> None:
+        if not self._overlay.use_ratchet:
+            return
+        self._ratchet = initial_ratchet(
+            entry_price=bar.close,
+            side=side,
+            params=self._overlay.ratchet_params(stop_pct=self._limits.stop_pct),
+            atr_distance=self._atr.value,
+        )
 
     def _is_flat(self) -> bool:
         return bool(self.portfolio.is_flat(self.config.instrument_id))

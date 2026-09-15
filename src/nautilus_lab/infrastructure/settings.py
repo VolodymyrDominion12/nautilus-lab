@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     alert_webhook_url: str | None = None
+    # Offline research loop only (scripts/propose_alphas.py). Never read by a strategy:
+    # an LLM call inside the backtest or execution path is a bug, see docs/14.
+    llm_api_key: str | None = None
+    llm_base_url: str = "https://api.deepseek.com/v1"
+    llm_model: str = "deepseek-chat"
+    llm_temperature: float = 0.2
+    llm_timeout_seconds: int = 120
+    llm_prompts_dir: str = "research/prompts"
+    llm_hypotheses_dir: str = "research/hypotheses"
 
     def risk_limits(self) -> RiskLimits:
         return RiskLimits(

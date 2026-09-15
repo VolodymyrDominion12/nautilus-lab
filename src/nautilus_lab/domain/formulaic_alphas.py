@@ -7,6 +7,26 @@ from nautilus_lab.domain.windows import RollingWindow
 
 MIN_HISTORY = 21
 
+# Public feature contract: the exact order `FormulaicAlphaEngine.features()` returns.
+# Anything that describes, scores or generates alphas over these features (research
+# prompts, hypothesis validation, the LightGBM dataset) must reference this tuple
+# instead of hard-coding names, so a new feature cannot silently break the schema.
+# Guarded by tests/unit/test_hypothesis.py::test_feature_names_match_engine_order.
+FEATURE_NAMES: tuple[str, ...] = (
+    "ret",
+    "ret_5",
+    "vol_10",
+    "volume_ratio",
+    "close_loc",
+    "momentum_10",
+    "reversal_3",
+    "vol_of_vol",
+    "trend_er",
+    "range_pct",
+    "high_low_spread",
+    "vol_20",
+)
+
 
 class FormulaicAlphaEngine:
     """WorldQuant-style formulaic features on closed OHLCV bars (no look-ahead)."""

@@ -27,6 +27,14 @@ class RobotNotWiredError(DomainError):
     """Robot has no execution adapter yet. Fail closed instead of running another robot."""
 
 
+class InvalidHypothesisError(DomainError):
+    """An alpha proposal is malformed or breaks the hypothesis contract.
+
+    Raised only in the offline research loop: a bad proposal must never reach a
+    strategy, and never a hot path.
+    """
+
+
 class LiveTradingDisabledError(RuntimeError):
     """Live orders are blocked until the user explicitly enables a live adapter."""
 

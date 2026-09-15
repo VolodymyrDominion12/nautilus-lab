@@ -15,7 +15,7 @@
 |------|------------------|-------------|
 | `bars.py` | `OhlcvBar`, `BarOrigin`, `validate_bar()` | Один закритий бар; перевірка UTC, OHLC-інваріантів, монотонності часу, відсутності майбутнього |
 | `signals.py` | `Signal`, `SignalSide`, `LegIntent`, `SpreadSignal`, `QuoteIntent` | Наміри стратегій: однолегові, двуногові (спред) і котировки маркет-мейкера |
-| `errors.py` | `DomainError`, `InvalidBarError`, `InvalidWindowError`, `CatalogEmptyError`, `InvalidRiskError`, `RobotNotWiredError`, `LiveTradingDisabledError`, `PaperTradingNotReadyError` | Помилки; політика fail-closed |
+| `errors.py` | `DomainError`, `InvalidBarError`, `InvalidWindowError`, `CatalogEmptyError`, `InvalidRiskError`, `RobotNotWiredError`, `InvalidHypothesisError`, `LiveTradingDisabledError`, `PaperTradingNotReadyError` | Помилки; політика fail-closed. `InvalidHypothesisError` — лише офлайн-контур пропозицій альф |
 | `money.py` | `Money` | Негрошова сума (не від'ємна), `risk_amount(fraction)` |
 | `trading_mode.py` | `TradingMode` | `RESEARCH` / `PAPER` / `LIVE` |
 | `windows.py` | `RollingWindow` | Ковзне вікно закритих значень; `values()`, `prior()` (усе, крім щойно закритого бару — захист від look-ahead) |
@@ -57,6 +57,8 @@
 | `hawkes.py` | `HawkesIntensity`, `ExponentialHawkes` | Інтенсивність потоку угод (самозбудження), прапорець токсичності |
 | `ml_classifier.py` | `DirectionProbabilities`, `DirectionClassifier` | Протокол класифікатора напрямку |
 | `ml_obi_strategy.py` | `MlObiStrategy` | Сигнал за OBI/WOFI/fade із порогом імовірності |
+| `formulaic_alphas.py` | `FEATURE_NAMES`, `MIN_HISTORY`, `FormulaicAlphaEngine` | 12 формульних ознак на закритих барах (WorldQuant-style). `FEATURE_NAMES` — публічний контракт порядку ознак: на нього спираються промпти, валідація гіпотез і набір для LightGBM, тому нова ознака не може тихо зламати схему |
+| `hypothesis.py` | `Hypothesis`, `parse_hypotheses()`, `unknown_identifiers()`, `rejected_names()`, `ALLOWED_FORMULA_FUNCTIONS`, `MAX_HORIZON_BARS` | Контракт гіпотези з офлайн-контуру: обов'язкові поля, межі горизонту, нормалізація знаку, і **лінтер вигаданих ознак** — токени формули, яких немає ні серед `FEATURE_NAMES`, ні серед дозволених функцій |
 
 ### Інші стратегії
 
@@ -79,7 +81,7 @@
 | `stress_slices.py` | `StressSliceName`, `StressSlice`, `STRESS_SLICES`, `resolve_stress_slice()` | `covid2020`, `ftx2022`, `etf2024` |
 | `align.py` | `align_bars_inner_join()`, `split_aligned_by_window()` | Вирівнювання кількох серій за часом (inner join) |
 | `fees.py` | `FeeSchedule` | Розклад комісій; `binance_spot_vip0()`, `binance_usdm_vip0()` |
-| `ports.py` | `PublicBarFeed`, `BarCatalog`, `JsonHttpClient`, `FundingRateFeed`, `OrderBookSnapshotFeed` | Протоколи, які реалізує infrastructure |
+| `ports.py` | `PublicBarFeed`, `BarCatalog`, `JsonHttpClient`, `FundingRateFeed`, `OrderBookSnapshotFeed`, `ChatCompleter` | Протоколи, які реалізує infrastructure. `ChatCompleter` — **лише офлайн-дослідження**: жодна стратегія не має залежати від нього |
 
 ---
 
@@ -99,6 +101,7 @@
 | `scan_triangular.py` | `scan_triangular_opportunities()` | Обгортка над пошуком циклів (fee на кожне ребро) |
 | `optuna_optimizer.py` | `OptunaParamOptimizer` | Байєсівська оптимізація (TPE) на in-sample: `optimize(request, run_is)` → `(params, report, trials)`. Окремі гілки простору пошуку для `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`; `exit_trend_er` обмежений зверху через `enter_trend_er`, бо `RegimeParams` вимагає `enter > exit` |
 | `run_overfitting_audit.py` | `RunOverfitAudit`, `BlockRunner` | Аудит перенавчання: ріже історію на `blocks` послідовних блоків, проганяє кожну конфігурацію сітки на кожному блоці (окремо для однолегових роботів і для `pairs` — там усі ноги ріжуться за однаковими індексами), будує матрицю й віддає її в `probability_of_backtest_overfitting()` |
+| `propose_alphas.py` | `AlphaProposalRequest`, `AlphaProposalRun`, `SYSTEM_PROMPT`, `load_prompt_template()`, `render_prompt()`, `extract_json_block()`, `propose_alphas()`, `write_artifact()`, `artifact_slug()`, `summarise()`, `endpoint_host_of()` | Офлайн-цикл пропозиції альф: шаблон + 12 ознак + дата відсічення → один виклик моделі → валідація за контрактом гіпотези → JSON-артефакт із provenance (модель, хеш промпту, as-of, сира відповідь, блок `review` зі `status: pending`). Ключів в артефакті немає — лише хост |
 
 ---
 
@@ -113,6 +116,7 @@
 | `lightgbm_classifier.py` | `HeuristicDirectionClassifier`, `LightGBMDirectionClassifier` | Rule-based fallback і опційний LightGBM |
 | `egarch_forecast.py` | `egarch_forecast_volatility()` | EGARCH(1,1) через `arch`; `None`, якщо недоступно |
 | `alerts.py` | `AlertNotifier`, `NullAlertNotifier`, `TelegramAlertNotifier`, `WebhookAlertNotifier`, `CompositeAlertNotifier`, `build_notifier()` | Сповіщення про завершення прогону; `httpx`, fail-safe |
+| `llm_client.py` | `OpenAICompatibleChatClient`, `LlmRequestError` | Чат-комплішени будь-якого OpenAI-сумісного ендпоінта (хмарний API або локальний сервер відкритих ваг). Тільки stdlib, без SDK; без `LLM_API_KEY` конструктор падає закрито; будь-яка несподівана форма відповіді → `LlmRequestError` |
 | `orderbook_microstructure.py` | `compute_order_book_imbalance()`, `compute_micro_price()`, `compute_microstructure_dataframe()` | Мікроструктура на float/Polars (векторні обчислення), окремо від доменної версії на `Decimal` |
 | `paper_trading.py` | `PaperOrderLog`, `PaperTradingLogger` | Журнал гіпотетичних ордерів |
 | `nautilus/parquet_catalog.py` | `NautilusParquetCatalog` | `write()`, `load()`; валідація кожного бару; `write()` спершу **видаляє перекритий діапазон** (`delete_data_range`) — повторний ingest замінює вікно, а не додає другий файл; `load()` дедуплікує за `ts_utc` (останнє входження) і сортує за часом, тому старі каталоги лишаються читабельними |
@@ -163,6 +167,9 @@
 | `unit/test_overfitting.py` | PBO/CSCV: домінантна конфігурація → PBO 0; антикорельовані блоки → PBO 1; нічийні розбиття не рахуються; одна конфігурація → `undefined`; нерівна матриця й порожня матриця → помилка |
 | `unit/test_audit_fixes.py` | Регресії на знайдені аудитом помилки: `15m` ≠ `5m`, перпетуал у `bar_type`, невідомий інтервал → помилка, рекурсія Вайлдера в ATR, VaR-квантиль, недосяжний поріг funding, нульовий `index_price`, зсув GLFT від інвентарю. Деталі — [15](15-audit-vypravlennya.md) |
 | `unit/test_alerts.py` | Нотифікатори: успіх, HTTP-помилка, виняток, композиція (з моками `httpx`) |
+| `unit/test_hypothesis.py` | Контракт гіпотези: `FEATURE_NAMES` не розходиться з порядком виходу `FormulaicAlphaEngine`, обов'язкові поля, межі горизонту, нормалізація знаку, лінтер вигаданих ознак |
+| `unit/test_propose_alphas.py` | Офлайн-цикл без мережі (фейковий completer): рендер плейсхолдерів, екстракція JSON із фенсів і прози, provenance артефакта, унікальність імені файлу, ліквідація облікових даних з `endpoint_host` |
+| `unit/test_llm_client.py` | Клієнт: fail-closed без ключа, тіло й заголовки запиту (`monkeypatch` на `urlopen`), нормалізація `base_url`, HTTP/мережеві помилки, шість непридатних форм відповіді, відсутність сторонніх SDK |
 | `unit/test_orderbook_microstructure.py` | OBI (скаляр і список рівнів), micro-price, Polars-трансформація |
 | `integration/test_research_backtest.py` | Реальний рушій Nautilus: синтетичний прогін, roundtrip каталогу, pairs, порожній каталог → fail closed; повторний ingest перекритого вікна замінює дані, а не дублює їх; `load()` дедуплікує каталог, у якому вже лежать перекриті файли |
 | `integration/test_tearsheet_generation.py` | Генерація HTML-тиршита: файл створюється, непорожній, шлях повертається у звіті |
@@ -170,10 +177,10 @@
 Запуск:
 
 ```bash
-uv run pytest                                      # усі 167 тестів
+uv run pytest                                      # усі 274 тести
 uv run pytest tests/unit -q                        # лише швидкі
 uv run pytest tests/integration -q                 # лише рушій (локально, без мережі)
-uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%; поточне — 83.70%)
+uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%; поточне — 83.31%)
 ```
 
 ---
@@ -190,6 +197,9 @@ uv run pytest --cov --cov-report=term-missing      # з покриттям (по
 | `.env` | Ваші локальні налаштування (у `.gitignore`) |
 | `uv.lock` | Зафіксовані версії залежностей |
 | `catalog/` | Parquet-каталог даних (у `.gitignore`) |
+| `scripts/` | Одноразові та офлайн-скрипти: `train_formulaic_lgbm.py`, `propose_alphas.py` |
+| `research/` | Офлайн-контур: промпти, артефакти гіпотез, журнал рішень (див. [research/README.md](../research/README.md)) |
+| `models/` | Збережені бустери LightGBM, напр. `formulaic_lgbm.txt` |
 
 ---
 
@@ -205,6 +215,7 @@ uv run pytest --cov --cov-report=term-missing      # з покриттям (по
 | Новий запобіжник ризику | `application/risk.py::evaluate_entry` + `domain/risk.py::RiskLimits` | Уся політика ризику в одному місці |
 | Сповіщення про подію | `infrastructure/alerts.py` (новий нотифікатор) + `composition.notifier()` | Один протокол `notify(message, level)` для всіх каналів |
 | Новий спосіб підбору параметрів | `application/` (поряд із `param_grid.py` та `optuna_optimizer.py`) | `RunWalkForward` викликає їх через єдиний інтерфейс `run_is` |
+| Промпт або гіпотезу для офлайн-циклу | `research/prompts/` і `research/hypotheses/` | Дослідницькі дані живуть поза кодом; модель ніколи не викликається з гарячого шляху |
 
 ## Куди йти далі
 

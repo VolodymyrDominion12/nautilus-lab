@@ -24,6 +24,7 @@
 | [docs/10-cli-dovidnyk.md](docs/10-cli-dovidnyk.md) | Довідник усіх команд і прапорців |
 | [docs/11-troubleshooting-faq.md](docs/11-troubleshooting-faq.md) | Типові помилки, дивна поведінка, часті питання |
 | [docs/12-karta-fayliv.md](docs/12-karta-fayliv.md) | Карта всіх модулів і публічного API |
+| [docs/14-llm-model-u-torhivli.md](docs/14-llm-model-u-torhivli.md) | Як LLM/LRM-модель допомагає в торгівлі (і де їй не місце) + офлайн-контур гіпотез |
 | [docs/15-audit-vypravlennya.md](docs/15-audit-vypravlennya.md) | Аудит коректності: знайдені помилки логіки та як їх виправлено |
 
 ## Що всередині
@@ -111,6 +112,22 @@ uv run lab research --synthetic --bars 1000 --tearsheet reports/synthetic_tearsh
 uv run lab paper   # ще не підключений live feed
 uv run lab live    # завжди fail closed
 ```
+
+## Офлайн-контур ШІ-дослідження (поза гарячим шляхом)
+
+Гіпотези можна просити у великої мовної моделі — але **тільки офлайн**, і кожна
+відповідь стає артефактом у git, який перевіряє людина. Жодна стратегія не викликає
+LLM, `lab live` і далі fail closed.
+
+```bash
+.venv/bin/python scripts/propose_alphas.py --dry-run              # побачити промпт, без мережі
+.venv/bin/python scripts/propose_alphas.py --count 5              # потрібен LLM_API_KEY у .env
+.venv/bin/python scripts/propose_alphas.py --base-url http://127.0.0.1:11434/v1 --model qwen2.5:14b
+```
+
+Артефакт лягає в `research/hypotheses/`, рішення по ньому — у `research/journal.md`.
+Деталі, пастки (передусім temporal leakage) і шаблони промптів —
+[docs/14](docs/14-llm-model-u-torhivli.md) і [research/README.md](research/README.md).
 
 ## Як додати свого робота
 

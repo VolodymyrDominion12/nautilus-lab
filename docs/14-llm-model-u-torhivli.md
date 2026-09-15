@@ -419,22 +419,27 @@ uv run lab ingest --start 2025-01-01
 # 2. Зафіксувати планку: buy&hold на тому ж OOS-періоді
 uv run lab research --robot regime --folds 4
 
-# 3. Згенерувати 5 гіпотез промптом §4.1 → research/hypotheses/*.json
-#    (людський апрув: лишаємо тільки ті, де є економічний механізм)
+# 3. Подивитись, який промпт піде в модель (мережі не торкається, ключ не потрібен)
+.venv/bin/python scripts/propose_alphas.py --dry-run
 
-# 4. Перевірити їх purged K-fold-ом, а не «на око»
+# 4. Спитати модель і записати артефакт (потрібен LLM_API_KEY у .env)
+.venv/bin/python scripts/propose_alphas.py --count 5 --as-of 2026-09-15
+#    або локальний сервер відкритих ваг, без передачі даних у хмару:
+.venv/bin/python scripts/propose_alphas.py --base-url http://127.0.0.1:11434/v1 --model qwen2.5:14b
+
+# 5. Людський апрув → реалізація в domain/ → ворота
 uv run python scripts/train_formulaic_lgbm.py --catalog catalog --output models/formulaic.txt
 
-# 5. Увімкнути робота і порівняти з планкою кроку 2
+# 6. Увімкнути робота і порівняти з планкою кроку 2
 echo "FORMULAIC_MODEL_PATH=models/formulaic.txt" >> .env
 uv run lab research --robot formulaic_lgbm --folds 4
 
-# 6. Опційні ризик-оверлеї (не змінюють сигнали) — по одному, з повторним прогоном
+# 7. Опційні ризик-оверлеї (не змінюють сигнали) — по одному, з повторним прогоном
 uv run lab research --robot formulaic_lgbm --folds 4   # USE_FRACTIONAL_KELLY=true
 ```
 
-Після кожного кроку — рядок у журнал: **що перевірили, яке число, прийнято чи
-відкинуто і чому**. Це найдорожчий артефакт усієї роботи.
+Після кожного кроку — рядок у [journal.md](../research/journal.md): **що перевірили, яке
+число, прийнято чи відкинуто і чому**. Це найдорожчий артефакт усієї роботи.
 
 ---
 
@@ -452,8 +457,45 @@ uv run lab research --robot formulaic_lgbm --folds 4   # USE_FRACTIONAL_KELLY=tr
 
 ---
 
-## 9. Куди далі
+## 9. Що з цього вже реалізовано в репо
 
+Офлайн-контур із розділів 1–4 існує як код. Гарячий шлях не змінився: `lab live`
+і далі fail closed, жодна стратегія не імпортує LLM-клієнт.
+
+| Шар | Файл | Роль |
+|-----|------|------|
+| Domain | `domain/hypothesis.py` | Контракт гіпотези: обов'язкові поля, межі горизонту, нормалізація знаку і лінтер вигаданих ознак (`unknown_identifiers()`) |
+| Domain | `domain/formulaic_alphas.py::FEATURE_NAMES` | Публічний перелік 12 ознак — його підставляє промпт і ним перевіряється формула |
+| Domain | `domain/ports.py::ChatCompleter` | Порт моделі: завдяки йому цикл тестується без мережі |
+| Application | `application/propose_alphas.py` | Промпт → один виклик → валідація → артефакт із provenance |
+| Infrastructure | `infrastructure/llm_client.py` | OpenAI-сумісний клієнт на stdlib; без ключа падає закрито |
+| Interface | `scripts/propose_alphas.py` | CLI: `--dry-run`, `--count`, `--as-of`, `--model`, `--base-url`, коди виходу 0/2/3 |
+| Дані | `research/prompts/`, `research/hypotheses/`, `research/journal.md` | Шаблони промптів, артефакти, журнал рішень |
+
+Що варто знати про поведінку:
+
+- **Артефакт ніколи не перезаписується.** Повторний виклик з тим самим промптом і
+  моделлю отримує суфікс `-r2`: недетермінізм моделі не має права стирати історію.
+- **У файл не потрапляють облікові дані.** Записується лише хост ендпоінта, навіть
+  якщо в `LLM_BASE_URL` був userinfo.
+- **Вигадана ознака не блокує артефакт, але позначається.** `count_flagged` і
+  `unknown_identifiers` у JSON — це сигнал для рев'ю, а не автоматична відмова:
+  рішення ухвалює людина.
+- **Промпт версіонується хешем.** `prompt_sha256` у артефакті відповідає на питання
+  «який саме текст дав цей результат» через місяці.
+
+Перевірка контуру без мережі (те саме роблять unit-тести):
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_hypothesis.py \
+    tests/unit/test_propose_alphas.py tests/unit/test_llm_client.py -q
+```
+
+---
+
+## 10. Куди далі
+
+- Робочий цикл і команди офлайн-контуру → [research/README.md](../research/README.md)
 - Мапа «розділ статті → код» → [13-ai-2026-vidpovidnist.md](13-ai-2026-vidpovidnist.md)
 - Мапа MFT-документа → [08-mft-2026-vidpovidnist.md](08-mft-2026-vidpovidnist.md)
 - Новий робот покроково → [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)

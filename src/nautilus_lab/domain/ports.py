@@ -55,3 +55,14 @@ class FundingRateFeed(Protocol):
 
 class OrderBookSnapshotFeed(Protocol):
     def fetch_snapshot(self, *, symbol: str) -> OrderBookSnapshot: ...
+
+
+class ChatCompleter(Protocol):
+    """Text completion from a language model.
+
+    OFFLINE RESEARCH ONLY. This port exists so the alpha-proposal loop can be tested
+    without a network, and so no strategy can reach a model by accident: nothing in
+    the backtest or execution path may depend on it (docs/14-llm-model-u-torhivli.md).
+    """
+
+    def complete(self, *, system: str, user: str) -> str: ...

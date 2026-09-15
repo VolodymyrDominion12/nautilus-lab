@@ -11,6 +11,7 @@ from nautilus_lab.application.dtos import (
     OverfitAuditRequest,
     ResearchBacktestPort,
     apply_selected,
+    index_of_best_configuration,
 )
 from nautilus_lab.application.param_grid import iter_param_grid
 from nautilus_lab.application.risk import require_simulated_mode
@@ -136,7 +137,7 @@ def _report(
     block_count: int,
 ) -> OverfitAuditReport:
     result = probability_of_backtest_overfitting(_numeric_matrix(matrix))
-    best = labels[_best_index(matrix)]
+    best = labels[index_of_best_configuration(matrix)]
     return OverfitAuditReport(
         pbo=result.pbo,
         split_count=result.split_count,
@@ -152,18 +153,6 @@ def _report(
             "simulated from a flat start, so each one loses its own warm-up bars."
         ),
     )
-
-
-def _best_index(matrix: tuple[tuple[Decimal | None, ...], ...]) -> int:
-    totals = [
-        sum((value for value in column if value is not None), Decimal("0"))
-        for column in zip(*matrix, strict=True)
-    ]
-    best = 0
-    for index in range(1, len(totals)):
-        if totals[index] > totals[best]:
-            best = index
-    return best
 
 
 def _numeric_matrix(

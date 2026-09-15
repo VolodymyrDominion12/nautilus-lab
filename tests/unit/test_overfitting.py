@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 
+from nautilus_lab.application.dtos import index_of_best_configuration
 from nautilus_lab.domain.overfitting import probability_of_backtest_overfitting
 
 
@@ -73,3 +74,28 @@ def test_ragged_matrix_is_rejected() -> None:
 def test_empty_matrix_is_rejected() -> None:
     with pytest.raises(ValueError, match="empty"):
         probability_of_backtest_overfitting(())
+
+
+def test_best_configuration_is_the_strongest_column_not_always_the_first() -> None:
+    """A nested walk of every column would make every total identical and pick index 0."""
+    matrix = (
+        (Decimal("0.01"), Decimal("0.40"), Decimal("0.03")),
+        (Decimal("0.00"), Decimal("0.60"), Decimal("0.07")),
+    )
+    assert index_of_best_configuration(matrix) == 1
+
+
+def test_best_configuration_sums_only_values_inside_each_column() -> None:
+    matrix = (
+        (None, Decimal("0.05"), Decimal("0.01")),
+        (Decimal("0.01"), Decimal("0.05"), Decimal("0.01")),
+    )
+    assert index_of_best_configuration(matrix) == 1
+
+
+def test_best_configuration_keeps_the_first_index_on_a_tie() -> None:
+    matrix = (
+        (Decimal("0.02"), Decimal("0.02")),
+        (Decimal("0.01"), Decimal("0.01")),
+    )
+    assert index_of_best_configuration(matrix) == 0

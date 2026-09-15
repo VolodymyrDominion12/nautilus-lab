@@ -251,6 +251,25 @@ class OverfitAuditRequest:
             raise ValueError("blocks must be >= 2 for a symmetric split")
 
 
+def index_of_best_configuration(matrix: tuple[tuple[Decimal | None, ...], ...]) -> int:
+    """Index of the configuration (column) with the highest summed block scores.
+
+    Rows are blocks; `zip(*matrix)` yields one column per grid configuration.
+    Each total walks only that column — it must not re-iterate every column.
+    """
+    best_index = 0
+    best_total: Decimal | None = None
+    for index, column in enumerate(zip(*matrix, strict=True)):
+        total = Decimal("0")
+        for value in column:
+            if value is not None:
+                total += value
+        if best_total is None or total > best_total:
+            best_index = index
+            best_total = total
+    return best_index
+
+
 @dataclass(frozen=True, slots=True)
 class OverfitAuditReport:
     """Probability of backtest overfitting, plus the matrix it was computed from.
@@ -275,18 +294,7 @@ class OverfitAuditReport:
 
     def best_configuration_index(self) -> int:
         """Index of the configuration with the best mean score across all blocks."""
-        totals = [
-            sum(
-                (value for value in column if value is not None),
-                Decimal("0"),
-            )
-            for column in zip(*self.block_returns, strict=True)
-        ]
-        best = 0
-        for index in range(1, len(totals)):
-            if totals[index] > totals[best]:
-                best = index
-        return best
+        return index_of_best_configuration(self.block_returns)
 
     def summary_line(self) -> str:
         if not self.is_meaningful:

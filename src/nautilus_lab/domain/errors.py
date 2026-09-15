@@ -35,6 +35,10 @@ class InvalidHypothesisError(DomainError):
     """
 
 
+class JournalFormatError(DomainError):
+    """The research journal lost its marker pair, so a new row has no defined place."""
+
+
 class LiveTradingDisabledError(RuntimeError):
     """Live orders are blocked until the user explicitly enables a live adapter."""
 

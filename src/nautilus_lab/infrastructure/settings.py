@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 120
     llm_prompts_dir: str = "research/prompts"
     llm_hypotheses_dir: str = "research/hypotheses"
+    # Append-only research journal (application/journal.py). Off by default: writing to a
+    # tracked file on every run is a decision, not a side effect. `--journal` forces it.
+    journal_enabled: bool = False
+    journal_path: str = "research/journal.md"
+    journal_jsonl_path: str = "research/journal.jsonl"
 
     def risk_limits(self) -> RiskLimits:
         return RiskLimits(

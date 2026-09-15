@@ -120,12 +120,15 @@ uv run lab live    # завжди fail closed
 LLM, `lab live` і далі fail closed.
 
 ```bash
-.venv/bin/python scripts/propose_alphas.py --dry-run              # побачити промпт, без мережі
-.venv/bin/python scripts/propose_alphas.py --count 5              # потрібен LLM_API_KEY у .env
-.venv/bin/python scripts/propose_alphas.py --base-url http://127.0.0.1:11434/v1 --model qwen2.5:14b
+uv run lab propose --dry-run                                      # побачити промпт, без мережі
+uv run lab propose --count 5 --journal                            # потрібен LLM_API_KEY у .env
+uv run lab propose --base-url http://127.0.0.1:11434/v1 --model qwen2.5:14b
+
+uv run lab research --robot regime --folds 4 --journal            # рядок у журнал дослідження
 ```
 
-Артефакт лягає в `research/hypotheses/`, рішення по ньому — у `research/journal.md`.
+Артефакт лягає в `research/hypotheses/`, рішення по ньому — у `research/journal.md`
+(і машинний лог `research/journal.jsonl`); `--journal` лише дописує рядки.
 Деталі, пастки (передусім temporal leakage) і шаблони промптів —
 [docs/14](docs/14-llm-model-u-torhivli.md) і [research/README.md](research/README.md).
 

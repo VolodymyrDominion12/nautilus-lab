@@ -92,6 +92,7 @@
 | `dtos.py` | `BacktestRequest`, `BacktestReport`, `IngestRequest`, `IngestReport`, `WalkForwardRequest`, `WalkForwardReport`, `WalkForwardFold`, `MultiWindowReport`, `SelectedParams`, `ResearchBacktestPort`, `BarFeed`, `selected_from_request()`, `apply_selected()` | Усі структури даних; протоколи рушія й фіду; застосування підібраних параметрів. `WalkForwardFold` — один ковзний фолд; `MultiWindowReport` — агрегат OOS: `oos_returns`, `profitable_folds`, `mean_oos_return`, `median_oos_return`, `worst_oos_return`, `best_oos_return`, `mean_buy_and_hold_return`, `total_oos_fills`, `beats_buy_and_hold()` (`None`, коли щось із двох боків не вимірюється) і `summary_line()` |
 | `run_research_backtest.py` | `RunResearchBacktest` | Один прогін; перевірка мінімуму барів (`_minimum_bars`) |
 | `run_walk_forward.py` | `RunWalkForward` | Повний цикл IS/OOS із grid search; `_require_warmup()`; `execute_multi()` — багатовіконний прогін: окремий walk-forward на кожен фолд і агрегат OOS (відхиляє `folds < 2` і явне `window`; працює і для `pairs`) |
+| `run_walk_forward.py` (там же) | `window_return()` | Дохідність одного вікна за `starting_equity`. Публічна, бо CLI записує в журнал OOS-число єдиного спліту за тим самим означенням, що й ковзні фолди |
 | `param_grid.py` | `iter_param_grid()` | Сітки: regime 6, ema 4, pairs 3 |
 | `score.py` | `in_sample_score()` | Оцінка кандидата = `ending_balance` (відсутній → −1) |
 | `risk.py` | `size_position()`, `stop_distance()`, `evaluate_entry()`, `effective_risk_fraction()`, `require_simulated_mode()` | Розмір позиції, стоп, запобіжники, Келлі-обмеження, заборона live |
@@ -102,6 +103,7 @@
 | `optuna_optimizer.py` | `OptunaParamOptimizer` | Байєсівська оптимізація (TPE) на in-sample: `optimize(request, run_is)` → `(params, report, trials)`. Окремі гілки простору пошуку для `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`; `exit_trend_er` обмежений зверху через `enter_trend_er`, бо `RegimeParams` вимагає `enter > exit` |
 | `run_overfitting_audit.py` | `RunOverfitAudit`, `BlockRunner` | Аудит перенавчання: ріже історію на `blocks` послідовних блоків, проганяє кожну конфігурацію сітки на кожному блоці (окремо для однолегових роботів і для `pairs` — там усі ноги ріжуться за однаковими індексами), будує матрицю й віддає її в `probability_of_backtest_overfitting()` |
 | `propose_alphas.py` | `AlphaProposalRequest`, `AlphaProposalRun`, `SYSTEM_PROMPT`, `load_prompt_template()`, `render_prompt()`, `extract_json_block()`, `propose_alphas()`, `write_artifact()`, `artifact_slug()`, `summarise()`, `endpoint_host_of()` | Офлайн-цикл пропозиції альф: шаблон + 12 ознак + дата відсічення → один виклик моделі → валідація за контрактом гіпотези → JSON-артефакт із provenance (модель, хеш промпту, as-of, сира відповідь, блок `review` зі `status: pending`). Ключів в артефакті немає — лише хост |
+| `journal.py` | `JournalEntry`, `record_run()`, `append_row()`, `append_record()`, `load_records()`, `ROWS_START`, `ROWS_END`, `PENDING`/`ACCEPTED`/`REJECTED`/`RERUN` | Append-only журнал дослідження: рядок у `research/journal.md` + JSON у `research/journal.jsonl`. Існуючі рядки не переписуються (ручне рішення переживає наступний прогін), а без маркерів `journal:rows:start/end` запис падає з `JournalFormatError`, а не вгадує місце |
 
 ---
 
@@ -135,8 +137,8 @@
 
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
-| `cli.py` | `main()`, `parse_utc()` | argparse-команди `ingest`, `research`, `paper`, `scan`, `live`; друк звітів |
-| `composition.py` | `settings()`, `catalog()`, `research_use_case()`, `walk_forward_use_case()`, `ingest_use_case()`, `research_request()`, `ingest_request()`, `walk_forward_request()` | Єдина точка збірки залежностей |
+| `cli.py` | `main()`, `parse_utc()`, `parse_date()` | argparse-команди `ingest`, `research`, `paper`, `scan`, `propose`, `live`; друк звітів. `research --journal` і `propose --journal` дописують рядок у журнал дослідження |
+| `composition.py` | `settings()`, `catalog()`, `research_use_case()`, `walk_forward_use_case()`, `ingest_use_case()`, `overfit_audit_use_case()`, `llm_completer()`, `alpha_proposal_request()`, `journal_paths()`, `notifier()`, `research_request()`, `ingest_request()`, `walk_forward_request()`, `overfit_audit_request()` | Єдина точка збірки залежностей. `llm_completer()` — офлайн-контур, поза гарячим шляхом: без ключа падає закрито |
 
 ---
 
@@ -170,6 +172,8 @@
 | `unit/test_hypothesis.py` | Контракт гіпотези: `FEATURE_NAMES` не розходиться з порядком виходу `FormulaicAlphaEngine`, обов'язкові поля, межі горизонту, нормалізація знаку, лінтер вигаданих ознак |
 | `unit/test_propose_alphas.py` | Офлайн-цикл без мережі (фейковий completer): рендер плейсхолдерів, екстракція JSON із фенсів і прози, provenance артефакта, унікальність імені файлу, ліквідація облікових даних з `endpoint_host` |
 | `unit/test_llm_client.py` | Клієнт: fail-closed без ключа, тіло й заголовки запиту (`monkeypatch` на `urlopen`), нормалізація `base_url`, HTTP/мережеві помилки, шість непридатних форм відповіді, відсутність сторонніх SDK |
+| `unit/test_journal.py` | Журнал: форматування рядка (числа, `n/a`, екранування `|`, обрізання), дописування без перезапису, збереження ручного рішення, fail-closed без маркерів і з перевернутими маркерами, round-trip JSONL, відмова від недовірених записів |
+| `unit/test_cli_propose_journal.py` | CLI без мережі (фейковий `llm_completer`): `propose --dry-run`, fail-closed без ключа, артефакт + рядок `pending` у журналі, `--journal` вимкнено типово, `JOURNAL_ENABLED=true`, помилка при втрачених маркерах |
 | `unit/test_orderbook_microstructure.py` | OBI (скаляр і список рівнів), micro-price, Polars-трансформація |
 | `integration/test_research_backtest.py` | Реальний рушій Nautilus: синтетичний прогін, roundtrip каталогу, pairs, порожній каталог → fail closed; повторний ingest перекритого вікна замінює дані, а не дублює їх; `load()` дедуплікує каталог, у якому вже лежать перекриті файли |
 | `integration/test_tearsheet_generation.py` | Генерація HTML-тиршита: файл створюється, непорожній, шлях повертається у звіті |
@@ -177,10 +181,10 @@
 Запуск:
 
 ```bash
-uv run pytest                                      # усі 274 тести
+uv run pytest                                      # усі 333 тести
 uv run pytest tests/unit -q                        # лише швидкі
 uv run pytest tests/integration -q                 # лише рушій (локально, без мережі)
-uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%; поточне — 83.31%)
+uv run pytest --cov --cov-report=term-missing      # з покриттям (порог 80%; поточне — 82.35%)
 ```
 
 ---
@@ -197,7 +201,7 @@ uv run pytest --cov --cov-report=term-missing      # з покриттям (по
 | `.env` | Ваші локальні налаштування (у `.gitignore`) |
 | `uv.lock` | Зафіксовані версії залежностей |
 | `catalog/` | Parquet-каталог даних (у `.gitignore`) |
-| `scripts/` | Одноразові та офлайн-скрипти: `train_formulaic_lgbm.py`, `propose_alphas.py` |
+| `scripts/` | Одноразові та офлайн-скрипти: `train_formulaic_lgbm.py`, `propose_alphas.py` (тонка обгортка над `lab propose`) |
 | `research/` | Офлайн-контур: промпти, артефакти гіпотез, журнал рішень (див. [research/README.md](../research/README.md)) |
 | `models/` | Збережені бустери LightGBM, напр. `formulaic_lgbm.txt` |
 

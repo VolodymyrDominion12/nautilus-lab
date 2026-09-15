@@ -216,7 +216,7 @@ class RunWalkForward:
             in_sample=best_is_report,
             out_of_sample=oos,
             window=window,
-            oos_return=_window_return(oos, request.backtest.starting_equity),
+            oos_return=window_return(oos, request.backtest.starting_equity),
             buy_and_hold_return=buy_and_hold_return(oos_reference),
         )
 
@@ -286,8 +286,12 @@ class RunWalkForward:
         return best_params, best_is_report, tried
 
 
-def _window_return(report: BacktestReport, starting_equity: Decimal) -> Decimal | None:
-    """Fraction gained or lost over one fold. None when the engine reported no balance."""
+def window_return(report: BacktestReport, starting_equity: Decimal) -> Decimal | None:
+    """Fraction gained or lost over one window. None when the engine reported no balance.
+
+    Public because the CLI journals the single-split out-of-sample number with the same
+    definition the rolling folds use; two definitions of "the OOS return" would drift.
+    """
     if report.ending_balance is None or starting_equity <= 0:
         return None
     return (report.ending_balance - starting_equity) / starting_equity

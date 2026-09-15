@@ -3,12 +3,23 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from nautilus_lab.application.dtos import BacktestReport, MultiWindowReport, WalkForwardReport
+from nautilus_lab.application.journal import JournalEntry, record_run
+from nautilus_lab.application.propose_alphas import (
+    endpoint_host_of,
+    load_prompt_template,
+    propose_alphas,
+    render_prompt,
+    summarise,
+    write_artifact,
+)
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_paper import RunPaperResearch
+from nautilus_lab.application.run_walk_forward import window_return
 from nautilus_lab.application.scan_triangular import scan_triangular_opportunities
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.errors import (
@@ -20,10 +31,14 @@ from nautilus_lab.domain.errors import (
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
+from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.composition import (
+    alpha_proposal_request,
     ingest_request,
     ingest_use_case,
+    journal_paths,
+    llm_completer,
     notifier,
     overfit_audit_request,
     overfit_audit_use_case,
@@ -147,6 +162,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=8,
         help="Contiguous history blocks for --pbo (default: 8)",
     )
+    research.add_argument(
+        "--journal",
+        action="store_true",
+        help="Append a row for this run to the research journal (table + journal.jsonl)",
+    )
 
     paper = sub.add_parser("paper", help="Paper trading: log hypothetical orders only")
     paper.add_argument("--bars", type=int, default=500, help="Synthetic bar count")
@@ -161,6 +181,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--triangular",
         action="store_true",
         help="Scan for triangular arbitrage cycles in sample rates",
+    )
+
+    propose = sub.add_parser(
+        "propose",
+        help="Ask a model for alpha hypotheses offline (research only, never trades)",
+    )
+    propose.add_argument(
+        "--prompt",
+        default="01-generate-alphas.md",
+        help="Prompt file, or a bare name inside the configured prompts directory",
+    )
+    propose.add_argument("--count", type=int, default=5, help="How many hypotheses to ask for")
+    propose.add_argument(
+        "--as-of",
+        type=parse_date,
+        default=None,
+        help="Knowledge cutoff date stated to the model (YYYY-MM-DD)",
+    )
+    propose.add_argument("--model", default=None, help="Model id (default: settings)")
+    propose.add_argument(
+        "--base-url",
+        default=None,
+        help="OpenAI-compatible base URL (default: settings; local servers are fine)",
+    )
+    propose.add_argument("--output-dir", default=None, help="Artifact directory")
+    propose.add_argument("--slug", default=None, help="Override the artifact base name")
+    propose.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Render the prompt, call nothing, write nothing (needs no API key)",
+    )
+    propose.add_argument(
+        "--journal",
+        action="store_true",
+        help="Append a pending row for this proposal to the research journal",
     )
 
     sub.add_parser("live", help="Live trading (always fail closed)")
@@ -183,6 +238,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_paper(cfg, args)
         if args.command == "scan":
             return _run_scan(args)
+        if args.command == "propose":
+            return _run_propose(cfg, args)
         if args.command == "live":
             require_simulated_mode(TradingMode.LIVE)
     except (
@@ -190,6 +247,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         PaperTradingNotReadyError,
         CatalogEmptyError,
         InvalidWindowError,
+        LlmRequestError,
         ValueError,
     ) as exc:
         print(str(exc), file=sys.stderr)
@@ -227,6 +285,8 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         # Without this, --folds 0 silently fell through to the single-split path and
         # reported one window as if the request had been honoured.
         raise ValueError(f"--folds must be >= 1, got {folds}")
+    subject = f"{(robot or cfg.robot).value} {cfg.instrument_id}"
+    journal_enabled = _journal_enabled(cfg, args)
 
     if getattr(args, "pbo", False):
         return _run_pbo(cfg, args, robot)
@@ -255,6 +315,22 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                     notifier(cfg).notify(
                         f"Synthetic multi-window walk-forward complete: {multi.summary_line()}"
                     )
+                if journal_enabled:
+                    _record_journal(
+                        cfg,
+                        _journal_entry(
+                            subject=subject,
+                            gates=f"walk-forward synthetic folds={folds}",
+                            oos_return=multi.mean_oos_return,
+                            buy_and_hold=multi.mean_buy_and_hold_return,
+                            fills=multi.total_oos_fills,
+                            reason=(
+                                f"auto: profitable {multi.profitable_folds}"
+                                f"/{len(multi.folds)} folds"
+                            ),
+                            artifact=tearsheet,
+                        ),
+                    )
                 return 0
             wf = use_case.execute(request)
             _print_walk_forward(wf)
@@ -262,6 +338,18 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                 notifier(cfg).notify(
                     f"Synthetic walk-forward complete: IS={wf.in_sample.ending_balance} "
                     f"OOS={wf.out_of_sample.ending_balance}"
+                )
+            if journal_enabled:
+                _record_journal(
+                    cfg,
+                    _journal_entry(
+                        subject=subject,
+                        gates="walk-forward synthetic single split",
+                        oos_return=window_return(wf.out_of_sample, cfg.starting_equity),
+                        fills=wf.out_of_sample.fills,
+                        reason="auto: single split; buy&hold not measured",
+                        artifact=tearsheet,
+                    ),
                 )
             return 0
 
@@ -279,6 +367,21 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         if should_notify:
             notifier(cfg).notify(
                 f"Synthetic backtest complete: fills={report.fills} ending={report.ending_balance}"
+            )
+        if journal_enabled:
+            _record_journal(
+                cfg,
+                _journal_entry(
+                    subject=subject,
+                    gates="synthetic backtest (no OOS split)",
+                    fills=report.fills,
+                    reason=(
+                        "auto: in-sample only; "
+                        f"IS return {_pct(window_return(report, cfg.starting_equity))} "
+                        "(not an OOS number)"
+                    ),
+                    artifact=tearsheet,
+                ),
             )
         return 0
 
@@ -306,6 +409,21 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                 notifier(cfg).notify(
                     f"Catalog multi-window walk-forward complete: {multi.summary_line()}"
                 )
+            if journal_enabled:
+                _record_journal(
+                    cfg,
+                    _journal_entry(
+                        subject=subject,
+                        gates=f"walk-forward catalog folds={folds}",
+                        oos_return=multi.mean_oos_return,
+                        buy_and_hold=multi.mean_buy_and_hold_return,
+                        fills=multi.total_oos_fills,
+                        reason=(
+                            f"auto: profitable {multi.profitable_folds}/{len(multi.folds)} folds"
+                        ),
+                        artifact=tearsheet,
+                    ),
+                )
             return 0
         wf = use_case.execute(request)
         _print_walk_forward(wf)
@@ -313,6 +431,18 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
             notifier(cfg).notify(
                 f"Catalog walk-forward complete: IS={wf.in_sample.ending_balance} "
                 f"OOS={wf.out_of_sample.ending_balance}"
+            )
+        if journal_enabled:
+            _record_journal(
+                cfg,
+                _journal_entry(
+                    subject=subject,
+                    gates="walk-forward catalog single split",
+                    oos_return=window_return(wf.out_of_sample, cfg.starting_equity),
+                    fills=wf.out_of_sample.fills,
+                    reason="auto: single split; buy&hold not measured",
+                    artifact=tearsheet,
+                ),
             )
         return 0
 
@@ -331,6 +461,21 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
     if should_notify:
         notifier(cfg).notify(
             f"Full-sample backtest complete: fills={report.fills} ending={report.ending_balance}"
+        )
+    if journal_enabled:
+        _record_journal(
+            cfg,
+            _journal_entry(
+                subject=subject,
+                gates="full-sample catalog (no OOS split)",
+                fills=report.fills,
+                reason=(
+                    "auto: in-sample only; "
+                    f"IS return {_pct(window_return(report, cfg.starting_equity))} "
+                    "(not an OOS number)"
+                ),
+                artifact=tearsheet,
+            ),
         )
     return 0
 
@@ -364,6 +509,17 @@ def _run_pbo(cfg: Settings, args: argparse.Namespace, robot: RobotName | None) -
     print(report.summary_line())
     if getattr(args, "notify", False):
         notifier(cfg).notify(f"Overfitting audit complete: {report.summary_line()}")
+    if _journal_enabled(cfg, args):
+        _record_journal(
+            cfg,
+            _journal_entry(
+                subject=f"{(robot or cfg.robot).value} {cfg.instrument_id}",
+                gates=(
+                    f"PBO/CSCV blocks={report.blocks} configurations={report.configuration_count}"
+                ),
+                reason=report.summary_line(),
+            ),
+        )
     return 0
 
 
@@ -400,6 +556,101 @@ def _run_scan(args: argparse.Namespace) -> int:
         return 0
     print("Specify --triangular", file=sys.stderr)
     return 1
+
+
+def _run_propose(cfg: Settings, args: argparse.Namespace) -> int:
+    """Ask a model for hypotheses. Offline research: no orders, no market data."""
+    request = alpha_proposal_request(
+        cfg,
+        prompt=args.prompt,
+        count=args.count,
+        as_of=args.as_of,
+        output_dir=args.output_dir,
+        slug=args.slug,
+    )
+    template = load_prompt_template(Path(request.prompt_file))
+    model = args.model or cfg.llm_model
+
+    if args.dry_run:
+        as_of = args.as_of or datetime.now(UTC).date()
+        print(render_prompt(template, count=request.count, as_of=as_of))
+        print(f"[dry-run] rendered {request.prompt_file}; no network call, {model} unused.")
+        return 0
+
+    if not (cfg.llm_api_key or "").strip():
+        # Fail closed instead of inventing a local answer: a proposal the model never
+        # made would look exactly like a real one in the artifact.
+        print(
+            "LLM_API_KEY is not set, so `lab propose` fails closed. "
+            "Set it in .env, or use --dry-run to inspect the prompt.",
+            file=sys.stderr,
+        )
+        return 1
+
+    run = propose_alphas(
+        completer=llm_completer(cfg, model=args.model, base_url=args.base_url),
+        template=template,
+        model=model,
+        endpoint_host=endpoint_host_of(args.base_url or cfg.llm_base_url),
+        prompt_file=request.prompt_file,
+        count=request.count,
+        as_of=request.as_of,
+    )
+    path = write_artifact(run, output_dir=Path(request.output_dir), slug=request.slug)
+    print(summarise(run))
+    print(f"artifact={path}")
+    if _journal_enabled(cfg, args):
+        _record_journal(
+            cfg,
+            _journal_entry(
+                source="lab propose",
+                subject=f"proposal {model}",
+                gates="not run yet (proposal only)",
+                reason=f"awaiting review: {path}",
+                artifact=str(path),
+            ),
+        )
+    return 0
+
+
+def _journal_enabled(cfg: Settings, args: argparse.Namespace) -> bool:
+    """`--journal` forces the write; JOURNAL_ENABLED makes it the default for every run."""
+    return bool(getattr(args, "journal", False)) or cfg.journal_enabled
+
+
+def _journal_entry(
+    *,
+    subject: str,
+    gates: str,
+    source: str = "lab research",
+    oos_return: Decimal | None = None,
+    buy_and_hold: Decimal | None = None,
+    fills: int | None = None,
+    reason: str = "",
+    artifact: str | None = None,
+) -> JournalEntry:
+    return JournalEntry(
+        created_at=datetime.now(UTC),
+        source=source,
+        subject=subject,
+        gates=gates,
+        oos_return=oos_return,
+        buy_and_hold_return=buy_and_hold,
+        fills=fills,
+        reason=reason,
+        artifact=artifact,
+    )
+
+
+def _record_journal(cfg: Settings, entry: JournalEntry) -> None:
+    markdown_path, jsonl_path = journal_paths(cfg)
+    record_run(markdown_path=markdown_path, jsonl_path=jsonl_path, entry=entry)
+    print(f"journal_row_appended={markdown_path}")
+
+
+def parse_date(value: str) -> date:
+    """YYYY-MM-DD for argparse; a bad value becomes a usage error, not a traceback."""
+    return date.fromisoformat(value)
 
 
 def parse_utc(value: str) -> datetime:

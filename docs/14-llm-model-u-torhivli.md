@@ -420,12 +420,12 @@ uv run lab ingest --start 2025-01-01
 uv run lab research --robot regime --folds 4
 
 # 3. Подивитись, який промпт піде в модель (мережі не торкається, ключ не потрібен)
-.venv/bin/python scripts/propose_alphas.py --dry-run
+uv run lab propose --dry-run
 
 # 4. Спитати модель і записати артефакт (потрібен LLM_API_KEY у .env)
-.venv/bin/python scripts/propose_alphas.py --count 5 --as-of 2026-09-15
+uv run lab propose --count 5 --as-of 2026-09-15 --journal
 #    або локальний сервер відкритих ваг, без передачі даних у хмару:
-.venv/bin/python scripts/propose_alphas.py --base-url http://127.0.0.1:11434/v1 --model qwen2.5:14b
+uv run lab propose --base-url http://127.0.0.1:11434/v1 --model qwen2.5:14b
 
 # 5. Людський апрув → реалізація в domain/ → ворота
 uv run python scripts/train_formulaic_lgbm.py --catalog catalog --output models/formulaic.txt
@@ -436,6 +436,9 @@ uv run lab research --robot formulaic_lgbm --folds 4
 
 # 7. Опційні ризик-оверлеї (не змінюють сигнали) — по одному, з повторним прогоном
 uv run lab research --robot formulaic_lgbm --folds 4   # USE_FRACTIONAL_KELLY=true
+
+# 8. Записати результат у журнал — рядок допишеться, існуючі не перезапишуться
+uv run lab research --robot formulaic_lgbm --folds 4 --journal
 ```
 
 Після кожного кроку — рядок у [journal.md](../research/journal.md): **що перевірили, яке
@@ -469,8 +472,9 @@ uv run lab research --robot formulaic_lgbm --folds 4   # USE_FRACTIONAL_KELLY=tr
 | Domain | `domain/ports.py::ChatCompleter` | Порт моделі: завдяки йому цикл тестується без мережі |
 | Application | `application/propose_alphas.py` | Промпт → один виклик → валідація → артефакт із provenance |
 | Infrastructure | `infrastructure/llm_client.py` | OpenAI-сумісний клієнт на stdlib; без ключа падає закрито |
-| Interface | `scripts/propose_alphas.py` | CLI: `--dry-run`, `--count`, `--as-of`, `--model`, `--base-url`, коди виходу 0/2/3 |
-| Дані | `research/prompts/`, `research/hypotheses/`, `research/journal.md` | Шаблони промптів, артефакти, журнал рішень |
+| Application | `application/journal.py` | Append-only журнал: рядок у `research/journal.md` + JSON у `research/journal.jsonl` |
+| Interface | `interfaces/cli.py` → `lab propose` | CLI: `--dry-run`, `--count`, `--as-of`, `--model`, `--base-url`, `--journal`; `scripts/propose_alphas.py` лише переадресовує сюди |
+| Дані | `research/prompts/`, `research/hypotheses/`, `research/journal.md`, `research/journal.jsonl` | Шаблони промптів, артефакти, журнал рішень (людський і машинний) |
 
 Що варто знати про поведінку:
 
@@ -483,6 +487,12 @@ uv run lab research --robot formulaic_lgbm --folds 4   # USE_FRACTIONAL_KELLY=tr
   рішення ухвалює людина.
 - **Промпт версіонується хешем.** `prompt_sha256` у артефакті відповідає на питання
   «який саме текст дав цей результат» через місяці.
+- **Журнал дописується, а не переписується.** `--journal` додає рядок у таблицю рішень і
+  JSON-запис у машинний лог; рішення, яке ти вписав руками в старому рядку, залишається
+  на місці. У колонку `OOS` ніколи не потрапляє in-sample число — для прогону без
+  OOS-спліту там `n/a`, а сама цифра йде в «Причину» з поміткою `(not an OOS number)`.
+- **Журнал падає закрито.** Якщо маркери `journal:rows:start/end` у файлі зникли,
+  команда завершується кодом 1, а не дописує рядок невідомо куди.
 
 Перевірка контуру без мережі (те саме роблять unit-тести):
 

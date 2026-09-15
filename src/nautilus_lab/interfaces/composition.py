@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,15 +11,18 @@ from nautilus_lab.application.dtos import (
     WalkForwardRequest,
 )
 from nautilus_lab.application.ingest_historical_bars import IngestHistoricalBars
+from nautilus_lab.application.propose_alphas import AlphaProposalRequest, resolve_prompt_path
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_overfitting_audit import RunOverfitAudit
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
 from nautilus_lab.application.run_walk_forward import RunWalkForward
 from nautilus_lab.domain.bars import BarOrigin
+from nautilus_lab.domain.ports import ChatCompleter
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.alerts import AlertNotifier, build_notifier
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
+from nautilus_lab.infrastructure.llm_client import OpenAICompatibleChatClient
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
 from nautilus_lab.infrastructure.nautilus.bar_feed import ResearchBarFeed
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
@@ -58,6 +61,49 @@ def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
 def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
     resolved = cfg or settings()
     return RunOverfitAudit(NautilusResearchBacktest(), ResearchBarFeed(catalog(resolved)))
+
+
+def llm_completer(
+    cfg: Settings,
+    *,
+    model: str | None = None,
+    base_url: str | None = None,
+) -> ChatCompleter:
+    """Offline research only. Raises LlmRequestError when no key is configured.
+
+    Kept out of every trading path on purpose: nothing in the backtest or execution
+    layer may call a language model (docs/14-llm-model-u-torhivli.md, section 1).
+    """
+    return OpenAICompatibleChatClient(
+        api_key=cfg.llm_api_key or "",
+        base_url=base_url or cfg.llm_base_url,
+        model=model or cfg.llm_model,
+        temperature=cfg.llm_temperature,
+        timeout_seconds=cfg.llm_timeout_seconds,
+    )
+
+
+def alpha_proposal_request(
+    cfg: Settings,
+    *,
+    prompt: str,
+    count: int = 5,
+    as_of: date | None = None,
+    output_dir: str | None = None,
+    slug: str | None = None,
+) -> AlphaProposalRequest:
+    return AlphaProposalRequest(
+        prompt_file=str(resolve_prompt_path(prompt, cfg.llm_prompts_dir)),
+        output_dir=output_dir or cfg.llm_hypotheses_dir,
+        count=count,
+        as_of=as_of,
+        slug=slug,
+    )
+
+
+def journal_paths(cfg: Settings) -> tuple[Path, Path]:
+    """Human markdown log and machine JSONL log, in that order."""
+    return Path(cfg.journal_path), Path(cfg.journal_jsonl_path)
 
 
 def overfit_audit_request(

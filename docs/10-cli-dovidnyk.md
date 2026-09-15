@@ -14,6 +14,7 @@ uv run lab <команда> [прапорці]
 | `lab research` | Бектест/симуляція (основний шлях; за замовчуванням walk-forward) | 1 |
 | `lab paper` | Лог гіпотетичних ордерів, без виконання | 1 |
 | `lab scan` | Дослідницькі сканери (трикутний арбітраж) | 1 |
+| `lab propose` | Офлайн-опитування LLM про гіпотези альф (не торгує) | 1 |
 | `lab live` | **Завжди помилка** (жива торгівля вимкнена) | 1 завжди |
 
 Успіх будь-якої команди → код виходу `0`, повідомлення про помилки друкуються в `stderr`.
@@ -95,6 +96,7 @@ usage: lab research [-h] [--bars BARS]
 | `--notify` | вимкнено | Надіслати сповіщення про завершення (Telegram/Webhook) |
 | `--pbo` | вимкнено | **Аудит перенавчання (PBO/CSCV)** замість звичайного прогону: кожна конфігурація сітки оцінюється на кожному блоці історії. Див. [нижче](#pbo--аудит-перенавчання) і [15](15-audit-vypravlennya.md) |
 | `--pbo-blocks N` | `8` | Кількість послідовних блоків історії для `--pbo`. `N < 2` — помилка (код 1) |
+| `--journal` | вимкнено | Дописати рядок про цей прогін у журнал дослідження (`research/journal.md` + `research/journal.jsonl`). Див. [нижче](#journal--журнал-дослідження) |
 
 Логіка вибору режиму:
 
@@ -239,6 +241,43 @@ triangular_opportunities=0
 
 ---
 
+## `lab propose`
+
+```
+usage: lab propose [-h] [--prompt PROMPT] [--count COUNT] [--as-of AS_OF]
+                   [--model MODEL] [--base-url BASE_URL] [--output-dir OUTPUT_DIR]
+                   [--slug SLUG] [--dry-run] [--journal]
+```
+
+**Офлайн-контур дослідження.** Питає велику мовну модель про гіпотези альф і записує
+відповідь як артефакт для рев'ю. Команда **не торгує, не читає ринкові дані й не
+викликається з гарячого шляху** — жодна стратегія не бачить LLM.
+
+| Прапорець | Типово | Опис |
+|-----------|--------|------|
+| `--prompt` | `01-generate-alphas.md` | Файл промпту або гола назва з `LLM_PROMPTS_DIR` |
+| `--count N` | `5` | Скільки гіпотез просити |
+| `--as-of YYYY-MM-DD` | сьогодні | Дата відсічення знань, яку бачить модель (захист від temporal leakage) |
+| `--model` | `LLM_MODEL` | Ідентифікатор моделі |
+| `--base-url` | `LLM_BASE_URL` | Будь-який OpenAI-сумісний ендпоінт, зокрема локальний сервер ваг |
+| `--output-dir` | `LLM_HYPOTHESES_DIR` | Тека артефактів |
+| `--slug` | авто | Перевизначити ім'я файлу артефакта |
+| `--dry-run` | вимкнено | Надрукувати готовий промпт; **мережі не торкається, ключ не потрібен** |
+| `--journal` | вимкнено | Дописати рядок `⏳ pending` у журнал дослідження |
+
+```bash
+uv run lab propose --dry-run                      # що саме піде в модель
+uv run lab propose --count 5 --as-of 2026-09-15   # потрібен LLM_API_KEY у .env
+uv run lab propose --base-url http://127.0.0.1:11434/v1 --model qwen2.5:14b
+```
+
+Без `LLM_API_KEY` команда **падає закрито** (код 1) і нічого не вигадує замість моделі.
+Артефакт із provenance (модель, хеш промпту, as-of, сира відповідь, блок `review`)
+лягає в `research/hypotheses/`; повторний виклик не перезаписує попередній файл.
+Деталі — [14](14-llm-model-u-torhivli.md) і [research/README.md](../research/README.md).
+
+---
+
 ## `lab live`
 
 ```
@@ -272,6 +311,24 @@ uv run lab research --synthetic --bars 800 --tearsheet reports/synthetic.html
 Потрібен extra `visualization`. Якщо `plotly` немає — прогін не падає, лише попередження в лог.
 У walk-forward зберігається тиршит **out-of-sample** прогону. У багатовіконному прогоні
 (`--folds N >= 2`) зберігається тиршит **останнього** фолда.
+
+### `--journal` — журнал дослідження
+
+```bash
+uv run lab research --robot regime --folds 4 --journal
+uv run lab propose --count 5 --journal
+```
+
+Дописує один рядок у `research/journal.md` (людська таблиця) і один JSON-рядок у
+`research/journal.jsonl` (машинний лог). Скрипт **лише дописує**: існуючі рядки він не
+переписує, тому рішення, яке ти вписав руками, переживе наступний прогін.
+
+У колонку `OOS` ніколи не потрапляє in-sample число: для прогону без OOS-спліту там
+`n/a`, а сама цифра йде в колонку «Причина» з поміткою `IS return ... (not an OOS number)`.
+
+Типово вимкнено. Щоб увімкнути для всіх прогонів — `JOURNAL_ENABLED=true` у `.env`.
+Якщо маркери `journal:rows:start/end` у файлі зникли, команда завершується кодом 1
+(краще явна помилка, ніж рядок, дописаний невідомо куди).
 
 ### `--optuna [--trials N]` — байєсівська оптимізація параметрів
 
@@ -429,6 +486,16 @@ EMBARGO_BARS=10
 MAKER_FEE=0.001
 TAKER_FEE=0.001
 USE_BAR_VPIN=false
+
+# Офлайн-контур дослідження (lab propose) і журнал
+LLM_API_KEY=                 # порожньо = цикл вимкнено (fail closed)
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
+LLM_PROMPTS_DIR=research/prompts
+LLM_HYPOTHESES_DIR=research/hypotheses
+JOURNAL_ENABLED=false
+JOURNAL_PATH=research/journal.md
+JOURNAL_JSONL_PATH=research/journal.jsonl
 ```
 
 Пріоритет джерел: **змінні оболонки → `.env` → значення в коді**.

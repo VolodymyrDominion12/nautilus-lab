@@ -102,6 +102,14 @@ def load_prompt_template(path: Path) -> str:
     return text
 
 
+def resolve_prompt_path(name_or_path: str, prompts_dir: str) -> Path:
+    """Accept a path to a prompt file, or a bare name inside the prompts directory."""
+    candidate = Path(name_or_path)
+    if candidate.is_file():
+        return candidate
+    return Path(prompts_dir) / name_or_path
+
+
 def prompt_sha256(template: str) -> str:
     return hashlib.sha256(template.encode("utf-8")).hexdigest()
 

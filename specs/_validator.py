@@ -166,12 +166,18 @@ def _bucketed_ints(path: Path, func_name: str) -> tuple[dict[str, int], int | No
 
     def first_int(body: list[ast.stmt]) -> int | None:
         for stmt in body:
-            if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Constant):
-                if isinstance(stmt.value.value, int):
-                    return stmt.value.value
-            if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant):
-                if isinstance(stmt.value.value, int):
-                    return stmt.value.value
+            if (
+                isinstance(stmt, ast.Return)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, int)
+            ):
+                return stmt.value.value
+            if (
+                isinstance(stmt, ast.Assign)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, int)
+            ):
+                return stmt.value.value
         return None
 
     found: dict[str, int] = {}

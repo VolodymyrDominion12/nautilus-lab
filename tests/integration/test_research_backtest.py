@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -32,31 +31,28 @@ def _limits() -> RiskLimits:
     )
 
 
+class _UnusedCatalog:
+    """A catalog that fails loudly: a synthetic run must never touch it."""
+
+    def write(
+        self,
+        bars: Sequence[OhlcvBar],
+        *,
+        bar_type: str,
+        instrument_id: str = "",
+    ) -> int:
+        raise AssertionError("synthetic path must not touch catalog")
+
+    def load(self, *args: object, **kwargs: object) -> list[OhlcvBar]:
+        raise AssertionError("synthetic path must not load catalog")
+
+    def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
+        raise AssertionError("synthetic path must not load catalog")
+
+
 @pytest.mark.integration
 def test_research_backtest_runs_locally_without_network() -> None:
-    class UnusedCatalog:
-        def write(
-            self,
-            bars: Sequence[OhlcvBar],
-            *,
-            bar_type: str,
-            instrument_id: str = "",
-        ) -> int:
-            raise AssertionError("synthetic path must not touch catalog")
-
-        def load(
-            self,
-            *,
-            bar_type: str,
-            start: datetime | None = None,
-            end: datetime | None = None,
-        ) -> list[OhlcvBar]:
-            raise AssertionError("synthetic path must not load catalog")
-
-        def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
-            raise AssertionError("synthetic path must not load catalog")
-
-    use_case = RunResearchBacktest(NautilusResearchBacktest(), ResearchBarFeed(UnusedCatalog()))
+    use_case = RunResearchBacktest(NautilusResearchBacktest(), ResearchBarFeed(_UnusedCatalog()))
     report = use_case.execute(
         BacktestRequest(
             mode=TradingMode.RESEARCH,
@@ -108,24 +104,44 @@ def test_parquet_catalog_roundtrip_and_backtest(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
+def test_engine_money_after_the_run_is_measured() -> None:
+    """Fees, two-sided notional and breakeven must be real numbers after a run.
+
+    `specs/components/backtest-engine.yaml` lists "fee accounting in P&L" as an
+    invariant without a test: the existing assertions only look at the `notes` string,
+    which would survive the fee model being removed. This closes that gap for the
+    numbers a reader actually uses, and pins the breakeven wiring end-to-end.
+    """
+    use_case = RunResearchBacktest(NautilusResearchBacktest(), ResearchBarFeed(_UnusedCatalog()))
+    report = use_case.execute(
+        BacktestRequest(
+            mode=TradingMode.RESEARCH,
+            instrument_id="ETH/USDT.SIM",
+            bar_count=900,
+            starting_equity=Decimal("100000"),
+            risk=_limits(),
+            robot=RobotName.EMA,
+            seed=3,
+            source=BarOrigin.SYNTHETIC,
+        ),
+    )
+
+    metrics = report.metrics
+    assert metrics is not None
+    assert report.fills > 0, "an EMA robot on 900 synthetic bars must trade at all"
+    assert report.ending_balance is not None
+    assert metrics.fees_paid > 0, "fills without fees mean the fee model is gone"
+    assert metrics.traded_notional > 0, "two-sided notional must come from the fills report"
+    # `turnover` counts entry notional only, so it can never exceed the two-sided total.
+    assert metrics.turnover <= metrics.traded_notional
+    net_pnl = report.ending_balance - Decimal("100000")
+    assert metrics.breakeven_cost == (net_pnl + metrics.fees_paid) / metrics.traded_notional
+    assert metrics.paid_cost_rate == metrics.fees_paid / metrics.traded_notional
+
+
+@pytest.mark.integration
 def test_pairs_synthetic_backtest_runs() -> None:
-    class UnusedCatalog:
-        def write(
-            self,
-            bars: Sequence[OhlcvBar],
-            *,
-            bar_type: str,
-            instrument_id: str = "",
-        ) -> int:
-            raise AssertionError("synthetic path must not touch catalog")
-
-        def load(self, **kwargs: object) -> list[OhlcvBar]:
-            raise AssertionError("synthetic path must not load catalog")
-
-        def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
-            raise AssertionError("synthetic path must not load catalog")
-
-    use_case = RunResearchBacktest(NautilusResearchBacktest(), ResearchBarFeed(UnusedCatalog()))
+    use_case = RunResearchBacktest(NautilusResearchBacktest(), ResearchBarFeed(_UnusedCatalog()))
     report = use_case.execute(
         BacktestRequest(
             mode=TradingMode.RESEARCH,

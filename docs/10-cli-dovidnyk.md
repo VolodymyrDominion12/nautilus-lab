@@ -159,14 +159,38 @@ folds=4 profitable=2/4 mean_oos=0.58% median_oos=1.26% worst=-6.23% best=6.01% m
 Межі вікон друкуються повними ISO-мітками, а не датами: на внутрішньоденних барах OOS-блок може
 тривати години, і дата без часу показала б той самий день для всіх фолдів.
 
-Вивід повного прогону / синтетики:
+Після рядка `baseline buy&hold ...` друкується ще рядок breakeven-cost по фолдах
+(лог вище — з прогону до цього оновлення, тому його не містить). Реальний вигляд із
+`lab research --robot ema --folds 3` (16.09.2026):
 
 ```
-[full-sample catalog run (in-sample only; not an out-of-sample report)]
-fills=132 positions=53 ending=3351101.12843644
-fees_paid=254875.71083357 max_dd=0.06037193860184920896654706057 turnover=253132507.51288 sharpe_like=0.01411781072007535550147682646
+breakeven_cost mean_bps=-18.91 folds_measured=3/3
+```
+
+Середнє рахується лише по фолдах, де були філи: фолд без торгів не має breakeven, і
+підставляти туди нуль означало б усереднювати вимір із не-виміром.
+
+Вивід повного прогону / синтетики (`lab research --robot regime --synthetic --bars 3000 --full-sample`,
+прогін 16.09.2026 — числа залежать від `--bars` і сіда):
+
+```
+fills=89 positions=35 ending=972891.27247309
+fees_paid=49393.76524691 max_dd=0.03451770006438345845057962636 turnover=49920159.25631 sharpe_like=0.01818787608975104788522822970
+cost traded_notional=98787530.4936200021675456 paid_cost_bps=5.00 breakeven_cost_bps=93.36
 regime synthetic backtest with fees (maker=0.0002 taker=0.0005), 50ms latency, 25% one-tick slippage
 ```
+
+Синтетичний шлях (`--synthetic`) не друкує рядка-заголовка — він зʼявляється лише на
+катальному `--full-sample` (`full-sample catalog run (in-sample only; not an out-of-sample report)`).
+
+Рядок `cost ...` — це [breakeven-cost](06-ryzyk-metryky.md#7-метрики-звіту-domainmetricspy):
+`paid_cost_bps` — скільки комісії сплачено за одиницю двобічного обороту
+(`traded_notional` = усі філи, і входи, і виходи), `breakeven_cost_bps` — максимальна стала
+комісія, за якої PnL цього прогону дорівнював би нулю. Приклад вище — синтетика, тобто артефакт
+random walk, а не результат; на реальному каталозі breakeven зазвичай **нижчий** за сплачену
+ставку (наприклад `--robot ema --full-sample`: `paid_cost_bps=5.00 breakeven_cost_bps=-46.40`).
+Для `--folds N≥2` друкується `breakeven_cost mean_bps=... folds_measured=k/N` — середнє лише по
+фолдах, де філи взагалі були.
 
 Помилки (усі → код виходу 1):
 

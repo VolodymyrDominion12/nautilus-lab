@@ -9,25 +9,39 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  Square,
 } from 'lucide-react';
+import { staticReportUrl } from '../config';
 import {
+  cancelResearch,
+  fetchCatalog,
   fetchResearchLog,
   fetchReports,
   runResearch,
 } from '../services/api';
 import type {
+  CatalogInstrument,
+  HistoryEntry,
   ReportItem,
   ResearchSummary,
   StrategySpec,
 } from '../services/api';
+import { WalkForwardBuilder } from './WalkForwardBuilder';
+import { ExperimentHistory } from './ExperimentHistory';
 
 interface ResearchLabProps {
   strategies: StrategySpec[];
+  initialRobot?: string;
+  selectedCatalogPath?: string;
 }
 
-export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
+export const ResearchLab: React.FC<ResearchLabProps> = ({
+  strategies,
+  initialRobot = 'regime',
+  selectedCatalogPath,
+}) => {
   // Config form state
-  const [robot, setRobot] = useState('regime');
+  const [robot, setRobot] = useState(initialRobot);
   const [source, setSource] = useState<'catalog' | 'synthetic'>('catalog');
   const [bars, setBars] = useState(3000);
   const [folds, setFolds] = useState(2);
@@ -41,6 +55,16 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
   const [stressSlice, setStressSlice] = useState<string>('');
   const [generateTearsheet, setGenerateTearsheet] = useState(true);
   const [journal, setJournal] = useState(false);
+  const [notify, setNotify] = useState(false);
+  const [fullSample, setFullSample] = useState(false);
+  const [windowMode, setWindowMode] = useState<'fraction' | 'custom'>('fraction');
+  const [isStart, setIsStart] = useState('');
+  const [isEnd, setIsEnd] = useState('');
+  const [oosStart, setOosStart] = useState('');
+  const [oosEnd, setOosEnd] = useState('');
+  const [paramOverrides, setParamOverrides] = useState<Record<string, string>>({});
+  const [catalogInstrument, setCatalogInstrument] = useState<CatalogInstrument | null>(null);
+  const [historyKey, setHistoryKey] = useState(0);
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [running, setRunning] = useState(false);
@@ -66,6 +90,43 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
     loadReports();
   }, []);
 
+  useEffect(() => {
+    setRobot(initialRobot);
+  }, [initialRobot]);
+
+  useEffect(() => {
+    fetchCatalog(selectedCatalogPath)
+      .then((data) => {
+        const first = data.instruments?.[0] ?? null;
+        setCatalogInstrument(first);
+      })
+      .catch((err) => console.error(err));
+  }, [selectedCatalogPath]);
+
+  useEffect(() => {
+    const spec = strategies.find((s) => s.name === robot);
+    if (!spec?.params?.length) {
+      setParamOverrides({});
+      return;
+    }
+    const defaults: Record<string, string> = {};
+    for (const param of spec.params) {
+      if (param.env && param.default != null && param.default !== '') {
+        defaults[param.env] = String(param.default);
+      }
+    }
+    setParamOverrides(defaults);
+  }, [robot, strategies]);
+
+  const handleCancel = async () => {
+    try {
+      await cancelResearch();
+      setLog((prev) => prev + '\nCancellation requested...\n');
+    } catch (err: any) {
+      setLog((prev) => prev + `\nCancel failed: ${err.message}\n`);
+    }
+  };
+
   // Poll research log
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
@@ -83,6 +144,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
           if (!res.is_running && res.summary.is_finished) {
             setRunning(false);
             loadReports();
+            setHistoryKey((value) => value + 1);
           }
         } catch (err) {
           console.error(err);
@@ -100,7 +162,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
         robot,
         source,
         bars: source === 'synthetic' ? bars : undefined,
-        folds: source === 'catalog' ? folds : undefined,
+        folds: source === 'catalog' && !fullSample ? folds : undefined,
         is_fraction: source === 'catalog' ? isFraction : undefined,
         embargo_bars: embargoBars,
         use_optuna: useOptuna,
@@ -111,10 +173,39 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
         stress_slice: stressSlice ? stressSlice : undefined,
         generate_tearsheet: generateTearsheet,
         journal,
+        notify,
+        full_sample: source === 'catalog' ? fullSample : false,
+        instrument_id: catalogInstrument?.instrument_id,
+        is_start: windowMode === 'custom' ? isStart || undefined : undefined,
+        is_end: windowMode === 'custom' ? isEnd || undefined : undefined,
+        oos_start: windowMode === 'custom' ? oosStart || undefined : undefined,
+        oos_end: windowMode === 'custom' ? oosEnd || undefined : undefined,
+        param_overrides: paramOverrides,
+        catalog_path: selectedCatalogPath || undefined,
       });
     } catch (err: any) {
       setRunning(false);
       setLog((prev) => prev + `\nError starting research: ${err.message}`);
+    }
+  };
+
+  const handleLoadHistory = (entry: HistoryEntry) => {
+    const config = entry.config as Record<string, unknown> | undefined;
+    if (!config) return;
+    if (typeof config.robot === 'string') setRobot(config.robot);
+    if (typeof config.source === 'string') setSource(config.source as 'catalog' | 'synthetic');
+    if (typeof config.folds === 'number') setFolds(config.folds);
+    if (typeof config.is_fraction === 'string') setIsFraction(Number(config.is_fraction));
+    if (typeof config.full_sample === 'boolean') setFullSample(config.full_sample);
+    if (config.is_start) {
+      setWindowMode('custom');
+      setIsStart(String(config.is_start));
+      setIsEnd(String(config.is_end ?? ''));
+      setOosStart(String(config.oos_start ?? ''));
+      setOosEnd(String(config.oos_end ?? ''));
+    }
+    if (config.param_overrides && typeof config.param_overrides === 'object') {
+      setParamOverrides(config.param_overrides as Record<string, string>);
     }
   };
 
@@ -130,6 +221,35 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
             Synthetic bars are for smoke tests only and may generate +3000% artifacts. Real research must use Parquet Catalog with Walk-Forward folds.
           </span>
         </div>
+      )}
+
+      {source === 'catalog' && fullSample && (
+        <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl flex items-center gap-3 text-amber-300 text-xs font-medium">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          <span>
+            Full-sample mode runs on the entire catalog series (in-sample only). This is not an out-of-sample report.
+          </span>
+        </div>
+      )}
+
+      {source === 'catalog' && !fullSample && !usePbo && (
+        <WalkForwardBuilder
+          mode={windowMode}
+          onModeChange={setWindowMode}
+          isFraction={isFraction}
+          isStart={isStart}
+          isEnd={isEnd}
+          oosStart={oosStart}
+          oosEnd={oosEnd}
+          onIsStartChange={setIsStart}
+          onIsEndChange={setIsEnd}
+          onOosStartChange={setOosStart}
+          onOosEndChange={setOosEnd}
+          catalogFirstDate={catalogInstrument?.first_date}
+          catalogLastDate={catalogInstrument?.last_date}
+          instrumentId={catalogInstrument?.instrument_id}
+          catalogPath={selectedCatalogPath}
+        />
       )}
 
       {/* Configuration Grid */}
@@ -231,14 +351,26 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
             </div>
           )}
 
-          <button
-            onClick={handleRun}
-            disabled={running}
-            className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-500 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
-          >
-            {running ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {running ? 'Simulating...' : 'Run Research'}
-          </button>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={handleRun}
+              disabled={running}
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-500 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
+            >
+              {running ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              {running ? 'Simulating...' : 'Run Research'}
+            </button>
+
+            {running && (
+              <button
+                onClick={handleCancel}
+                className="w-full py-2 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
+              >
+                <Square className="w-3.5 h-3.5" />
+                Cancel
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Strategy Spec summary note */}
@@ -256,6 +388,30 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
             >
               {selectedStrategyInfo.wired_in_backtest ? 'Wired to Engine' : 'Fail-Closed Block'}
             </span>
+          </div>
+        )}
+
+        {selectedStrategyInfo && selectedStrategyInfo.params?.length > 0 && (
+          <div className="border-t border-gray-800/80 pt-4">
+            <h4 className="text-xs font-semibold text-gray-300 mb-3">Per-run robot parameters</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {selectedStrategyInfo.params
+                .filter((param) => param.env)
+                .slice(0, 9)
+                .map((param) => (
+                  <label key={param.env} className="flex flex-col gap-1 text-[11px]">
+                    <span className="font-mono text-gray-500">{param.env}</span>
+                    <input
+                      type="text"
+                      value={paramOverrides[param.env] ?? ''}
+                      onChange={(e) =>
+                        setParamOverrides((prev) => ({ ...prev, [param.env]: e.target.value }))
+                      }
+                      className="bg-gray-950 border border-gray-800 rounded-lg p-2 font-mono text-gray-200"
+                    />
+                  </label>
+                ))}
+            </div>
           </div>
         )}
 
@@ -358,6 +514,28 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
                 Auto-record row to research/journal.md
               </label>
 
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={notify}
+                  onChange={(e) => setNotify(e.target.checked)}
+                  className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+                />
+                Notify on completion (Telegram/webhook)
+              </label>
+
+              {source === 'catalog' && (
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-amber-300">
+                  <input
+                    type="checkbox"
+                    checked={fullSample}
+                    onChange={(e) => setFullSample(e.target.checked)}
+                    className="rounded bg-gray-950 border-gray-700 text-amber-500 focus:ring-0"
+                  />
+                  Full-sample catalog (in-sample only, not OOS)
+                </label>
+              )}
+
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] text-gray-400">Stress Slices:</span>
                 <select
@@ -376,7 +554,17 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
         </div>
       </div>
 
-      {/* Structured Results Showcase: Out-Of-Sample vs Buy&Hold */}
+      {/* Structured Results */}
+      {summary?.is_error && summary.error_message && (
+        <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-xl text-red-300 text-xs">
+          {summary.error_message}
+        </div>
+      )}
+
+      {summary && summary.report_label && !summary.is_error && (
+        <div className="text-xs text-gray-400 font-mono px-1">{summary.report_label}</div>
+      )}
+
       {summary && (summary.multi_window || summary.single_backtest) && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {summary.multi_window ? (
@@ -409,7 +597,11 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
                   {summary.multi_window.buy_and_hold_mean}
                 </span>
                 <span className="text-[11px] text-gray-500 mt-1">
-                  Must beat this to prove edge
+                  {summary.multi_window.beats_buy_and_hold === true
+                    ? 'Beats buy&hold on average'
+                    : summary.multi_window.beats_buy_and_hold === false
+                    ? 'Does not beat buy&hold'
+                    : 'Must beat this to prove edge'}
                 </span>
               </div>
 
@@ -493,6 +685,8 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
         </div>
       )}
 
+      <ExperimentHistory key={historyKey} onRerun={handleLoadHistory} />
+
       {/* Tearsheet Embedded Viewer & Terminal Output Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Terminal Log Output */}
@@ -520,7 +714,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
             </div>
             {selectedTearsheetUrl && (
               <a
-                href={`http://localhost:8000${selectedTearsheetUrl}`}
+                href={staticReportUrl(selectedTearsheetUrl)}
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
@@ -533,7 +727,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({ strategies }) => {
           <div className="flex-1 bg-gray-950 flex flex-col">
             {selectedTearsheetUrl ? (
               <iframe
-                src={`http://localhost:8000${selectedTearsheetUrl}`}
+                src={staticReportUrl(selectedTearsheetUrl)}
                 title="Tearsheet View"
                 className="w-full h-full border-0 bg-white"
               />

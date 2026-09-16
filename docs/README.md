@@ -19,6 +19,7 @@
 | Хочу зрозуміти, що з «Стратегій MFT Криптоторгівлі 2026.md» уже є в коді | [08-mft-2026-vidpovidnist.md](08-mft-2026-vidpovidnist.md) |
 | Хочу застосувати ідеї з «Алгоритми ШІ У Криптоторгівлі 2026» | [13-ai-2026-vidpovidnist.md](13-ai-2026-vidpovidnist.md) |
 | Хочу застосувати ідеї з «ML Ансамблі У Криптотрейдингу» (ансамблі, TBM, мета-маркування, DSR, FFD) | [17-ml-ansambli-vidpovidnist.md](17-ml-ansambli-vidpovidnist.md) |
+| Хочу зрозуміти, чи варто брати Transformer / Mamba (SSM) / xLSTM / Kronos | [18-transformery-ssm-vidpovidnist.md](18-transformery-ssm-vidpovidnist.md) |
 | Хочу зрозуміти, як LLM/LRM-модель реально допомагає в торгівлі (і де їй не місце) | [14-llm-model-u-torhivli.md](14-llm-model-u-torhivli.md) |
 | Хочу знати, які помилки знайшли в коді та чи їх виправлено | [15-audit-vypravlennya.md](15-audit-vypravlennya.md) |
 | Хочу використати MFT-модулі (VPIN, Хоукс, Келлі, GLFT...) у своєму коді | [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md) |
@@ -45,7 +46,9 @@
 | [13-ai-2026-vidpovidnist.md](13-ai-2026-vidpovidnist.md) | Мапа ШІ-дослідження 2026 → код (LLM, DRL, overlays, нові роботи) |
 | [14-llm-model-u-torhivli.md](14-llm-model-u-torhivli.md) | Як LLM/LRM-модель допомагає в криптоторгівлі: 9 ролей, два контури, шаблони промптів, пастки (зокрема temporal leakage) |
 | [15-audit-vypravlennya.md](15-audit-vypravlennya.md) | Аудит коректності: 9 знайдених помилок логіки, як кожну виправлено, і що перевірили та визнали правильним |
+| [16-llm-vidpovidnist.md](16-llm-vidpovidnist.md) | Мапа LLM-огляду → код: які ролі LLM реалізовані (офлайн-контур `lab propose`), які ні і чому |
 | [17-ml-ansambli-vidpovidnist.md](17-ml-ansambli-vidpovidnist.md) | Мапа ML-огляду (ансамблі GBDT, інформаційні бари, TBM, мета-маркування, CPCV/DSR/PBO, ONNX) → код: що є, що додано (DSR), що свідомо не беремо |
+| [18-transformery-ssm-vidpovidnist.md](18-transformery-ssm-vidpovidnist.md) | Мапа огляду «Трансформери проти SSM» → код: чому жодна з архітектур не береться, що переноситься дешево (breakeven-cost, відбір ознак, адаптивне згладжування) і вимір геометрії свічки з Kronos |
 
 ## Що вміє проєкт (коротко)
 
@@ -54,7 +57,7 @@
 - **Walk-forward дослідження**: підбір параметрів на першій частині історії (in-sample) і звіт на тій, яку стратегія «не бачила» (out-of-sample), з розривом-embargo.
 - **Підбір параметрів двома способами**: невелика сітка (типово) або байєсівська оптимізація Optuna TPE (`--optuna --trials N`).
 - **Аудит перенавчання**: `--pbo` рахує ймовірність backtest overfitting (PBO/CSCV) — як часто переможець in-sample провалюється out-of-sample — і **DSR** (дефльований Sharpe) — чи не є Sharpe переможця наслідком самого перебору конфігурацій. Вимірює те, що раніше було неформальним припущенням «сітка мала, отже безпечно» (див. [17](17-ml-ansambli-vidpovidnist.md)).
-- **Звітність і моніторинг**: інтерактивний HTML-тиршит Nautilus (`--tearsheet`) і сповіщення в Telegram/Webhook (`--notify`).
+- **Звітність і моніторинг**: інтерактивний HTML-тиршит Nautilus (`--tearsheet`), сповіщення в Telegram/Webhook (`--notify`) і **breakeven-cost** (`breakeven_cost_bps` / `paid_cost_bps`) — максимальна комісія на одиницю обороту, за якої PnL прогону дорівнював би нулю (див. [18](18-transformery-ssm-vidpovidnist.md) §3 і [06](06-ryzyk-metryky.md) §7).
 - **Три роботи**: `regime` (тренд/флет з трьома підстратегіями), `ema` (перетин ковзних), `pairs` (статистичний арбітраж ETH/BTC).
 - **Ризик-шар**: розмір позиції від стопу, ATR-стопи, денний ліміт збитку, ліміт просадки, VaR-запобіжник, дробовий Келлі.
 - **MFT-модулі** зі «Стратегій MFT Криптоторгівлі 2026.md»: VPIN, процеси Хоукса, коінтеграція + O-U, GLFT-маркет-мейкінг, funding cash-and-carry, трикутний арбітраж Беллмана-Форда, HAR-RV, EGARCH, purged K-fold. Частина з них — готові будівельні блоки, які ще не підключені до CLI (див. [08](08-mft-2026-vidpovidnist.md)).

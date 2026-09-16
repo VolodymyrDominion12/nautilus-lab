@@ -5,25 +5,19 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 
+from nautilus_lab.application.catalog_queries import incremental_ingest_start
 from nautilus_lab.application.dtos import BacktestReport, MultiWindowReport, WalkForwardReport
 from nautilus_lab.application.journal import JournalEntry, record_run
-from nautilus_lab.application.propose_alphas import (
-    endpoint_host_of,
-    load_prompt_template,
-    propose_alphas,
-    render_prompt,
-    summarise,
-    write_artifact,
-)
 from nautilus_lab.application.risk import require_simulated_mode
+from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
 from nautilus_lab.application.run_paper import RunPaperResearch
 from nautilus_lab.application.run_walk_forward import window_return
 from nautilus_lab.application.scan_triangular import scan_triangular_opportunities
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.errors import (
     CatalogEmptyError,
+    InvalidHypothesisError,
     InvalidWindowError,
     LiveTradingDisabledError,
     PaperTradingNotReadyError,
@@ -34,11 +28,9 @@ from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.composition import (
-    alpha_proposal_request,
     ingest_request,
     ingest_use_case,
     journal_paths,
-    llm_completer,
     notifier,
     overfit_audit_request,
     overfit_audit_use_case,
@@ -67,6 +59,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ingest.add_argument(
         "--symbols",
         help="Comma-separated Binance symbols (default: settings binance_symbols)",
+    )
+    ingest.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Append only bars after the last stored bar per symbol (skip if up to date)",
     )
 
     research = sub.add_parser("research", help="Run a simulated backtest (default path)")
@@ -256,7 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
-    start = parse_utc(args.start) if args.start else datetime.now(UTC) - timedelta(days=365)
+    default_start = parse_utc(args.start) if args.start else datetime.now(UTC) - timedelta(days=365)
     end = parse_utc(args.end) if args.end else datetime.now(UTC)
     symbols = (
         [item.strip() for item in args.symbols.split(",") if item.strip()]
@@ -264,7 +261,21 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
         else cfg.binance_symbols
     )
     use_case = ingest_use_case(cfg)
+    incremental = bool(getattr(args, "incremental", False))
     for symbol in symbols:
+        start = default_start
+        if incremental:
+            inc_start = incremental_ingest_start(
+                cfg,
+                catalog_path=cfg.catalog_path,
+                symbol=symbol,
+                default_start=default_start,
+                end=end,
+            )
+            if inc_start is None:
+                print(f"symbol={symbol} up-to-date (incremental skip)")
+                continue
+            start = inc_start
         report = use_case.execute(ingest_request(cfg, start=start, end=end, symbol=symbol))
         print(
             f"symbol={symbol} wrote={report.bars_written} "
@@ -561,56 +572,30 @@ def _run_scan(args: argparse.Namespace) -> int:
 
 def _run_propose(cfg: Settings, args: argparse.Namespace) -> int:
     """Ask a model for hypotheses. Offline research: no orders, no market data."""
-    request = alpha_proposal_request(
-        cfg,
-        prompt=args.prompt,
+    job = ProposeJobConfig(
         count=args.count,
+        dry_run=bool(args.dry_run),
+        prompt=args.prompt,
         as_of=args.as_of,
+        model=args.model,
+        base_url=args.base_url,
         output_dir=args.output_dir,
         slug=args.slug,
+        journal=bool(getattr(args, "journal", False)),
     )
-    template = load_prompt_template(Path(request.prompt_file))
-    model = args.model or cfg.llm_model
-
-    if args.dry_run:
-        as_of = args.as_of or datetime.now(UTC).date()
-        print(render_prompt(template, count=request.count, as_of=as_of))
-        print(f"[dry-run] rendered {request.prompt_file}; no network call, {model} unused.")
-        return 0
-
-    if not (cfg.llm_api_key or "").strip():
-        # Fail closed instead of inventing a local answer: a proposal the model never
-        # made would look exactly like a real one in the artifact.
-        print(
-            "LLM_API_KEY is not set, so `lab propose` fails closed. "
-            "Set it in .env, or use --dry-run to inspect the prompt.",
-            file=sys.stderr,
-        )
+    try:
+        result = execute_propose(job, cfg)
+    except (ValueError, InvalidHypothesisError, LlmRequestError) as exc:
+        print(str(exc), file=sys.stderr)
         return 1
 
-    run = propose_alphas(
-        completer=llm_completer(cfg, model=args.model, base_url=args.base_url),
-        template=template,
-        model=model,
-        endpoint_host=endpoint_host_of(args.base_url or cfg.llm_base_url),
-        prompt_file=request.prompt_file,
-        count=request.count,
-        as_of=request.as_of,
-    )
-    path = write_artifact(run, output_dir=Path(request.output_dir), slug=request.slug)
-    print(summarise(run))
-    print(f"artifact={path}")
-    if _journal_enabled(cfg, args):
-        _record_journal(
-            cfg,
-            _journal_entry(
-                source="lab propose",
-                subject=f"proposal {model}",
-                gates="not run yet (proposal only)",
-                reason=f"awaiting review: {path}",
-                artifact=str(path),
-            ),
-        )
+    if result["status"] == "dry_run":
+        print(result["prompt"])
+        print(f"[dry-run] rendered {args.prompt}; no network call, {result['model']} unused.")
+        return 0
+
+    print(result["summary"])
+    print(f"artifact={result['artifact_path']}")
     return 0
 
 
@@ -698,11 +683,32 @@ def _print_multi_window(report: MultiWindowReport) -> None:
         f"baseline buy&hold mean={_pct(report.mean_buy_and_hold_return)} "
         f"oos_fills={report.total_oos_fills}"
     )
+    print(
+        f"breakeven_cost mean_bps={_bps(report.mean_breakeven_cost)} "
+        f"folds_measured={len(report.breakeven_costs)}/{len(report.folds)}"
+    )
     print(report.summary_line())
 
 
 def _pct(value: Decimal | None) -> str:
     return "n/a" if value is None else f"{value * 100:.2f}%"
+
+
+def _bps(value: Decimal | None) -> str:
+    """Cost rate as basis points (1 bps = 0.01%), same units as maker/taker fees."""
+    return "n/a" if value is None else f"{value * 10000:.2f}"
+
+
+def _breakeven_line(label: str, report: BacktestReport) -> str | None:
+    """One line: what was traded, what it cost, and how much cost the run could take."""
+    metrics = report.metrics
+    if metrics is None or (metrics.traded_notional <= 0 and metrics.breakeven_cost is None):
+        return None
+    return (
+        f"{label} traded_notional={metrics.traded_notional} "
+        f"paid_cost_bps={_bps(metrics.paid_cost_rate)} "
+        f"breakeven_cost_bps={_bps(metrics.breakeven_cost)}"
+    )
 
 
 def _print_backtest(report: BacktestReport) -> None:
@@ -712,6 +718,9 @@ def _print_backtest(report: BacktestReport) -> None:
             f"fees_paid={report.metrics.fees_paid} max_dd={report.metrics.max_drawdown} "
             f"turnover={report.metrics.turnover} sharpe_like={report.metrics.sharpe_like}"
         )
+        breakeven = _breakeven_line("cost", report)
+        if breakeven is not None:
+            print(breakeven)
     if report.tearsheet_path:
         print(f"tearsheet_saved={report.tearsheet_path}")
     print(report.notes)
@@ -727,6 +736,9 @@ def _print_walk_forward(report: WalkForwardReport) -> None:
         "out-of-sample (report this) "
         f"fills={report.out_of_sample.fills} ending={report.out_of_sample.ending_balance}"
     )
+    breakeven = _breakeven_line("out-of-sample", report.out_of_sample)
+    if breakeven is not None:
+        print(breakeven)
     if report.out_of_sample.tearsheet_path:
         print(f"tearsheet_saved={report.out_of_sample.tearsheet_path}")
 

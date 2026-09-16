@@ -1,0 +1,100 @@
+# =============================================================================
+#  breakeven-cost — яку комісію стратегія витримує, перш ніж PnL обернеться в нуль
+# =============================================================================
+#  Компонент, а не робот. Джерело ідеї — «Трансформери проти SSM у трейдингу.md»
+#  §3.2 і §3.5: в Оксфордському бенчмарку (arXiv:2603.01820) моделі змагаються
+#  не лише за Sharpe, а й за breakeven transaction cost — максимальну сталу
+#  комісію c*, за якої сукупний PnL дорівнює нулю (Appendix E першоджерела).
+#
+#  Навіщо це тут. Звіт лабораторії відповідав лише на бінарне питання «додатна
+#  дохідність після комісій чи ні». Breakeven робить вимірювання чеснішим у
+#  тому ж сенсі, що й DSR у specs/components/deflated-sharpe.yaml: він показує
+#  ЗАПАС міцності до витрат — у рази чи в сотих відсотка — замість «пройшло /
+#  не пройшло». Стратегія з нульовим PnL і стратегія з нульовим PnL «ледве-ледве»
+#  виглядають однаково, а коштують по-різному.
+#
+#  Формула стандартна й узята з першоджерела, а не вигадана: net PnL уже
+#  містить сплачені комісії, тому gross = net + fees_paid, і
+#  c* = gross / traded_notional.
+# =============================================================================
+kind: component
+name: breakeven-cost
+version: "1.0"
+status: active
+title: "Breakeven-cost: максимальна комісія на одиницю обороту, за якої PnL = 0"
+
+hypothesis: >
+  Комісії в цій лабораторії — головна причина, чому жоден робот не обганяє
+  buy&hold (див. README.md і docs/05), але звіт показував лише факт сплачених
+  комісій (`fees_paid`) і оборот, а не те, скільки стратегія витримала б. Якщо
+  порахувати breakeven-cost c* = (net PnL + fees_paid) / traded_notional, то
+  кожен прогін дає друге, інформативніше число: запас до нуля в тих самих
+  одиницях, у яких задані maker/taker. Для стратегії, яка втрачає гроші навіть
+  за поточної комісії, c* виходить меншим за сплачену ставку (або від'ємним,
+  якщо стратегія програє і без комісій узагалі) — і це видно з одного рядка.
+
+invariants:
+  decimal_not_float: true
+  undefined_beats_guessing: true
+
+invariants_enforced:
+  - statement: >
+      Breakeven рахується від ДВОБІЧНОГО обороту (усі філи: і входи, і виходи),
+      а не від `turnover`, який накопичується лише на входах. Інакше c* був би
+      завищений приблизно вдвічі — тобто метрика, покликана показати запас до
+      нуля, показувала б фальшивий запас.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/backtest_runner.py
+    verified_by: tests/unit/test_breakeven_cost.py::test_traded_notional_counts_both_sides
+    note: >
+      Джерело істини — звіт філів рушія (`generate_order_fills_report`), а не
+      бухгалтерія стратегії: рушій знає, що справді виконалося, і його ж
+      комісії вже використовуються для `fees_paid`.
+
+  - statement: >
+      Якщо обороту немає (нуль філів), breakeven — це None, а не нуль: нуль
+      означав би «стратегія обнуляється за нульової комісії», тобто впевнене
+      твердження там, де немає жодного виміру.
+    enforced_by: src/nautilus_lab/domain/metrics.py
+    verified_by: tests/unit/test_breakeven_cost.py::test_no_notional_means_no_number
+
+  - statement: >
+      Breakeven узгоджений зі сплаченими комісіями: якщо стратегія виходить
+      рівно в нуль (net PnL = 0), то c* дорівнює фактичній ставці
+      fees_paid / traded_notional. Це і є перевірка, що формула не переплутала
+      знак або базу.
+    enforced_by: src/nautilus_lab/domain/metrics.py
+    verified_by: tests/unit/test_breakeven_cost.py::test_zero_net_pnl_returns_the_paid_rate
+
+  - statement: >
+      Знак breakeven несе сенс: стратегія, яка програє і без комісій, отримує
+      від'ємний c*, а не нуль — «мінус» тут означає «їй не допомогло б навіть
+      безкоштовне виконання».
+    enforced_by: src/nautilus_lab/domain/metrics.py
+    verified_by: tests/unit/test_breakeven_cost.py::test_losing_run_gets_a_negative_breakeven
+
+notes: >
+  Що є: domain/metrics.py (breakeven_cost + поле в BacktestMetrics),
+  infrastructure/nautilus/backtest_runner.py (двобічний traded_notional зі звіту
+  філів), рядок `breakeven_cost_bps=` поруч із `cost_paid_bps=` у виводі
+  `lab research --full-sample` / `--synthetic` і в OOS-агрегаті `--folds`.
+
+  Розходження з docs/, яке цей компонент робить видимим: docs/01 (§«комісії»),
+  docs/04 і docs/06 описують `turnover` як «оборот по всіх надісланих ордерах»,
+  тоді як у коді він накопичується лише на входах
+  (infrastructure/nautilus/signal_strategy.py, інкремент у гілці входу;
+  `_flatten()`/`close_all_positions()` оборот не збільшують). Семантику
+  `turnover` цей компонент НЕ змінює — він не чіпає підбір параметрів
+  (`in_sample_score` використовує turnover_haircut) і не переписує вже
+  задокументовані прогони; замість цього breakeven рахується від
+  `traded_notional`, а формулювання в docs/ виправлено на «входи».
+
+  Друге обмеження: c* — це стала комісія за одиницю обороту, тобто модель
+  «комісія пропорційна ноціоналу». Вона не описує фіксовані біржові збори,
+  funding і прослизання окремо; прослизання в цій лабораторії вже сидить у
+  ціні філів, тому c* його не враховує.
+
+references:
+  - Трансформери проти SSM у трейдингу.md
+  - docs/18-transformery-ssm-vidpovidnist.md
+  - docs/06-ryzyk-metryky.md
+  - specs/components/backtest-engine.yaml

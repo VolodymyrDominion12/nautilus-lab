@@ -41,7 +41,7 @@ invariants_enforced:
       як результат нового робота, а насправді належать чужій стратегії. Тест
       проганяє кожного робота без адаптера (`funding`, `ml_obi`, `glft`,
       `tri_scan`) і вимагає код виходу 1. Білий список — `BACKTEST_WIRED_ROBOTS`
-      (5 із 9 значень `RobotName`); перевірка стоїть на вході в
+      (6 із 10 значень `RobotName`); перевірка стоїть на вході в
       `RunResearchBacktest`, `RunWalkForward`, `RunOverfitAudit` і в `_build_robot()`.
 
   - statement: >
@@ -49,18 +49,16 @@ invariants_enforced:
       `FeeSchedule`), затримкою 50 мс і 25% однотікового прослизання — без них
       результат не порівнюваний із реальністю.
     enforced_by: src/nautilus_lab/infrastructure/nautilus/backtest_runner.py
-    test_missing_reason: >
-      Тест мав би після прогону з відомими fills стверджувати, що `fees_paid > 0` і
-      що кінцевий баланс менший на тейкерську комісію за кожен round-trip (роботи
-      надсилають ринкові ордери, тож платять taker). Сьогодні перевіряється лише
+    verified_by: tests/integration/test_research_backtest.py::test_engine_money_after_the_run_is_measured
+    note: >
+      Тест дивиться на гроші ПІСЛЯ прогону, а не на текст `notes`: після реального
+      прогону з філами `fees_paid > 0` (комісії справді списані), двобічний
+      `traded_notional > 0` (зі звіту філів, а не з бухгалтерії стратегії) і
+      `breakeven_cost` дорівнює `(net PnL + fees_paid) / traded_notional` — тобто
+      облік комісій у P&L узгоджений із тим, що друкує звіт. Раніше перевірявся лише
       рядок `"fees"` у `report.notes`
       (tests/integration/test_research_backtest.py::test_research_backtest_runs_locally_without_network),
-      а значення самих розкладів — tests/unit/test_mft_modules.py::test_fee_schedule_binance_defaults;
-      жоден із цих тестів не дивиться на гроші ПІСЛЯ прогону.
-    note: >
-      Пастка в тому, що `notes` збирається поруч із конфігом і залишиться тим самим
-      текстом навіть якщо комісійну модель прибрати. Прогін без комісій — це
-      рівно те, через що бектест обіцяє прибуток, якого немає.
+      який залишився б тим самим навіть якби комісійну модель прибрали.
 
   - statement: >
       Інструмент прогону й опис інструмента, записаний у каталог, беруть той самий
@@ -103,15 +101,17 @@ invariants_enforced:
 
 notes: >
   Механізм зібраний повністю й перевірений інтеграційно (справжній `BacktestEngine`
-  локально, без мережі), але два інваріанти стоять без тесту — вони записані через
-  `test_missing_reason`, і валідатор друкує їх попередженнями: облік комісій у P&L
-  та узгодження комісійного розкладу між каталогом і рушієм.
+  локально, без мережі). Облік комісій у P&L отримав тест
+  (tests/integration/test_research_backtest.py::test_engine_money_after_the_run_is_measured,
+  див. інваріант вище) — раніше він стояв без тесту. Один інваріант досі без тесту й
+  позначений `test_missing_reason`: узгодження комісійного розкладу між каталогом і
+  рушієм; валідатор друкує його попередженням.
   Розходження з docs/: `docs/05-roboty.md` (рядок 22) наводить
   `BACKTEST_WIRED_ROBOTS = frozenset({REGIME, EMA, PAIRS})`, а `docs/10` і `docs/11`
-  повторюють, що до рушія підключено три роботи. У коді їх пʼять — `regime`, `ema`,
-  `pairs`, `vpin_momentum`, `formulaic_lgbm`, — і `--robot` приймає всі 9 значень
-  `RobotName` (`choices=tuple(item.value for item in RobotName)` у `cli.py`).
-  `docs/10` до того ж друкує застарілий перелік із 7 назв замість 9. Це не
+  повторюють, що до рушія підключено три роботи. У коді їх шість — `regime`, `ema`,
+  `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, — і `--robot` приймає всі
+  10 значень `RobotName` (`choices=tuple(item.value for item in RobotName)` у `cli.py`).
+  `docs/10` до того ж друкує застарілий перелік із 7 назв замість 10. Це не
   косметика: через таку розбіжність підключений робот виглядає як непідключений —
   і навпаки, тобто `fills=0` можна помилково списати на «немає адаптера».
   Окремо: конфігурацію венʼю `docs/03` §3 і `docs/08` §7.2 описують правильно

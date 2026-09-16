@@ -203,6 +203,27 @@ class MultiWindowReport:
     def total_oos_fills(self) -> int:
         return sum(fold.out_of_sample.fills for fold in self.folds)
 
+    @property
+    def breakeven_costs(self) -> tuple[Decimal, ...]:
+        """Per-fold breakeven costs, only from folds that actually traded.
+
+        A fold with no fills has no breakeven (None), and folding it in as zero
+        would drag the mean towards a number nobody measured.
+        """
+        values: list[Decimal] = []
+        for fold in self.folds:
+            metrics = fold.out_of_sample.metrics
+            if metrics is not None and metrics.breakeven_cost is not None:
+                values.append(metrics.breakeven_cost)
+        return tuple(values)
+
+    @property
+    def mean_breakeven_cost(self) -> Decimal | None:
+        values = self.breakeven_costs
+        if not values:
+            return None
+        return sum(values, Decimal("0")) / Decimal(len(values))
+
     def beats_buy_and_hold(self) -> bool | None:
         """True when the robot out-earned holding the instrument on average.
 

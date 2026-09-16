@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     instrument_id: str = "ETH/USDT.SIM"
     bar_type: str = "ETH/USDT.SIM-1-MINUTE-LAST-EXTERNAL"
     catalog_path: str = "catalog"
+    catalog_paths: str = ""
     bar_interval: str = "1h"
     binance_symbol: str = "ETHUSDT"
     binance_symbols: list[str] = Field(default_factory=lambda: ["ETHUSDT", "BTCUSDT"])
@@ -85,6 +86,17 @@ class Settings(BaseSettings):
     journal_enabled: bool = False
     journal_path: str = "research/journal.md"
     journal_jsonl_path: str = "research/journal.jsonl"
+
+    def all_catalog_paths(self) -> list[str]:
+        paths: list[str] = []
+        seen: set[str] = set()
+        for raw in [self.catalog_path, *self.catalog_paths.split(",")]:
+            item = raw.strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            paths.append(item)
+        return paths
 
     def risk_limits(self) -> RiskLimits:
         return RiskLimits(

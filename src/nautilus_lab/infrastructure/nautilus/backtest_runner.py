@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.backtest.models import FillModel, LatencyModel, MakerTakerFeeModel
@@ -171,11 +171,14 @@ class NautilusResearchBacktest:
             fees_paid = _fees_paid(fills_report)
             equity_curve = getattr(strategy, "equity_curve", ())
             turnover = getattr(strategy, "turnover", Decimal("0"))
+            traded_notional = _traded_notional(fills_report)
             metrics = compute_metrics(
                 starting_equity=request.starting_equity,
                 equity_curve=equity_curve,
                 fees_paid=fees_paid,
                 turnover=turnover,
+                traded_notional=traded_notional,
+                ending_equity=ending,
             )
             saved_tearsheet: str | None = None
             if request.tearsheet_path:
@@ -249,3 +252,53 @@ def _fees_paid(fills_report: object) -> Decimal:
             total += Decimal(amount)
         return total
     return Decimal("0")
+
+
+def _traded_notional(fills_report: object) -> Decimal:
+    """Two-sided traded notional (entry AND exit fills) from the engine's fills report.
+
+    This is the base for breakeven cost. The strategy's own `turnover` counter is
+    NOT usable here: it accumulates entry notional only (signal_strategy.py adds it
+    in the entry branch, and `_flatten()` closes positions without adding anything),
+    so a breakeven computed from it would be roughly twice too optimistic.
+
+    One row per filled order (`generate_order_fills_report`), so `avg_px * filled_qty`
+    is the executed notional. Returns 0 when the report has no recognisable columns —
+    breakeven then prints as undefined instead of inventing a number.
+    """
+    import pandas as pd
+
+    if not isinstance(fills_report, pd.DataFrame) or fills_report.empty:
+        return Decimal("0")
+    price_column = next(
+        (name for name in ("avg_px", "price", "last_px") if name in fills_report.columns),
+        None,
+    )
+    quantity_column = next(
+        (name for name in ("filled_qty", "quantity", "last_qty") if name in fills_report.columns),
+        None,
+    )
+    if price_column is None or quantity_column is None:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Fills report has no usable price/quantity columns (%s); breakeven undefined.",
+            ", ".join(str(name) for name in fills_report.columns),
+        )
+        return Decimal("0")
+    total = Decimal("0")
+    for price, quantity in zip(
+        fills_report[price_column], fills_report[quantity_column], strict=True
+    ):
+        total += _to_decimal(price) * _to_decimal(quantity)
+    return total
+
+
+def _to_decimal(value: object) -> Decimal:
+    """Nautilus reports mix Decimal, float and '0.5 USDT'-style strings."""
+    text = str(value[0]) if isinstance(value, list) and value else str(value)
+    token = text.split()[0] if text.split() else "0"
+    try:
+        return Decimal(token)
+    except InvalidOperation:
+        return Decimal("0")

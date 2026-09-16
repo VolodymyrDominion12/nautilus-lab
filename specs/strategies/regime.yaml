@@ -1,0 +1,116 @@
+# =============================================================================
+#  regime — еталонна специфікація (на неї рівняйся, пишучи інші)
+# =============================================================================
+kind: strategy
+name: regime
+version: "1.0"
+status: candidate
+title: "Regime router: Donchian у тренді, Bollinger mean reversion у флеті"
+
+hypothesis: >
+  Ринок не має однієї «правильної» стратегії: в тренді працює пробій, у флеті —
+  повернення до середнього. Якщо спершу класифікувати режим (Kaufman Efficiency
+  Ratio + нахил EMA), а потім застосувати відповідну стратегію, результат має
+  бути кращим за будь-яку з них окремо — за вирахуванням комісій і без
+  використання майбутніх барів.
+
+edge_conditions:
+  - name: regime_is_detectable_in_advance
+    description: >
+      ER і нахил EMA на закритих барах розділяють тренд і флет краще за випадкове
+      вгадування (пороги ENTER_TREND_ER=0.30 / EXIT_TREND_ER=0.20 з гістерезисом).
+  - name: breakout_pays_in_trend
+    description: >
+      У розпізнаному тренді пробій Donchian дає співвідношення прибутку до
+      просадки, яке покриває taker-комісію за round-trip.
+  - name: reversion_pays_in_range
+    description: >
+      У розпізнаному флеті повернення від меж Bollinger до середньої дає
+      достатньо руху, щоб покрити комісію.
+  - name: switching_costs_do_not_eat_the_edge
+    description: >
+      Перемикання режимів (закриття позиції при зміні режиму) не з'їдає перевагу
+      через надмірний turnover.
+
+implementation:
+  domain_module: src/nautilus_lab/domain/regime_router.py
+  strategy_class: RegimeRouter
+  backtest_adapter: signal_strategy
+  wired_in_backtest: true
+  minimum_bars: 150
+  grid_source: default_branch
+  signal_kind: direction
+
+params:
+  - env: DONCHIAN_PERIOD
+    default: 20
+    grid: [10, 20, 40]
+    description: >
+      Вікно пробою: сигнал на максимум/мінімум за N закритих барів у тренді.
+      Підбирається разом із BB_PERIOD (у сітці за замовчуванням вони рухаються
+      синхронно — одне значення на обидва).
+  - env: BB_PERIOD
+    default: 20
+    grid: [10, 20, 40]
+    description: Вікно смуг Bollinger для mean reversion у флеті.
+  - env: BB_K
+    default: 2
+    grid: [2, 2.5]
+    description: >
+      Множник стандартного відхилення. Ширші смуги = рідші, але «чистіші» входи.
+  - env: ER_PERIOD
+    default: 20
+    tuned: false
+    note: >
+      Поза сіткою: ER — це класифікатор режиму, а не джерело переваги. Підбір
+      його на IS означав би підгонку самого визначення режиму під історію.
+  - env: TREND_EMA_PERIOD
+    default: 40
+    tuned: false
+    note: Нахил EMA — друга ознака режиму; так само частина класифікатора, не edge.
+  - env: SLOPE_LOOKBACK
+    default: 10
+    tuned: false
+    note: Горизонт вимірювання нахилу; фіксований разом із ER_PERIOD.
+  - env: ENTER_TREND_ER
+    default: 0.30
+    tuned: false
+    note: >
+      Поріг входу в тренд. Не підбирається свідомо: якщо його оптимізувати,
+      гістерезис перетвориться на ще один параметр підгонки.
+  - env: EXIT_TREND_ER
+    default: 0.20
+    tuned: false
+    note: >
+      Поріг виходу з тренду (нижчий за ENTER — це і є гістерезис, який не дає
+      режиму «блимати» на межі).
+
+invariants:
+  no_lookahead: true
+  closed_bars_only: true
+  decimal_not_float: true
+  # Робот підключений до рушія, тож fail-closed-вимога до нього не діє.
+  fail_closed_without_adapter: false
+
+evidence:
+  measured: true
+  beats_buy_hold: false
+  notes: >
+    За README.md і docs/05-roboty.md §4: багатовіконний прогін (`--folds N`)
+    з порівнянням проти buy&hold за той самий OOS-період не показує переваги —
+    жоден із роботів планку не обганяє. Конкретні числа наводяться в docs/05,
+    тут вони свідомо не дублюються, щоб не розійтися з першоджерелом.
+    Статус candidate (а не rejected), бо гіпотеза не закрита: це «не доведено»,
+    а не «доведено, що не працює».
+
+notes: >
+  Це перший і головний робот лабораторії, і водночас приклад чесного результату:
+  ідея звучить переконливо, але вимір її не підтверджує. Саме тому він лишається
+  в проєкті як еталон дисципліни, а не як «робоча стратегія».
+  У сітці за замовчуванням (param_grid.py, останній блок) DONCHIAN_PERIOD і
+  BB_PERIOD отримують одне значення — тому в params вони мають однакові grid.
+
+references:
+  - docs/05-roboty.md
+  - docs/06-ryzyk-metryky.md
+  - docs/07-yak-stvoryty-strategiyu.md

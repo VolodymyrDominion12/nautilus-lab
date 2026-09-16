@@ -1,0 +1,143 @@
+# =============================================================================
+#  formulaic_lgbm — робот на формульних ознаках + ML-класифікаторі напрямку
+#  Структура й тон — за еталоном specs/strategies/regime.yaml.
+# =============================================================================
+kind: strategy
+name: formulaic_lgbm
+version: "1.0"
+status: candidate
+title: "Formulaic LGBM: напрямок бару з 12 формульних ознак OHLCV + пороговий класифікатор"
+
+hypothesis: >
+  У 12 формульних ознаках, порахованих на закритих барах OHLCV
+  (`domain/formulaic_alphas.py::FEATURE_NAMES`: дохідності, волатильності,
+  положення закриття в діапазоні, відносний обсяг, efficiency ratio), лишається
+  передбачувальна інформація про напрямок наступного бару. Якщо класифікатор
+  (LightGBM-бустер, навчений офлайн на purged K-fold з embargo, або rule-based
+  замінник) дає ймовірність напрямку ≥ порогу (`formulaic_threshold`), а
+  протилежна ймовірність менша, то вхід у цей бік дає додатну дохідність OOS
+  після комісій, вищу за просте утримання інструменту (buy&hold) за той самий
+  період. Гіпотеза сфальсифікована, якщо точність напрямку на OOS статистично не
+  перевищує 0.50, або якщо OOS-агрегат не обганяє buy&hold.
+
+edge_conditions:
+  - name: features_carry_forward_information
+    description: >
+      Класифікатор на цих 12 ознаках передбачає напрямок наступного бару краще за
+      монету на даних, яких він не бачив: точність (або AUC) на OOS статистично
+      значуще перевищує 0.50. Якщо вона тримається на рівні ~0.50, робот — це
+      генератор випадкових входів із комісіями, і жоден поріг цього не врятує.
+  - name: threshold_gate_leaves_enough_signals
+    description: >
+      Поріг (сітка {0.50, 0.55, 0.60}) лишає достатньо угод, щоб результат був
+      виміром, а не шумом: кількість філів на фолд мусить бути достатньою для
+      статистичного висновку. Слабка модель у комбінації з високим порогом дає
+      одиниці угод — і тоді «поганий» результат неможливо відрізнити від
+      випадкового.
+  - name: signal_frequency_covers_costs
+    description: >
+      Математичне сподівання на угоду після round-trip витрат (taker-комісія за
+      вхід і вихід ринковими ордерами) додатне: перевага на угоду × кількість угод
+      > сумарні витрати. Вимірюване: середній PnL на угоду net > 0.
+  - name: exit_rules_cut_the_wrong_side
+    description: >
+      Правило виходу (ймовірність flat ≥ порогу або перевага протилежного
+      напрямку) скорочує перебування в позиції проти руху: середня просадка
+      всередині угоди (MAE) лишається обмеженою. Це перевірка того, що робот
+      виходить через зміну сигналу, а не тримає позицію до кінця вікна.
+
+implementation:
+  domain_module: src/nautilus_lab/domain/formulaic_lgbm_strategy.py
+  strategy_class: FormulaicLgbmStrategy
+  backtest_adapter: signal_strategy
+  wired_in_backtest: true
+  minimum_bars: 80
+  grid_source: explicit
+  signal_kind: direction
+
+params:
+  - env: FORMULAIC_THRESHOLD
+    default: 0.55
+    grid: [0.50, 0.55, 0.60]
+    description: >
+      Поріг ймовірності: вхід, якщо p(напрямок) ≥ порогу і перевищує протилежну
+      ймовірність; вихід, якщо p(flat) ≥ порогу або перевага перейшла до
+      протилежного боку. Єдиний параметр, який перебирає сітка робота
+      (`param_grid.py`, гілка `RobotName.FORMULAIC_LGBM`). Optuna додатково шукає
+      його в [0.35, 0.75] з кроком 0.05 (`optuna_optimizer.py`).
+  - env: FORMULAIC_MODEL_PATH
+    tuned: false
+    note: >
+      Шлях до збереженого LightGBM-бустера. Поза сіткою принципово: це не число,
+      а артефакт моделі, і перебирати в сітці нічого — модель або навчена офлайн
+      (`scripts/train_formulaic_lgbm.py`), або її немає. Порівнювати «моделі» між
+      собою можна лише як окремі експерименти з фіксованою процедурою навчання, а
+      не як значення параметра в сітці.
+
+invariants:
+  no_lookahead: true
+  closed_bars_only: true
+  decimal_not_float: true
+  # Робот підключений до рушія, тож fail-closed-вимога до нього не діє
+  # (`require_backtest_support()` його пропускає).
+  fail_closed_without_adapter: false
+
+evidence:
+  measured: true
+  beats_buy_hold: false
+  notes: >
+    Вимір є, і він негативний: багатовіконний прогін на 4 ковзних фолдах показує
+    0/4 прибуткових фолдів, середній OOS нижчий за baseline buy&hold за той самий
+    період, а рядок-вердикт звіту — `does not beat buy&hold`
+    (`reports/ai-2026-comparison.md`, сирі логи `reports/wf-formulaic-folds4.txt` і
+    `reports/wf-all.log`). Там же окремо відзначено, що якість самої моделі теж не
+    дає підстав на перевагу. Числа навмисно не дублюються тут: першоджерело —
+    `reports/`, щоб спека не розійшлася з ним.
+    Статус лишається candidate, а не rejected: одна модель, один каталог
+    (ETH/USDT 1h), один горизонт, одна процедура навчання — гіпотезу «формульні
+    ознаки не несуть сигналу» цей прогін не закриває назавжди, він лише не дає
+    права вважати її доведеною.
+
+notes: >
+  ОПЕРАЦІЙНА ПЕРЕДУМОВА, без якої прогін не є прогоном цього робота. По-перше,
+  потрібен навчений бустер: `FORMULAIC_MODEL_PATH` вказує на файл, який зберігає
+  `LightGBMDirectionClassifier` через `lgb.Booster(model_file=...)`, а сам
+  LightGBM є опційним extra `ml` — без нього клас падає з
+  `lightgbm extra not installed; use HeuristicDirectionClassifier`
+  (docs/11-troubleshooting-faq.md). По-друге, і це головне: БЕЗ
+  `FORMULAIC_MODEL_PATH` робот НЕ падає fail closed. `_build_classifier()`
+  (`infrastructure/nautilus/signal_strategy.py`) тихо підставляє
+  `HeuristicDirectionClassifier`, тож `lab research --robot formulaic_lgbm`
+  відпрацює й видасть правдоподібний звіт — але це буде звіт про інший
+  класифікатор. Ця пастка задокументована в docs/16-llm-vidpovidnist.md.
+  Наскільки цей фолбек узагалі дієздатний — окреме питання: rule-based
+  класифікатор читає `features[0]` як `obi` і порівнює його з ±0.2, а перша ознака
+  `FEATURE_NAMES` — це `ret`, дохідність одного бару. Поріг 0.2 для OBI
+  досяжний, для однобарової дохідності — практично ні, тому без моделі робот
+  здебільшого не входитиме взагалі. Отже «працює без моделі» тут означає «тихо
+  не працює»; навчений артефакт треба вважати обов'язковим.
+  Друге, що варто знати: `formulaic_lgbm` НЕ працює на довільній формулі. Ознак
+  рівно 12, їхній порядок зафіксований `FEATURE_NAMES` і захищений тестом
+  (`tests/unit/test_hypothesis.py::test_feature_names_match_engine_order`), а
+  рецептний DSL (`domain/factor_dsl.py`) використовується лише в офлайн-контурі
+  (`application/propose_alphas.py`, `application/evaluate_recipe.py`) і в шлях
+  робота не входить.
+  Третє: межа float. Ознаки рахуються в `Decimal`, але `LightGBMDirectionClassifier`
+  на вході моделі переводить їх у `float` (numpy) і повертає ймовірності назад
+  через `Decimal(str(...))`. Гроші й ціни лишаються `Decimal`, а сам бустер
+  працює в float — це властивість LightGBM, а не порушення інваріанта грошових
+  обчислень, але межу варто бачити.
+  Гіперпараметри бустера (кількість дерев, глибина, learning rate) у спеці не
+  наводяться: вони живуть в офлайн-скрипті навчання й не є полями `Settings`,
+  тому тут їх не можна ні перевірити машинно, ні задати через `.env`.
+  Вимір тут живе не в docs/: у docs/05-roboty.md досі немає розділу про
+  `formulaic_lgbm` (і таблиця стану в docs/05 §0 перелічує лише три підключені
+  роботи, хоча в коді їх п'ять — задокументована розбіжність, див.
+  `.agents/skills/nautilus-lab/SKILL.md`). Єдине виміряне джерело — `reports/`.
+
+references:
+  - docs/08-mft-2026-vidpovidnist.md
+  - docs/13-ai-2026-vidpovidnist.md
+  - docs/14-llm-model-u-torhivli.md
+  - docs/16-llm-vidpovidnist.md
+  - reports/ai-2026-comparison.md

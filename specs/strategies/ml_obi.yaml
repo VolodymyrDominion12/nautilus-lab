@@ -1,0 +1,128 @@
+# =============================================================================
+#  ml_obi — напрямок за мікроструктурою книги ордерів (OBI / WOFI / fade)
+# =============================================================================
+#  Статус blocked: доменний код існує й покритий unit-тестом, але адаптера
+#  виконання немає (BACKTEST_WIRED_ROBOTS у domain/regime.py). Головна причина
+#  глибша за адаптер: у лабораторії немає даних книги ордерів, а без них ознаки
+#  OBI/WOFI/fade не існують узагалі.
+#      .venv/bin/lab research --robot ml_obi --synthetic --bars 200 → код 1
+# =============================================================================
+kind: strategy
+name: ml_obi
+version: "1.0"
+status: blocked
+title: "ML за дисбалансом книги: OBI + WOFI + fade → сигнал напрямку"
+
+hypothesis: >
+  Дисбаланс книги ордерів несе інформацію про найближчий рух ціни: якщо на
+  бідах більше обсягу, ніж на асках (OBI), якщо цей перекіс швидко зростає
+  (WOFI — різниця OBI між двома послідовними знімками) і якщо ліквідність
+  зникає з протилежного боку (liquidity fade), то найближчий рух іде в бік
+  переваги. Модуль кодує це як класифікацію «up / down / flat» із порогом
+  упевненості 0.55: сигнал з'являється лише коли максимальна ймовірність
+  досягає порогу. Гіпотеза перевірна тільки на потоці знімків книги — на барах
+  ці три ознаки не існують.
+
+blocked_reason: >
+  (1) Немає даних книги — і це головна перешкода, а не адаптер. Протокол
+  `OrderBookSnapshotFeed` оголошений у `domain/ports.py`, але не має жодної
+  реалізації: `grep -rn "fetch_snapshot" src/` поза `ports.py` → порожньо. У
+  `infrastructure/` немає ні REST/WS-фіду книги, ні запису знімків у каталог:
+  `lab ingest` тягне лише klines (`BinancePublicKlines`), і в каталозі лежать
+  тільки bar-серії (`catalog/data/bar/ETHUSDT.SIM-1-HOUR-LAST-EXTERNAL`,
+  `BTCUSDT.SIM-...`). Тобто `OrderBookSnapshot` можна створити лише вручну — так
+  роблять unit-тести й приклад docs/09 §3. docs/08 §2.1 фіксує це як 🔴 «Немає
+  фіду книги ордерів».
+  (2) Немає адаптера, і наявний протокол йому не підходить.
+  `infrastructure/nautilus/signal_strategy.py` підписується на бари
+  (`subscribe_bars`) і вимагає від робота `on_bar(bar) -> Signal | None`
+  (`SingleLegRobot`), а `MlObiStrategy` має `on_book(snapshot)`. Немає ні
+  підписки на `subscribe_order_book_deltas`, ні конвертера
+  `OrderBookDelta → OrderBookSnapshot` (з `BookLevel` на `Decimal`), ні гілки в
+  `_build_robot()`. `MlObiStrategy.on_book()` не викликає жоден модуль у `src/` —
+  лише `tests/unit/test_mft_modules.py::test_ml_obi_strategy`.
+  (3) Немає моделі. Клас вимагає ін'єкції `DirectionClassifier` (протокол із
+  `domain/ml_classifier.py`). Без extra `ml` доступний лише
+  `HeuristicDirectionClassifier` — це правила, а не навчання;
+  `LightGBMDirectionClassifier` приймає готовий `model_path`, але натренованого
+  бустера в репозиторії немає, і немає збору датасету з книги
+  (`application/train_classifier.py` дає лише `purged_k_fold` і `label_direction`
+  — заготовку, не конвеєр).
+  (4) Модель виконання не підходить для мікроструктури. Рушій запускається з
+  `bar_execution=True` і роботи надсилають ринкові ордери
+  (`backtest_runner.py::_execute()`); docs/08 §7.2 прямо каже, що мікроструктурні
+  стратегії в цьому проєкті перевіряти не можна — симуляція виконання надто груба.
+  Навіть якби книга з'явилася, результат такого прогону міряв би артефакти
+  симулятора, а не перевагу.
+
+edge_conditions:
+  - name: obi_carries_direction_information
+    description: >
+      Три ознаки з коду — `order_book_imbalance(depth=10)`,
+      `weighted_order_flow_imbalance(depth=5)`, `liquidity_fade_velocity(depth=5)` —
+      мусять нести інформацію про напрямок, достатню, щоб максимальна
+      ймовірність класифікатора перевищувала поріг 0.55 (інакше `_pick_side()`
+      повертає `None` і сигналу немає). Перевіряється тільки на історії знімків
+      книги, якої лабораторія не має.
+  - name: snapshot_cadence_matches_the_horizon
+    description: >
+      Ознаки визначені як різниці між двома послідовними знімками, а перший
+      знімок завжди дає `None` (warmup у `on_book()`). Тож горизонт переваги
+      мусить бути довшим за інтервал оновлення книги: якщо знімки приходять
+      рідше, ніж триває сам рух, ідея не встигає бути реалізованою.
+
+implementation:
+  domain_module: src/nautilus_lab/domain/ml_obi_strategy.py
+  strategy_class: MlObiStrategy
+  backtest_adapter: none
+  wired_in_backtest: false
+  grid_source: default_branch
+
+invariants:
+  no_lookahead: true
+  closed_bars_only: true
+  decimal_not_float: true
+  # Без адаптера робот мусить падати на require_backtest_support(), а не
+  # тихо запускати regime.
+  fail_closed_without_adapter: true
+
+evidence:
+  measured: false
+  beats_buy_hold: null
+  notes: >
+    Виміру немає: робота немає серед BACKTEST_WIRED_ROBOTS, а даних книги, на
+    яких його треба міряти, у лабораторії немає (каталог містить лише 1-годинні
+    бари ETHUSDT.SIM і BTCUSDT.SIM). Єдине «вимірювання» цього модуля — приклад
+    у docs/09 §4 з двома вигаданими знімками книги; це демонстрація API, а не
+    результат, і в evidence він не переноситься.
+
+notes: >
+  Доменний модуль — клас: `MlObiStrategy` з методом
+  `on_book(snapshot: OrderBookSnapshot) -> Signal | None` і конструкторним
+  параметром `threshold` (типово `Decimal("0.55")`). Навколо нього — супутні
+  модулі, які варто знати, бо саме вони визначають, чого бракує:
+  `domain/order_book.py` (`BookLevel`, `OrderBookSnapshot` із `validate()` —
+  перехрещена або неправильно впорядкована книга падає явно),
+  `domain/microstructure.py` (три функції ознак на `Decimal`),
+  `domain/ml_classifier.py` (`DirectionProbabilities`, протокол `DirectionClassifier`),
+  `infrastructure/lightgbm_classifier.py` (`HeuristicDirectionClassifier`,
+  `LightGBMDirectionClassifier`).
+  `infrastructure/orderbook_microstructure.py` (float/Polars:
+  `compute_order_book_imbalance`, `compute_micro_price`,
+  `compute_microstructure_dataframe`) — **окремий** швидкий набір функцій; він не
+  підключений до ознак `MlObiStrategy` (docs/08 §10, пункт 10 плану).
+  `params` у спеці немає свідомо: у робота немає жодного поля `Settings` — поріг
+  0.55 це аргумент конструктора, а не env-змінна, і вигадувати йому `env` не можна.
+  `minimum_bars` не вказано з тієї ж причини: гілки в `minimum_bars()` немає
+  (код повернув би типове 50), але робот не споживає бари, тож число тут нічого
+  не означає. `grid_source: default_branch` — гілки в `param_grid.py` немає.
+  Валідатор дасть попередження про `strategy_class` при `backtest_adapter: none`:
+  це очікувано, `MlObiStrategy` справді клас у вказаному модулі.
+
+references:
+  - docs/05-roboty.md
+  - docs/07-yak-stvoryty-strategiyu.md
+  - docs/08-mft-2026-vidpovidnist.md
+  - docs/09-mft-moduli-pryklady.md
+  - docs/12-karta-fayliv.md
+  - docs/13-ai-2026-vidpovidnist.md

@@ -1,0 +1,126 @@
+# =============================================================================
+#  glft — маркет-мейкінг за моделлю GLFT (Avellaneda–Stoikov без горизонту)
+# =============================================================================
+#  Статус blocked: доменний код існує й покритий unit-тестами, але адаптера
+#  виконання немає (BACKTEST_WIRED_ROBOTS у domain/regime.py), а головне —
+#  рушій не моделює виконання лімітних ордерів і чергу, тож економіку
+#  маркет-мейкера тут узагалі неможливо виміряти.
+#      .venv/bin/lab research --robot glft --synthetic --bars 200 → код 1
+# =============================================================================
+kind: strategy
+name: glft
+version: "1.0"
+status: blocked
+title: "GLFT маркет-мейкер: резервна ціна зі зсувом від інвентарю ± напівспред"
+
+hypothesis: >
+  Маркет-мейкер не вгадує напрямок — він торгує спредом: ставить дві лімітні
+  котировки навколо середини й заробляє на тих, хто бере ліквідність. Формули в
+  коді: `half_spread = mid·base_half_spread_bps/10000 + γ·σ²` і
+  `reservation = mid − γ·σ²·inventory`, а котировки — `reservation ± half_spread`.
+  Ключова частина гіпотези — інвентарний зсув: що довша позиція, то нижче
+  зсуваються **обидві** котировки, щоб частіше продавати й рідше купувати, і
+  навпаки. Перевірно це лише там, де частина котировок справді виконується, а
+  решта лишається незаповненою — тобто з моделлю черги лімітного ордера.
+
+blocked_reason: >
+  (1) Немає споживача `QuoteIntent`. Цей тип оголошений у `domain/signals.py` і
+  створюється лише в `domain/glft.py::GlftMarketMaker.quote()`; більше в `src/`
+  він не згадується жодного разу (`grep -rn QuoteIntent src/` → signals.py,
+  glft.py і більше нічого). Обидва адаптери надсилають виключно **ринкові**
+  ордери: `self.order_factory.market(...)` у `signal_strategy.py` і
+  `spread_strategy.py`. Тобто котировки нікуди не потрапляють.
+  (2) Рушій не моделює лімітне виконання й чергу. `backtest_runner.py::_execute()`
+  ставить `bar_execution=True` і `FillModel(prob_fill_on_limit=1.0,
+  prob_slippage=0.25, random_seed=...)`: на барі лімітка або виконується цілком,
+  або не виконується зовсім, без позиції в черзі й без конкуренції з іншими
+  лімітками. Для маркет-мейкера це критично — з `prob_fill_on_limit=1.0` він
+  виглядав би майже безризиковим, і це був би артефакт симулятора, а не
+  перевага. docs/05 §5.3 і docs/08 §4.1 фіксують саме це: потрібна модель черги
+  (як у hftbacktest), якої в проєкті немає.
+  (3) Немає обліку інвентарю. `inventory` — це аргумент виклику `quote()`; жоден
+  модуль не передає туди позицію портфеля, і немає циклу «переоцінити котировки
+  й переставити/скасувати застарілі». docs/08 §4.1: «у бектесті інвентар не
+  передається — `QuoteIntent` ніхто не споживає».
+  (4) Не визначено, яку саме σ передавати. Докстрінг `glft.py` вимагає per-bar
+  price standard deviation **у котирувальній валюті** (не відносну дохідність: із
+  `volatility=0.02` доданок `γ·σ²` зникає на тлі `mid` у тисячах). Під рукою в
+  адаптері — ATR у цінах бару (`domain/atr.py`) і HAR-RV у відносних
+  дохідностях (`domain/volatility.py`). Це рішення про одиниці, і його треба
+  ухвалити до підключення, інакше зсув від інвентарю буде числом ні про що.
+  (5) Комісійна модель суперечить ролі. Маркет-мейкер має заробляти maker-філи
+  (`MAKER_FEE`, `MakerTakerFeeModel`), але при `bar_execution=True` і ринкових
+  ордерах лабораторія платить taker — без лімітного виконання економіка
+  котирувань не перевіряється взагалі.
+  Адаптера при цьому немає за визначенням: `signal_strategy.py::_build_robot()`
+  не має гілки `glft`, а протокол `SingleLegRobot` вимагає `on_bar`, тоді як у
+  робота є лише `quote()`.
+
+edge_conditions:
+  - name: skew_reduces_inventory_risk
+    description: >
+      Зсув мусить справді зменшувати ризик інвентарю, а не лише змінювати ціни
+      котировок: у коді `reservation = mid − γ·σ²·inventory`, тож довга позиція
+      опускає і bid, і ask (це зафіксовано тестом
+      `tests/unit/test_audit_fixes.py::test_glft_long_inventory_skews_both_quotes_down`).
+      Довести це як перевагу можна лише на прогоні, де частина котировок
+      виконується, а частина — ні.
+  - name: quoted_spread_covers_adverse_selection
+    description: >
+      Напівспред `mid·base_half_spread_bps/10000 + γ·σ²` мусить покривати рух
+      ціни проти позиції за час життя котировки плюс комісії. Без моделі
+      виконання (яка частка котировок заповнюється і за якою ціною) цю умову
+      неможливо навіть сформулювати числом, не кажучи вже про вимір.
+
+implementation:
+  domain_module: src/nautilus_lab/domain/glft.py
+  strategy_class: GlftMarketMaker
+  backtest_adapter: none
+  wired_in_backtest: false
+  grid_source: default_branch
+
+invariants:
+  no_lookahead: true
+  closed_bars_only: true
+  decimal_not_float: true
+  # Без адаптера робот мусить падати, а не підмінятись іншою стратегією.
+  fail_closed_without_adapter: true
+
+evidence:
+  measured: false
+  beats_buy_hold: null
+  notes: >
+    Виміру немає й не може бути в поточному рушії: жодного прогону робота через
+    `BacktestEngine` не існує (робот не входить до BACKTEST_WIRED_ROBOTS), а
+    порівняння з buy&hold для маркет-мейкера взагалі некоректне — його дохід не
+    залежить від напрямку ринку. Числа з docs/09 §5 — це друк котировок для
+    одного виклику `quote()` з вигаданим інвентарем, а не результат.
+
+notes: >
+  Доменний модуль — клас: `GlftMarketMaker` з методом
+  `quote(*, mid, inventory, volatility, ts_utc) -> QuoteIntent` і дата-класом
+  `GlftParams` (`gamma` 0.1, `kappa` 1.5, `base_half_spread_bps` 5). `kappa` у
+  формулі не використовується — докстрінг прямо каже, що повний GLFT має ще
+  доданок `(1/γ)·ln(1 + γ/κ)`, а `base_half_spread_bps` тут стоїть замість
+  нього. Це спрощення, а не помилка, і його варто пам'ятати, читаючи назву
+  моделі. `docs/05 §5.3` показує застарілу формулу зсуву (`mid − γ·inventory`);
+  істина — у коді й у docs/15 §1.7.
+  Одиниці: `mid`, `volatility` і повернуті ціни — у котирувальній валюті,
+  `inventory` — у базових одиницях (докстрінг `glft.py`).
+  `params` у спеці немає свідомо: `GlftParams` — це аргументи конструктора, а не
+  поля `Settings`; жодної env-змінної для `gamma`/`kappa`/`base_half_spread_bps`
+  у `infrastructure/settings.py` немає, і вигадувати її не можна.
+  `minimum_bars` не вказано: гілки в `minimum_bars()` для цього робота немає
+  (код повернув би типове 50), але маркет-мейкер не «розігрівається барами», тож
+  це число нічого не означає. `grid_source: default_branch` — гілки в
+  `application/param_grid.py` немає.
+  Валідатор дасть попередження про `strategy_class` при `backtest_adapter: none`:
+  це очікувано, `GlftMarketMaker` справді клас у вказаному модулі.
+
+references:
+  - docs/05-roboty.md
+  - docs/07-yak-stvoryty-strategiyu.md
+  - docs/08-mft-2026-vidpovidnist.md
+  - docs/09-mft-moduli-pryklady.md
+  - docs/12-karta-fayliv.md
+  - docs/15-audit-vypravlennya.md

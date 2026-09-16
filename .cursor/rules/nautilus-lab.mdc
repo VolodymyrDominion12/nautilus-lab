@@ -1,0 +1,35 @@
+---
+description: NautilusTrader research lab (nautilus-lab) conventions
+alwaysApply: true
+---
+
+# nautilus-lab
+
+Дослідницька лабораторія роботів на NautilusTrader. Python ≥3.12, `uv`, CLI `lab`.
+Поглиблені скіли — `.agents/skills/nautilus-lab/` і `.agents/skills/spec-driven-development/`;
+короткі правила — `AGENTS.md`.
+
+- **Spec-Driven Development:** кожен робот із `RobotName` має спеку в `specs/strategies/<robot>.yaml`.
+  Специфікація пишеться/оновлюється **до** зміни коду. Перевірка:
+  `.venv/bin/python specs/_validator.py` і `uv run pytest tests/unit/test_specs.py -q`.
+- Додав робота в `RobotName` — додай спеку; тест покриття падає навмисно.
+- `implementation.grid_source`: `param_grid.py` має гілки лише для `pairs`, `vpin_momentum`,
+  `formulaic_lgbm`, `ema` — решта тихо бере сітку `regime`. Не лишай це невизначеним.
+- `status` у спеці відображає реальність: `validated` = виміряна перевага над buy&hold.
+  «Не доведено» (`candidate`) ≠ «доведено, що не працює» (`rejected`).
+- Інваріант компонента без тесту — твердження, а не гарантія: пиши `verified_by`,
+  або `test_missing_reason`, але не мовчання.
+- Типовий режим — research. `lab live` fail closed by design, адаптера виконання немає.
+- In-sample — лише вибір параметрів. Звіт — тільки out-of-sample; порівнюй із buy&hold.
+- `--full-sample` і `--synthetic` — не OOS-звіт. Синтетика лише для smoke-тестів.
+- Ніколи не підбирай параметри на OOS і не послаблюй ворота fail closed, щоб «заторгувало».
+- Жодних викликів LLM на гарячому шляху — модель лише в офлайн-контурі `lab propose`.
+- Залежності йдуть усередину: `domain/` не імпортує `nautilus_trader`, не читає `.env`, не ходить у мережу.
+- Стратегія повертає лише напрямок (`Signal`); розмір позиції рахує `application/risk.py`.
+- Лише закриті бари (`RollingWindow.prior()`) і `Decimal`, не `float`.
+- Новий робот обов'язково реєструй у `RobotName` **і** `BACKTEST_WIRED_ROBOTS`, інакше його заблокує `require_backtest_support()`.
+- Дані — публічні Binance-klines без ключів. Один каталог = один ingest (інший інтервал → нова тека).
+- Секрети лише в `.env` (git-ignored). Ніколи не комть і не друкуй їх.
+- Після змін коду: `uv run pytest`, `uv run ruff check`, `uv run mypy src tests`.
+- Якщо `uv` падає з `Permission denied` на кеші — працюй через `.venv/bin/...`.
+- Змінні оболонки перекривають `.env` (тут `MAKER_FEE`/`TAKER_FEE` задані ззовні).

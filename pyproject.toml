@@ -73,6 +73,13 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "ANN", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "ANN"]
+# specs/_validator.py — інструмент, який перевіряє УКРАЇНСЬКІ специфікації, тож
+# його повідомлення й коментарі навмисно тією ж мовою, що й specs/*.yaml: людина
+# читає звіт поруч зі спекою. RUF001-003 шукають «неоднозначні» символи Unicode
+# (кириличні а, е, о, с, р, х, у, і схожі на латинські) — на українському тексті
+# вони спрацьовують на кожному рядку. Це стосується ЛИШЕ цього файлу: код у src/
+# і tests/ лишається англійською, як і був.
+"specs/_validator.py" = ["RUF001", "RUF002", "RUF003"]
 "src/nautilus_lab/domain/errors.py" = ["N818"]
 
 [tool.mypy]
@@ -84,6 +91,13 @@ pretty = true
 
 [[tool.mypy.overrides]]
 module = ["nautilus_trader.*"]
+ignore_missing_imports = true
+
+# PyYAML постачається без type stubs, а тягнути types-PyYAML як залежність
+# заради одного імпорту в тестах специфікацій не варто — тим самим способом,
+# яким тут уже вирішено для nautilus_trader.
+[[tool.mypy.overrides]]
+module = ["yaml"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

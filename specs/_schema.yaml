@@ -1,0 +1,157 @@
+# =============================================================================
+#  _schema.yaml — мета-схема специфікацій nautilus-lab
+# =============================================================================
+#  Це МАШИННИЙ опис того, які поля обов'язкові, які значення допустимі й — що
+#  головне — ЩО ПЕРЕВІРЯЄТЬСЯ ПРОТИ КОДУ. Читає його specs/_validator.py і
+#  tests/unit/test_specs.py.
+#
+#  Не редагуй без причини. Якщо додаєш поле — додай і перевірку, інакше це
+#  просто текст, який ніхто не читає, і спека перетворюється на документацію.
+#
+#  Головний принцип: КОЖНЕ поле, яке можна перевірити машинно, мусить бути
+#  перевірене. Поле, яке ніхто не перевіряє, з часом розійдеться з кодом — саме
+#  так у docs/05 з'явилось «підключено 3 роботи», коли в коді їх було 5.
+# =============================================================================
+
+version: 1
+
+# Поля, спільні для обох видів спек.
+common:
+  required:
+    - kind
+    - name
+    - version
+    - status
+    - hypothesis
+    - invariants
+  optional:
+    - title
+    - notes
+    - references
+    - evidence
+
+# -----------------------------------------------------------------------------
+#  Специфікація СТРАТЕГІЇ (робота)
+# -----------------------------------------------------------------------------
+strategy:
+  dir: strategies
+
+  # Статус описує, НАСКІЛЬКИ spec підтверджена вимірами, а не «як добре написана».
+  statuses:
+    candidate:
+      description: >-
+        Код є, перевага НЕ доведена. Вимір може бути відсутнім, а може бути й
+        без переваги (evidence.measured: true, beats_buy_hold: false) — це
+        означає «не доведено», а не «закрито». Закрита гіпотеза — це rejected.
+      required: [edge_conditions, implementation, params]
+      min_edge_conditions: 2
+    validated:
+      description: >-
+        Є вимір, який показує перевагу: OOS обганяє buy&hold за той самий період.
+        Вимагає заповненого evidence з числами.
+      required: [edge_conditions, implementation, params]
+      min_edge_conditions: 3
+      requires_evidence: true
+    rejected:
+      description: >-
+        Виміряно, переваги немає. Це ЦІННИЙ результат, а не провал: він
+        закриває гіпотезу й не дає переписувати її заново.
+      required: [rejection_reason]
+      min_edge_conditions: 0
+    blocked:
+      description: >-
+        Є доменна реалізація, але НЕМАЄ адаптера виконання в бектесті. Такий
+        робот зобов'язаний падати fail closed, а не тихо підмінятись іншим.
+      required: [blocked_reason, implementation]
+      min_edge_conditions: 0
+
+  required:
+    - implementation
+    - invariants
+
+  params:
+    item_required: [env, description]
+    item_optional: [default, grid, tuned, note]
+    item_rule: >-
+      Параметр або входить у сітку підбору (непорожній grid), або явно позначений
+      tuned: false з причиною. Мовчазний порожній grid — помилка: незрозуміло,
+      параметр забули чи його свідомо не підбирають.
+    note: >-
+      env мусить відповідати полю Settings (ім'я у верхньому регістрі) — це
+      звіряється з кодом, бо саме через розбіжність «параметр є в спеці, але не
+      читається кодом» з'являються налаштування, які ні на що не впливають.
+
+  # Ці поля звіряються з кодом. Формат: шлях у коді, звідки береться істина.
+  cross_checks:
+    name: RobotName enum (domain/regime.py)
+    implementation.wired_in_backtest: BACKTEST_WIRED_ROBOTS (domain/regime.py)
+    implementation.minimum_bars: minimum_bars() (application/run_research_backtest.py)
+    implementation.domain_module: файл існує
+    implementation.strategy_class: клас існує в цьому модулі
+    params[].env: поле Settings (infrastructure/settings.py)
+    params[].grid: непорожній, якщо в робота є гілка в param_grid.py
+
+  implementation:
+    required: [domain_module, strategy_class, backtest_adapter, wired_in_backtest, grid_source]
+    backtest_adapter:
+      allowed: [signal_strategy, spread_strategy, none]
+      note: >-
+        signal_strategy — одноногі роботи (infrastructure/nautilus/signal_strategy.py);
+        spread_strategy — pairs/спред (infrastructure/nautilus/spread_strategy.py);
+        none — адаптера немає, робот мусить бути blocked.
+    grid_source:
+      allowed: [explicit, default_branch]
+      note: >-
+        'explicit' — у application/param_grid.py Є гілка для цього робота.
+        'default_branch' — гілки немає, тож тихо застосується сітка regime.
+        Це найпідступніша пастка проєкту: новий робот без гілки підбирає
+        параметри чужої стратегії й виглядає так, ніби працює.
+
+  invariants:
+    # Ці інваріанти обов'язкові для КОЖНОЇ стратегії: вони не «побажання», а
+    # умова, за якої результат взагалі щось означає.
+    required_true: [no_lookahead, closed_bars_only]
+    known:
+      no_lookahead: Сигнал на барі t не використовує нічого з t+1 і далі.
+      closed_bars_only: Рішення ухвалюється лише на закритому барі.
+      decimal_not_float: Гроші й ціни — Decimal, не float.
+      fail_closed_without_adapter: Робот без адаптера падає, а не підміняється.
+
+# -----------------------------------------------------------------------------
+#  Специфікація КОМПОНЕНТА (наскрізний механізм, не робот)
+# -----------------------------------------------------------------------------
+component:
+  dir: components
+  statuses:
+    active:
+      description: Механізм працює й за ним стоїть тест.
+      required: [invariants_enforced]
+      requires_verified_by: true
+    partial:
+      description: Частина механізму є, частини немає — перелічено в notes.
+      required: [invariants_enforced]
+      requires_verified_by: true
+    planned:
+      description: Специфікація написана, реалізації ще немає.
+      required: []
+      requires_verified_by: false
+
+  required:
+    - invariants_enforced
+
+  # Сенс цього виду спек: КОЖЕН інваріант мусить мати пару
+  # (enforced_by — модуль, verified_by — тест). Інваріант без тесту — це
+  # твердження, а не гарантія.
+  #
+  # Але якщо тесту справді немає — це треба ЗАПИСАТИ, а не сховати. Тоді
+  # замість verified_by пишеться test_missing_reason: валідатор дасть
+  # попередження (не помилку), і прогалина стане видимою у звіті.
+  invariants_enforced:
+    item_required: [statement, enforced_by]
+    item_optional: [verified_by, test_missing_reason, note]
+    item_rule: >-
+      Потрібне АБО verified_by, АБО test_missing_reason. Мовчазна відсутність
+      обох — помилка: саме так інваріант тихо перестає бути інваріантом.
+    cross_checks:
+      enforced_by: шлях до файлу існує
+      verified_by: вузол тесту існує в tests/ (файл + ім'я функції)

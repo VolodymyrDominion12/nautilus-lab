@@ -1,0 +1,130 @@
+# =============================================================================
+#  funding — дельта-нейтральний cash-and-carry на ставці фінансування
+# =============================================================================
+#  Статус blocked: доменний код існує й покритий unit-тестами, але адаптера
+#  виконання в бектесті немає (див. BACKTEST_WIRED_ROBOTS у domain/regime.py),
+#  тож require_backtest_support() зобов'язаний покласти робота, а не підмінити
+#  його іншим. Перевірено вручну:
+#      .venv/bin/lab research --robot funding --synthetic --bars 200
+#      → код 1, "robot 'funding' has no backtest adapter yet; use one of:
+#        ema, formulaic_lgbm, pairs, regime, vpin_momentum. ..."
+# =============================================================================
+kind: strategy
+name: funding
+version: "1.0"
+status: blocked
+title: "Funding cash-and-carry: спот лонг + перпетуал шорт, вхід за нетто-APY"
+
+hypothesis: >
+  Ставка фінансування перпетуала — це періодичний платіж між лонгами й шортами.
+  Якщо тримати дельта-нейтральну конструкцію «спот лонг + перпетуал шорт», то
+  ціновий рух двох ніг гасить сам себе, а дохід приходить із самого фандингу.
+  Формула в коді каже, за якої умови це взагалі варте входу:
+  `net = funding_rate − 2·taker_fee/holding_periods`, далі
+  `annualized = net · 3 · 365` (три 8-годинні виплати на добу), і вхід лише якщо
+  `annualized ≥ min_net_apy` та `|mark − index| / index ≤ basis_max`. Тобто
+  гіпотеза стверджує: існують періоди, коли ставка фандингу з запасом покриває
+  round-trip комісію, рознесену на очікуваний строк утримання, а базис
+  лишається вузьким. Перевірно це лише на історії ставок фандингу — не на барах.
+
+blocked_reason: >
+  Бракує всіх трьох складових одночасно: адаптера, даних і нарахування фандингу.
+  (1) Адаптер. Домен повертає `SpreadSignal` із двох ніг за подією фандингу
+  (`FundingCashAndCarry.on_funding(snapshot)`), а не за баром. У
+  `infrastructure/nautilus/signal_strategy.py::_build_robot()` є гілки лише для
+  `ema`, `vpin_momentum`, `formulaic_lgbm` і типового `regime`;
+  `infrastructure/nautilus/spread_strategy.py::SpreadRobot.__init__()` жорстко
+  створює `PairsTrading` і викликає `self._robot.on_bars(bar_a, bar_b)`, тобто
+  це баровий робот, а не споживач `FundingSnapshot`. Потрібна нова гілка
+  адаптера й драйвер подій фандингу (подієвий, а не баровий).
+  (2) Дані. `infrastructure/binance_funding.py::BinancePublicFunding.fetch_history()`
+  існує, але його не викликає жоден модуль у `src/` — єдине посилання на цей
+  контракт поза самим файлом це протокол `FundingRateFeed` у `domain/ports.py`;
+  окремого тесту на фід теж немає (`grep -rn BinancePublicFunding tests/` →
+  порожньо). `lab ingest` вантажить лише klines (`BinancePublicKlines`), тож у
+  каталозі немає жодної серії ставок фандингу, і вхід за нетто-APY нема на чому
+  порахувати. Додатково: у клієнті поля снапшота читаються з ланцюгом фолбеків
+  `markPrice → fundingRate → "0"` та `indexPrice → markPrice → "1"`, тож базис
+  (`(mark − index)/index`) може рахуватися не проти справжнього індексу — це
+  треба перевірити на реальній відповіді API, а не припускати.
+  (3) Нарахування в рушії. `infrastructure/nautilus/backtest_runner.py::_execute()`
+  додає в `BacktestEngine` самі лише бари й виконує їх із `bar_execution=True`;
+  жодного механізму, який нараховує фандинг на утримувану перпетуал-позицію, у
+  проєкті немає. Без нього прогін міряв би цінову дельту двох ніг (тобто шум і
+  комісії), а не дохідність, про яку гіпотеза — це був би неправдивий звіт.
+  (4) Дрібніше, але конкретно: легі спредового прогону беруться з
+  `BacktestRequest.pairs.leg_a/leg_b`, а `PairsParams` типово тримає
+  `ETH/USDT.SIM` + `BTC/USDT.SIM`, тож для спот+перп потрібен окремий шлях
+  конфігурації (сам інструмент `ETHUSDT-PERP.SIM` у
+  `infrastructure/nautilus/instrument.py` уже описаний як `CryptoPerpetual`).
+  І `FundingParams.taker_fee` типово `0.0005` та не читається з `Settings.TAKER_FEE`
+  — щоб параметр доїхав до домену, потрібен ланцюг із п'яти місць
+  (settings.py → .env.example → dtos.py → composition.py → backtest_runner.py).
+
+edge_conditions:
+  - name: net_funding_beats_the_amortised_cost
+    description: >
+      Ідея має сенс лише якщо реальна ставка фандингу регулярно, а не в окремі
+      дні, перевищує поріг входу
+      `(funding_rate − 2·taker_fee/holding_periods) · 3 · 365 ≥ min_net_apy`
+      (типово 0.10). Досяжність порогу прямо залежить від `holding_periods`
+      (типово 30) — це видно з коду `FundingCashAndCarry._round_trip_fee_per_interval()`.
+      Перевіряється тільки на історії ставок, якої в каталозі немає.
+  - name: basis_stays_inside_the_gate_while_held
+    description: >
+      Робот тримає позицію, лише поки `|mark − index| / index ≤ basis_max`
+      (типово 0.005); при розходженні він виходить із позначкою "basis divergence",
+      а при від'ємному фандингу — "negative funding". Тобто перевага існує лише
+      якщо базис вузький протягом усього утримання, а не лише в момент входу.
+
+implementation:
+  domain_module: src/nautilus_lab/domain/funding.py
+  strategy_class: FundingCashAndCarry
+  backtest_adapter: none
+  wired_in_backtest: false
+  grid_source: default_branch
+
+invariants:
+  no_lookahead: true
+  closed_bars_only: true
+  decimal_not_float: true
+  # Сенс статусу blocked: без адаптера робот мусить падати, а не підмінятись.
+  fail_closed_without_adapter: true
+
+evidence:
+  measured: false
+  beats_buy_hold: null
+  notes: >
+    Виміру немає й бути не може: жодного прогону робота через рушій не існує
+    (робот не входить до BACKTEST_WIRED_ROBOTS), а дохідність cash-and-carry
+    взагалі не виражається ціновим бектестом без нарахування фандингу. Числа
+    з docs/09 §6 (таблиця «пастка в параметрах») свідомо не переносяться сюди:
+    вони описують стару формулу комісії, яку виправлено в `FundingParams.holding_periods`
+    (docs/15 §2.1), тому як доказ не годяться.
+
+notes: >
+  Доменний модуль — це клас, а не набір функцій: `FundingCashAndCarry` з методом
+  `on_funding(snapshot: FundingSnapshot) -> SpreadSignal | None`, плюс дата-класи
+  `FundingSnapshot` і `FundingParams`. Споживача в продакшн-коді немає: `on_funding()`
+  викликають лише unit-тести (`tests/unit/test_mft_modules.py`,
+  `tests/unit/test_audit_fixes.py`).
+  Публічні гейти робота (усе з коду): вхід — `annualized ≥ min_net_apy` і
+  `|basis| ≤ basis_max`, вихід — від'ємний фандинг (`close_on_negative`), розходження
+  базису або `index_price <= 0` (сигнал "missing index price", а не ділення на нуль).
+  `minimum_bars` у спеці не вказано свідомо: гілки в `minimum_bars()` для цього
+  робота немає, тож код поверне типове 50 — але робот не споживає бари взагалі,
+  і це число нічого не означає (вигадувати його в спеку не варто).
+  `grid_source: default_branch` тут не «майже explicit»: у `application/param_grid.py`
+  гілки для `funding` немає, і якби робота підключили без неї, він підбирав би
+  сітку `regime` (`donchian_period` × `bb_k`), тобто чужі параметри.
+  Валідатор дасть попередження про `strategy_class` при `backtest_adapter: none` —
+  це очікувано: для `none` клас не звіряється машинно, тож факт перевірено
+  очима — `FundingCashAndCarry` справді клас у `domain/funding.py`, а не набір
+  функцій (функцій-формул, як у `tri_scan`, тут немає).
+
+references:
+  - docs/05-roboty.md
+  - docs/08-mft-2026-vidpovidnist.md
+  - docs/09-mft-moduli-pryklady.md
+  - docs/12-karta-fayliv.md
+  - docs/15-audit-vypravlennya.md

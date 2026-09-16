@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType } from 'lightweight-charts';
+import { useEffect, useRef, useState } from 'react';
+import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
 import { Activity, Play, StopCircle, RefreshCw, BarChart2, ShieldAlert } from 'lucide-react';
 
 const ChartComponent = () => {
@@ -24,7 +24,7 @@ const ChartComponent = () => {
         height: 300,
       });
 
-      const candlestickSeries = chart.addCandlestickSeries({
+      const candlestickSeries = chart.addSeries(CandlestickSeries, {
         upColor: '#10B981',
         downColor: '#EF4444',
         borderVisible: false,

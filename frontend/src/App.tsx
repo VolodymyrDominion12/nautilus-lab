@@ -185,9 +185,86 @@ const ResearchTab = ({ strategies, onRun, running, output }: any) => {
   );
 };
 
+const SettingsTab = () => {
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    fetch('http://localhost:8000/api/settings')
+      .then(res => res.json())
+      .then(data => setSettings(data.settings || {}))
+      .catch(err => console.error(err));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setMessage('');
+    try {
+      const res = await fetch('http://localhost:8000/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings })
+      });
+      if (res.ok) {
+        setMessage('Settings saved successfully.');
+      } else {
+        setMessage('Error saving settings.');
+      }
+    } catch (err) {
+      setMessage('Network error.');
+    }
+    setSaving(false);
+  };
+
+  const handleChange = (key: string, value: string) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="bg-gray-900 rounded-xl border border-gray-800 p-6 flex flex-col gap-4">
+        <div className="flex justify-between items-center">
+            <div>
+                <h2 className="text-xl font-bold text-gray-100">Environment Settings (.env)</h2>
+                <p className="text-gray-400 text-sm">Configure robots, risk limits, API keys, and more.</p>
+            </div>
+            <button 
+                onClick={handleSave} 
+                disabled={saving}
+                className="px-6 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white rounded-lg font-medium transition-colors"
+            >
+                {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+        </div>
+        
+        {message && (
+            <div className={`p-3 rounded border text-sm ${message.includes('success') ? 'bg-green-900/20 text-green-400 border-green-900/50' : 'bg-red-900/20 text-red-400 border-red-900/50'}`}>
+                {message}
+            </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+            {Object.entries(settings).map(([key, value]) => (
+                <div key={key} className="flex flex-col gap-1.5">
+                    <label className="text-xs font-mono text-gray-400">{key}</label>
+                    <input 
+                        type="text" 
+                        value={value} 
+                        onChange={(e) => handleChange(key, e.target.value)}
+                        className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 font-mono"
+                    />
+                </div>
+            ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function App() {
   const [status, setStatus] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'research'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'research' | 'settings'>('dashboard');
   
   // Research State
   const [isRunning, setIsRunning] = useState(false);
@@ -202,24 +279,37 @@ function App() {
     });
   }, []);
 
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (isRunning) {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch('http://localhost:8000/api/research/log');
+          const data = await res.json();
+          if (data.log) {
+            setResearchOutput(data.log);
+            if (data.log.includes('Process finished with code') || data.log.includes('Exception occurred:')) {
+              setIsRunning(false);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to fetch log", err);
+        }
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isRunning]);
+
   const handleRunResearch = async (robot: string, bars: number) => {
     setIsRunning(true);
     setResearchOutput(`Running: lab research --robot ${robot} --synthetic --bars ${bars}\n\n`);
     
     try {
-      const response = await fetch(`http://localhost:8000/api/research?robot=${robot}&bars=${bars}`, {
+      await fetch(`http://localhost:8000/api/research?robot=${robot}&bars=${bars}`, {
         method: 'POST'
       });
-      const data = await response.json();
-      
-      if (data.status === 'success') {
-        setResearchOutput(prev => prev + data.stdout);
-      } else {
-        setResearchOutput(prev => prev + `ERROR:\n${data.message || data.stderr}`);
-      }
     } catch (err: any) {
-      setResearchOutput(prev => prev + `Network Error: ${err.message}`);
-    } finally {
+      setResearchOutput(prev => prev + `\nNetwork Error: ${err.message}`);
       setIsRunning(false);
     }
   };
@@ -246,7 +336,10 @@ function App() {
           >
             <RefreshCw className="w-5 h-5" /> Backtests
           </button>
-          <button className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-200 font-medium">
+          <button 
+            onClick={() => setActiveTab('settings')}
+            className={`flex items-center gap-3 px-3 py-2 rounded-md transition-colors font-medium ${activeTab === 'settings' ? 'bg-blue-900/20 text-blue-400' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+          >
             <ShieldAlert className="w-5 h-5" /> Settings
           </button>
         </nav>
@@ -343,13 +436,15 @@ function App() {
                 </div>
             </div>
           </>
-        ) : (
+        ) : activeTab === 'research' ? (
           <ResearchTab 
             strategies={status?.strategies_available || []} 
             onRun={handleRunResearch}
             running={isRunning}
             output={researchOutput}
           />
+        ) : (
+          <SettingsTab />
         )}
       </main>
     </div>

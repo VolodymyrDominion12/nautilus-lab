@@ -46,22 +46,71 @@ def get_reports():
     reports = [{"filename": os.path.basename(f), "path": f, "url": f"/static_reports/{os.path.basename(f)}"} for f in files]
     return {"reports": reports}
 
+from fastapi import BackgroundTasks
+
+def run_research_task(robot: str, bars: int, log_path: str):
+    with open(log_path, "w") as f:
+        f.write(f"Starting research for {robot} ({bars} bars)...\n")
+        f.flush()
+        try:
+            process = subprocess.Popen(
+                [".venv/bin/python", "-m", "nautilus_lab.interfaces.cli", "research", "--robot", robot, "--synthetic", "--bars", str(bars)],
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            process.wait()
+            f.write(f"\nProcess finished with code {process.returncode}\n")
+        except Exception as e:
+            f.write(f"\nException occurred: {str(e)}\n")
+
 @app.post("/api/research")
-def run_research(robot: str = "regime", bars: int = 3000):
-    # This is a synchronous call for now; in production it should be async or a background task
-    # We use synthetic data by default for safety
-    try:
-        result = subprocess.run(
-            [".venv/bin/python", "-m", "nautilus_lab.interfaces.cli", "research", "--robot", robot, "--synthetic", "--bars", str(bars)],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        return {
-            "status": "success" if result.returncode == 0 else "error",
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+def run_research(background_tasks: BackgroundTasks, robot: str = "regime", bars: int = 3000):
+    reports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    log_path = os.path.join(reports_dir, "last_run.log")
+    
+    # Clear old log immediately
+    open(log_path, 'w').close()
+    
+    background_tasks.add_task(run_research_task, robot, bars, log_path)
+    return {"status": "started", "message": "Research started in the background."}
+
+@app.get("/api/research/log")
+def get_research_log():
+    reports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "reports")
+    log_path = os.path.join(reports_dir, "last_run.log")
+    if os.path.exists(log_path):
+        with open(log_path, "r") as f:
+            return {"log": f.read()}
+    return {"log": ""}
+
+
+import dotenv
+from pydantic import BaseModel
+from typing import Dict
+
+class SettingsUpdate(BaseModel):
+    settings: Dict[str, str]
+
+@app.get("/api/settings")
+def get_settings():
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), ".env")
+    if not os.path.exists(env_path):
+        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), ".env.example")
+    
+    config = dotenv.dotenv_values(env_path)
+    return {"settings": config}
+
+@app.put("/api/settings")
+def update_settings(update: SettingsUpdate):
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), ".env")
+    # Make sure .env exists, if not create it
+    if not os.path.exists(env_path):
+        open(env_path, 'a').close()
+    
+    for key, value in update.settings.items():
+        dotenv.set_key(env_path, key, str(value))
+        
+    return {"status": "success"}
 

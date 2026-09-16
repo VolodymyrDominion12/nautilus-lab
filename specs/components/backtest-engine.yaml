@@ -1,0 +1,128 @@
+# =============================================================================
+#  backtest-engine — обвʼязка NautilusTrader BacktestEngine
+# =============================================================================
+#  Друга компонентна спека. Тут особливо важливо не переплутати «механізм
+#  працює» з «механізм перевірений»: рушій збирається правильно, але ОБЛІК
+#  комісій у P&L сьогодні не має тесту. Тому цей інваріант стоїть із
+#  test_missing_reason — валідатор друкує попередження, і прогалина видима,
+#  замість того щоб тихо виглядати як гарантія.
+# =============================================================================
+kind: component
+name: backtest-engine
+version: "1.0"
+status: active
+title: "NautilusTrader BacktestEngine: песимістична симуляція й fail-closed роботи"
+
+hypothesis: >
+  Рушій — це місце, де дослідницька ідея перетворюється на числа, тому він має
+  бути песимістичним за замовчуванням: комісії, затримка й прослизання присутні
+  завжди, а робот без адаптера падає, а не підміняється схожим. Тоді цифра з
+  прогону — це межа зверху на реальність, а не комплімент ідеї.
+
+# Спільний блок `invariants` обов'язковий для КОЖНОЇ спеки (specs/_schema.yaml,
+# common.required). Тут він повторює дисципліну компонента тим самим словником,
+# що й у спек роботів. Машинно перевірені пари «модуль + тест» — нижче,
+# в invariants_enforced; там же видно, що саме з цього списку сьогодні без тесту.
+invariants:
+  fail_closed_without_adapter: true
+  fees_and_slippage_always_applied: true
+  decimal_not_float: true
+  instrument_matches_catalog_product: true
+  synthetic_never_reads_catalog: true
+
+invariants_enforced:
+  - statement: >
+      Робот, для якого немає адаптера виконання, зупиняє прогін помилкою: він не
+      підміняється іншою стратегією й не дає «схожий» результат.
+    enforced_by: src/nautilus_lab/domain/regime.py
+    verified_by: tests/unit/test_cli.py::test_cli_robot_without_adapter_fails_closed
+    note: >
+      Найдорожчий інваріант компонента: тиха підміна дала б числа, які виглядають
+      як результат нового робота, а насправді належать чужій стратегії. Тест
+      проганяє кожного робота без адаптера (`funding`, `ml_obi`, `glft`,
+      `tri_scan`) і вимагає код виходу 1. Білий список — `BACKTEST_WIRED_ROBOTS`
+      (5 із 9 значень `RobotName`); перевірка стоїть на вході в
+      `RunResearchBacktest`, `RunWalkForward`, `RunOverfitAudit` і в `_build_robot()`.
+
+  - statement: >
+      Кожен прогін створює венʼю з комісіями (`MakerTakerFeeModel` + maker/taker зі
+      `FeeSchedule`), затримкою 50 мс і 25% однотікового прослизання — без них
+      результат не порівнюваний із реальністю.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/backtest_runner.py
+    test_missing_reason: >
+      Тест мав би після прогону з відомими fills стверджувати, що `fees_paid > 0` і
+      що кінцевий баланс менший на тейкерську комісію за кожен round-trip (роботи
+      надсилають ринкові ордери, тож платять taker). Сьогодні перевіряється лише
+      рядок `"fees"` у `report.notes`
+      (tests/integration/test_research_backtest.py::test_research_backtest_runs_locally_without_network),
+      а значення самих розкладів — tests/unit/test_mft_modules.py::test_fee_schedule_binance_defaults;
+      жоден із цих тестів не дивиться на гроші ПІСЛЯ прогону.
+    note: >
+      Пастка в тому, що `notes` збирається поруч із конфігом і залишиться тим самим
+      текстом навіть якщо комісійну модель прибрати. Прогін без комісій — це
+      рівно те, через що бектест обіцяє прибуток, якого немає.
+
+  - statement: >
+      Інструмент прогону й опис інструмента, записаний у каталог, беруть той самий
+      `FeeSchedule` з `Settings`, тому комісія не може розійтися між тим, що лежить
+      у каталозі, і тим, що застосовує рушій.
+    enforced_by: src/nautilus_lab/interfaces/composition.py
+    test_missing_reason: >
+      Тест мав би зібрати `catalog(cfg)` і `research_request(cfg)` з одним і тим
+      самим `Settings` і стверджувати, що `instrument.maker_fee` / `taker_fee`
+      дорівнюють `request.fee_schedule`. Зараз перевірено лише значення двох
+      розкладів (tests/unit/test_mft_modules.py::test_fee_schedule_binance_defaults),
+      а не їхнє узгодження між каталогом і рушієм.
+    note: >
+      Розходження тут дало б тихо оптимістичний бектест: каталог писався б за одним
+      розкладом, а симуляція торгувала б за іншим. Ризик не теоретичний —
+      `MAKER_FEE`/`TAKER_FEE` читаються з оточення, яке перекриває `.env`, тож
+      фактичні комісії прогону не збігаються з тим, що написано в конфізі проєкту.
+
+  - statement: >
+      Доменний бар, записаний у каталог, повертається з каталогу й доходить до
+      рушія без зміни OHLCV-значень і мітки часу.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/bar_convert.py
+    verified_by: tests/integration/test_research_backtest.py::test_parquet_catalog_roundtrip_and_backtest
+    note: >
+      Шлях `Decimal → Price(precision інструмента) → Decimal` — саме тут ціна могла б
+      округлитися до тіку і тихо змінити результат. Тест стверджує рівність `close`
+      і `ts_utc` після round-trip на 400 барах і додатково, що на такому каталозі
+      прогін узагалі відбувається (`report.fills >= 0`, `"catalog"` у `notes`).
+
+  - statement: >
+      Синтетичний прогін не читає каталог: джерело барів вибирається явно, тож
+      підміна реальної історії синтетикою неможлива як побічний ефект.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/bar_feed.py
+    verified_by: tests/integration/test_research_backtest.py::test_research_backtest_runs_locally_without_network
+    note: >
+      Тест передає каталог-заглушку, кожен метод якої падає з `AssertionError`, —
+      будь-яке звернення до каталогу на синтетичному шляху спіймалося б одразу.
+      Це принципово: синтетичний random walk дає артефакти на кшталт +3000%, і
+      його числа не можна подавати як результат.
+
+notes: >
+  Механізм зібраний повністю й перевірений інтеграційно (справжній `BacktestEngine`
+  локально, без мережі), але два інваріанти стоять без тесту — вони записані через
+  `test_missing_reason`, і валідатор друкує їх попередженнями: облік комісій у P&L
+  та узгодження комісійного розкладу між каталогом і рушієм.
+  Розходження з docs/: `docs/05-roboty.md` (рядок 22) наводить
+  `BACKTEST_WIRED_ROBOTS = frozenset({REGIME, EMA, PAIRS})`, а `docs/10` і `docs/11`
+  повторюють, що до рушія підключено три роботи. У коді їх пʼять — `regime`, `ema`,
+  `pairs`, `vpin_momentum`, `formulaic_lgbm`, — і `--robot` приймає всі 9 значень
+  `RobotName` (`choices=tuple(item.value for item in RobotName)` у `cli.py`).
+  `docs/10` до того ж друкує застарілий перелік із 7 назв замість 9. Це не
+  косметика: через таку розбіжність підключений робот виглядає як непідключений —
+  і навпаки, тобто `fills=0` можна помилково списати на «немає адаптера».
+  Окремо: конфігурацію венʼю `docs/03` §3 і `docs/08` §7.2 описують правильно
+  (`FillModel(prob_slippage=0.25)`, `LatencyModel(50 мс)`, `bar_execution=True`),
+  і цитата з `random_seed=42` теж коректна — сід береться із запиту, а типове
+  значення `BacktestRequest.seed` дорівнює 42.
+
+references:
+  - docs/03-arhitektura.md
+  - docs/05-roboty.md
+  - docs/08-mft-2026-vidpovidnist.md
+  - docs/10-cli-dovidnyk.md
+  - docs/11-troubleshooting-faq.md
+  - docs/12-karta-fayliv.md

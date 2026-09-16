@@ -1,0 +1,130 @@
+# =============================================================================
+#  execution-modes — research / paper / live: запобіжник, а не прапорець
+# =============================================================================
+#  Компонент, а не робот. Механізм за задумом повний (live — свідома відмова,
+#  адаптера виконання не існує), але частина заяв не має тестів — тому
+#  status: partial і два test_missing_reason нижче.
+# =============================================================================
+kind: component
+name: execution-modes
+version: "1.0"
+status: partial
+title: "research / paper / live: жодна конфігурація не робить із прогону торгівлю"
+
+hypothesis: >
+  Режим виконання — це запобіжник, а не налаштування: research і paper
+  працюють на публічних даних і ніколи не надсилають ордерів, а live падає
+  fail closed, бо адаптера виконання не існує. Механізм гарантує, що жодна
+  комбінація прапорців і змінних середовища не перетворює дослідницький прогін
+  на торгівлю реальними грошима.
+
+# Спільний блок `invariants` обов'язковий для КОЖНОЇ спеки (specs/_schema.yaml,
+# common.required). Машинно перевірені пари «модуль + тест» — у invariants_enforced.
+invariants:
+  fail_closed_without_adapter: true
+  no_exchange_submission: true
+  decimal_not_float: true
+
+invariants_enforced:
+  - statement: >
+      `lab live` завжди падає fail closed: код виходу 1 і повідомлення «Live
+      trading is disabled. This lab only runs research backtests.», бо CLI
+      передає TradingMode.LIVE у require_simulated_mode, який кидає
+      LiveTradingDisabledError до будь-якої спроби виконання.
+    enforced_by: src/nautilus_lab/interfaces/cli.py
+    verified_by: tests/unit/test_cli.py::test_cli_live_fails_closed
+    note: >
+      Той самий воротар тримає й решту шляхів: tests/unit/test_risk.py::
+      test_require_simulated_mode_blocks_live і
+      ::test_research_use_case_rejects_live (прогін із mode=LIVE не доходить до
+      рушія, навіть якщо його викликати програмно, а не через CLI).
+
+  - statement: >
+      Значення LIVE_ENABLED нічого не змінює: поле Settings.live_enabled не
+      читає жоден модуль шляху виконання — рішення ухвалює TradingMode, тож
+      прапорець фізично не може «увімкнути» торгівлю.
+    enforced_by: src/nautilus_lab/interfaces/cli.py
+    test_missing_reason: >
+      Немає тесту, який запускає main(["live"]) з LIVE_ENABLED=true і перевіряє
+      код виходу 1: такий тест зафіксував би, що прапорець не впливає на
+      рішення, бо зараз це тримається лише на тому, що cli.py не згадує
+      live_enabled (єдине місце в src — оголошення поля в settings.py; у тестах
+      його лише видаляють з оточення).
+
+  - statement: >
+      Паперовий режим лише логує гіпотетичні ордери: RunPaperResearch кличе
+      робота по барах і пише PaperOrderLog, а CLI друкує
+      «paper_orders=N (no exchange submission)» — рушія, виконання й оновлення
+      капіталу в цьому шляху немає.
+    enforced_by: src/nautilus_lab/infrastructure/paper_trading.py
+    verified_by: tests/unit/test_cli.py::test_cli_paper_logs_hypothetical_orders
+    note: >
+      Шлях збирають три файли: infrastructure/paper_trading.py (сам логер),
+      application/run_paper.py (RunPaperResearch — рахує розмір через
+      application/risk.py і кличе логер) і interfaces/cli.py (_run_paper —
+      друкує «paper_orders=N (no exchange submission)»); рушія немає в жодному.
+      Тест пінить, що команда справді проходить і повертає 0 (тобто шлях
+      живий). Самого логера — PaperTradingLogger.log_signal і log_spread — не
+      покриває жоден тест, тож це чесне, але неповне покриття.
+
+  - statement: >
+      Біржові ключі не читаються й не потрібні: дані беруться з публічного REST
+      Binance (api/v3/klines), клієнт шле лише заголовок User-Agent, а поля
+      Settings.exchange_api_key і exchange_api_secret не використовує жоден
+      модуль — тож прогін не може випадково піти на біржу під чиїмось акаунтом.
+    enforced_by: src/nautilus_lab/infrastructure/binance_klines.py
+    test_missing_reason: >
+      Немає тесту, який би це фіксував: тест мусив би запускати ingest/research
+      із порожніми EXCHANGE_API_KEY і EXCHANGE_API_SECRET (або перевіряти, що
+      клієнт формує запит без підпису й без ключів); зараз гарантія спирається
+      лише на те, що ці поля ніде не згадуються поза settings.py.
+
+  - statement: >
+      Паперовий логер не веде стану позиції: PaperTradingLogger лише додає
+      записи у список, тому кілька `buy` підряд — задокументоване спрощення, а
+      не баг, і жодне число з цього шляху не можна читати як реальну
+      експозицію.
+    enforced_by: src/nautilus_lab/infrastructure/paper_trading.py
+    test_missing_reason: >
+      Немає тесту, який це пінить: він мусив би показати, що два сигнали `buy`
+      дають два записи й нуль утримуваної позиції (у RunPaperResearch
+      open_positions завжди 0), тобто що стану позиції не ведеться взагалі, а
+      повторний вхід — очікувана властивість, а не зламаний ризик-шар.
+
+notes: >
+  Чому status partial, а не active. Реалізація повна за задумом (live — свідомий
+  запобіжник, а не «ще не налаштовано»; paper — лог без виконання), але три з
+  п'яти інваріантів стоять із test_missing_reason: про LIVE_ENABLED, про
+  біржові ключі й про відсутність стану позиції. Кожна з цих заяв сьогодні
+  підтверджується лише читанням коду, і саме тому вони записані як видима
+  прогалина, а не приховані.
+
+  Розходження коду з docs/ (перевірено читанням коду). Прямо про режими
+  документація не бреше: docs/01-osnovy.md («Немає реального виконання»),
+  docs/02-vstanovlennya.md (таблиця TRADING_MODE / LIVE_ENABLED, «навіть true не
+  вмикає живу торгівлю») і docs/10-cli-dovidnyk.md (§lab live, §lab paper,
+  зокрема «жодного стану позиції») збігаються з cli.py, settings.py і
+  paper_trading.py. Але дотичне розходження є — у СУСІДНЬОМУ fail-closed
+  воротарі: docs/05-roboty.md і docs/11-troubleshooting-faq.md цитують
+  повідомлення `use one of: ema, pairs, regime` і перелік
+  `BACKTEST_WIRED_ROBOTS` із трьох роботів, тоді як у коді їх п'ять
+  ({regime, ema, pairs, vpin_momentum, formulaic_lgbm}), і текст помилки
+  будується саме з цієї множини. Тобто документація занижує, що саме
+  дозволено запускати, — а це та сама родина гарантій «падай, а не підміняй».
+
+  Що варто знати про сам шлях paper: cli._run_paper дістає бари через приватне
+  поле — research_use_case(cfg)._feed.load(request), — тобто тримає в руках
+  зібраний research-use-case лише заради фіду. Це не контракт use case'а і не
+  покрито тестом; якщо фід колись стане асинхронним або кешованим, paper
+  зламається першим.
+
+  Чого компонент не робить і не обіцяє: не рахує капітал, не веде позицій, не
+  читає .env поза Settings і не має жодного адаптера, який уміє надіслати ордер.
+  `lab live` не можна «полагодити» прапорцем — це задокументований запобіжник,
+  і зміна цієї поведінки мусить бути окремим рішенням зі своєю спекою.
+
+references:
+  - docs/01-osnovy.md
+  - docs/02-vstanovlennya.md
+  - docs/10-cli-dovidnyk.md
+  - docs/12-karta-fayliv.md

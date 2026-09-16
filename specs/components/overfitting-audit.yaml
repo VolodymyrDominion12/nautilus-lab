@@ -1,0 +1,116 @@
+# =============================================================================
+#  overfitting-audit — PBO / CSCV: одне число замість «мені здається, сітка завелика»
+# =============================================================================
+#  Компонент, а не робот. Доменний оцінювач (domain/overfitting.py) повністю
+#  покритий тестами; application- і CLI-шар аудиту — ні, і це прямо записано
+#  нижче і в notes. Саме тому status: partial, а не active.
+# =============================================================================
+kind: component
+name: overfitting-audit
+version: "1.0"
+status: partial
+title: "PBO/CSCV: чи переживає вибір параметрів дані, яких вона не бачила"
+
+hypothesis: >
+  PBO перетворює розмите «сітка завелика» на число: якщо конфігурація, обрана
+  на одній половині історії, систематично провалюється на іншій, то вибір
+  параметрів шкодить — незалежно від того, як гарно виглядав in-sample.
+  Механізм гарантує, що матриця оцінок описує неперетинні блоки, а не повний
+  прогін, і що замало даних дає «undefined», а не впевнену цифру.
+
+# Спільний блок `invariants` обов'язковий для КОЖНОЇ спеки (specs/_schema.yaml,
+# common.required). Машинно перевірені пари «модуль + тест» — у invariants_enforced.
+invariants:
+  pbo_never_certifies_an_edge: true
+  undefined_beats_guessing: true
+  score_matrix_rows_are_disjoint_blocks: true
+
+invariants_enforced:
+  - statement: >
+      Низький PBO означає лише те, що порядок конфігурацій відтворюється на
+      небачених блоках: конфігурація, яка домінує в кожному блоці, дає PBO=0, і
+      це не доказ прибутковості — стратегія, що втрачає на всіх блоках, теж має
+      стабільний рейтинг і залишається збитковою.
+    enforced_by: src/nautilus_lab/domain/overfitting.py
+    verified_by: tests/unit/test_overfitting.py::test_pbo_is_low_when_one_configuration_dominates_every_block
+
+  - statement: >
+      Шкала читається в обидві сторони: коли переможець in-sample систематично
+      опиняється в нижній половині out-of-sample, PBO дорівнює 1 — це вже не
+      «монетка», а доказ, що вибір шкодить.
+    enforced_by: src/nautilus_lab/domain/overfitting.py
+    verified_by: tests/unit/test_overfitting.py::test_pbo_is_total_when_the_best_in_sample_column_is_always_last
+    note: >
+      Поріг «упав у нижню половину» — rank <= 0.5 за CSCV-нормуванням рангу на
+      N+1, тому нічия між усіма колонками дає рівно 0.5 і не перетворюється
+      на вирок.
+
+  - statement: >
+      Коли конфігурацій менше двох (або всі розбиття нічийні), результат
+      повідомляється як undefined, а не вгадується: is_meaningful хибний, і
+      PBO=1 для єдиної конфігурації ніколи не видається за вирок.
+    enforced_by: src/nautilus_lab/domain/overfitting.py
+    verified_by: tests/unit/test_overfitting.py::test_pbo_needs_two_configurations_to_mean_anything
+    note: >
+      Два інші шляхи до undefined пінять
+      test_identical_configurations_carry_no_information (усі розбиття нічийні)
+      і test_single_block_is_not_a_split. Навіщо: «числа немає» — чесна
+      відповідь, а вигадане число з однієї конфігурації закрило б живу гіпотезу
+      або, навпаки, видало б шум за стабільність.
+
+  - statement: >
+      Аудит — це blocks × configurations окремих симуляцій, тож єдиного «того»
+      прогону не існує: --pbo разом із --tearsheet відхиляється, а не малює
+      тиршит того прогону, який випадково завершився останнім.
+    enforced_by: src/nautilus_lab/interfaces/cli.py
+    test_missing_reason: >
+      Немає тесту, який викликає main(["research", "--pbo", "--tearsheet", ...])
+      і перевіряє код виходу 1: такий тест мусив би зафіксувати, що комбінація
+      падає fail closed, бо зараз цю заборону тримає лише рядок у _run_pbo.
+
+  - statement: >
+      Матриця описує послідовні, неперетинні блоки історії: історія ріжеться на
+      рівні частини, залишок від ділення забирає останній блок, а кожен блок
+      симулюється окремим прогоном з нуля — інакше сусідні рядки матриці
+      описували б ті самі бари, і PBO втратив би сенс.
+    enforced_by: src/nautilus_lab/application/run_overfitting_audit.py
+    test_missing_reason: >
+      Розбиття на блоки (_block_ranges) не покрито жодним тестом: тест мусив би
+      перевірити, що блоки не перетинаються, покривають усю історію і що
+      залишок ділення дістається останньому блоку, а не губиться.
+
+notes: >
+  Чому status partial, а не active. Доменний оцінювач PBO
+  (domain/overfitting.py) покритий тестами щільно, і саме він визначає
+  правильність числа. Але application- і CLI-шар аудиту — RunOverfitAudit,
+  _block_ranges, прапорці --pbo / --pbo-blocks, заборона --tearsheet і перевірка
+  розігріву на кожному блоці — не має ЖОДНОГО тесту. Два інваріанти вище тому
+  стоять із test_missing_reason, і валідатор дає на них попередження: це видима
+  прогалина, а не тихо закрита.
+
+  Що механізм гарантує додатково (і що теж не піниться тестом): комірка матриці
+  без балансу (ending_balance=None) оцінюється як найгірший результат, а не
+  викидається — _numeric_matrix тримає матрицю прямокутною, щоб усі
+  конфігурації ранжувалися на однакових доказах; і --pbo-blocks N < 2 падає
+  помилкою, бо симетричне розбиття з одного блоку неможливе.
+
+  Розходження коду з docs/ (перевірено читанням коду): docs/10-cli-dovidnyk.md
+  (§--pbo) і docs/08-mft-2026-vidpovidnist.md рекомендують
+  `lab research --robot regime --pbo --optuna --trials 30`, але _run_pbo() не
+  читає ні --optuna, ні --trials: у режимі PBO ці прапорці тихо ігноруються, і
+  аудит завжди йде сіткою. Це не псує вимір (сітка й Optuna — різні способи
+  перебору), але приклад у документації обіцяє те, чого команда не робить, і
+  проігнорований прапорець не друкує жодного попередження.
+  Окремо: рядок виводу `PBO=... over N splits x M configurations on B blocks
+  (...)` з docs/10 відповідає коду — його формує OverfitAuditReport.summary_line(),
+  а не CscvResult.summary_line(), у якого формат коротший.
+
+  Що PBO не робить: не сертифікує прибутковість і не замінює walk-forward. Він
+  відповідає лише на питання «чи відтворюється порядок конфігурацій», а
+  питання «чи є перевага» закриває порівняння з buy&hold у specs/components/
+  walk-forward.yaml.
+
+references:
+  - docs/04-tsykl-doslidzhennya.md
+  - docs/08-mft-2026-vidpovidnist.md
+  - docs/10-cli-dovidnyk.md

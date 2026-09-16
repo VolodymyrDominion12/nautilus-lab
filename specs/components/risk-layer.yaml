@@ -1,0 +1,160 @@
+# =============================================================================
+#  risk-layer — розмір позиції та запобіжники (circuit breakers)
+# =============================================================================
+#  Третя компонентна спека. Статус partial — і це не «недороблена спека», а
+#  чесна назва стану: аварійний вимикач (`kill_switch.py`) існує лише як
+#  заглушка, яка нічого не скасовує. Головний інваріант шару (стратегія не
+#  вирішує розмір) теж без тесту — тому він стоїть із test_missing_reason.
+# =============================================================================
+kind: component
+name: risk-layer
+version: "1.0"
+status: partial
+title: "Розмір позиції від стопу, ліміти й circuit breakers — поза стратегією"
+
+hypothesis: >
+  Ризик-шар — це єдине місце, де вирішується розмір позиції, і єдине, що стоїть
+  між ідеєю та рахунком: стратегія каже лише напрямок, розмір виводиться зі стопу
+  й частки капіталу під ризиком, а circuit breakers зупиняють нові входи, коли
+  крива ламається. Якщо розсиплеться хоч одне з цього, прибутковим виглядатиме
+  навіть шум.
+
+# Спільний блок `invariants` обов'язковий для КОЖНОЇ спеки (specs/_schema.yaml,
+# common.required). Тут він повторює дисципліну компонента тим самим словником,
+# що й у спек роботів. Машинно перевірені пари «модуль + тест» — нижче,
+# в invariants_enforced; там же видно, що саме з цього списку сьогодні без тесту.
+invariants:
+  strategy_returns_direction_only: true
+  risk_per_trade_is_a_fraction_at_risk: true
+  decimal_not_float: true
+  breakers_block_new_entries_only: true
+  protective_stop_never_loosens: true
+
+invariants_enforced:
+  - statement: >
+      Стратегія не вирішує розмір позиції: домен повертає лише напрямок (і
+      відносну вагу ніг у спреді), а кількість рахує `application/risk.py`.
+    enforced_by: src/nautilus_lab/domain/signals.py
+    test_missing_reason: >
+      Тест мав би стверджувати, що намір стратегії справді не несе розміру —
+      наприклад, що в `Signal`, `SpreadSignal` і `QuoteIntent` немає поля
+      кількості (є лише `side` і відносний `qty_weight`), і що жоден модуль
+      `domain/` не імпортує `size_position`. Сьогодні це тримається лише на тому,
+      що `size_position()` живе в `application/risk.py`, а `qty_weight` — вага
+      відносно іншої ноги, а не сума в USDT.
+    note: >
+      Порушення цього інваріанта — найдорожче в лабораторії: стратегія, яка сама
+      собі вибирає розмір, підганяє його під минулі бари, і перевага зникає на
+      out-of-sample, хоч у звіті вона є.
+
+  - statement: >
+      `risk_per_trade` — це частка капіталу, яку можна ВТРАТИТИ в одній угоді, а не
+      розмір позиції: кількість виводиться зі стопу, і ноціонал ніколи не
+      перевищує 1x капіталу (жодного кредитного плеча).
+    enforced_by: src/nautilus_lab/application/risk.py
+    verified_by: tests/unit/test_risk.py::test_size_position_risks_fraction_of_equity_capped_at_1x
+    note: >
+      Обмеження 1x закрито окремо —
+      tests/unit/test_risk.py::test_size_position_caps_notional_at_equity.
+      Якщо читати `risk_per_trade` як «розмір позиції», то цифри в звіті зростають
+      рівно настільки, наскільки вузький стоп, — і ризик перетворюється на
+      фікцію: однакова частка капіталу «під ризиком» дає різний реальний ризик.
+
+  - statement: >
+      Спрацьований circuit breaker (денний збиток, просадка від піку, VaR або
+      CVaR-поріг) блокує саме НОВІ входи — і це не баг, а робота механізму.
+    enforced_by: src/nautilus_lab/application/risk.py
+    verified_by: tests/unit/test_risk.py::test_evaluate_entry_trips_daily_loss
+    note: >
+      Ті самі ворота закриті для просадки
+      (tests/unit/test_risk.py::test_evaluate_entry_trips_drawdown) і для CVaR
+      (tests/unit/test_risk.py::test_evaluate_entry_trips_cvar_breaker), а здорове
+      зведення мусить проходити
+      (tests/unit/test_risk.py::test_evaluate_entry_allows_healthy_account) — без
+      останнього тесту запобіжник можна було б «полагодити» в завжди-закритий і
+      назвати це обережністю. У прогні це виглядає як `max_dd`, що впирається в
+      `MAX_DRAWDOWN`, і менше входів: послаблювати ліміт, щоб «заторгувало», — саме
+      та помилка, від якої цей інваріант захищає. Відкрита позиція при цьому не
+      закривається автоматично — її закриває сама стратегія своїм `FLAT` або
+      завершення прогону, і це задокументовано.
+
+  - statement: >
+      Грошова арифметика ведеться в `Decimal` із квантуванням, а не у `float`: сума
+      ризику округлюється до копійок, тож двійкова похибка не накопичується в
+      розрахунку позиції.
+    enforced_by: src/nautilus_lab/domain/money.py
+    verified_by: tests/unit/test_money.py::test_risk_amount
+    note: >
+      Тест стверджує точні значення (`Money(10000).risk_amount(Decimal("0.01")) ==
+      Decimal("100.00")`), тому округлення справді перевірене. Чого НЕМАЄ:
+      `Money.__post_init__` лише приводить вхід до `Decimal`, але `float` не
+      відхиляє, тож «ніколи float» тримається на типових анотаціях, а не на
+      відмові в рантаймі; тест, який це закрив би, мав би вимагати помилку на
+      `float`-вході. Дотичні запобіжники на відʼємну суму й неприпустиму частку —
+      tests/unit/test_money.py::test_negative_amount_is_rejected і
+      tests/unit/test_money.py::test_invalid_fraction_is_rejected.
+
+  - statement: >
+      Захисний стоп (ratchet) ніколи не послаблюється: рівень рухається лише в бік
+      прибутку, а відсоток захисту береться з `RiskLimits.stop_pct`, а не зі
+      стратегії.
+    enforced_by: src/nautilus_lab/domain/ratchet_stop.py
+    verified_by: tests/unit/test_factor_research.py::test_ratchet_never_loosens_after_locking
+    note: >
+      Джерело відсотка закрито окремо —
+      tests/unit/test_factor_research.py::test_overlay_ratchet_params_take_stop_pct_from_limits.
+      Стоп, який «відпускає» після руху в прибуток, перетворює керований ризик на
+      сподівання; тому ratchet типово вимкнено (`USE_RATCHET=false`) і вмикається
+      лише явно, а стоп-рівень перевіряється від ціни, відомої на відкритті бару
+      (tests/unit/test_factor_research.py::test_step_ratchet_checks_the_stop_known_at_bar_open).
+
+notes: >
+  Статус `partial`, і причина конкретна: аварійного вимикача як механізму немає —
+  є лише його заглушка. `domain/kill_switch.py` описує протокол `KillSwitch` і
+  `NoOpKillSwitch`, який записує причину й активний стан, але НЕ скасовує робочі
+  ордери і НЕ закриває позиції. Сама заглушка поводиться рівно так, як заявлено, і
+  це перевірено (tests/unit/test_mft_modules.py::test_noop_kill_switch стверджує,
+  що `trigger()` вмикає `is_active()` і зберігає текст причини), — але для живого
+  режиму «скасувати все й закрити позиції» і є головна частина цього механізму, і
+  її не існує, бо немає адаптера виконання. Тому компонент не можна назвати повним;
+  окремо варто памʼятати, що circuit breaker у бектесті лише блокує нові входи й
+  нічого не закриває сам — позицію закриває стратегія своїм `FLAT`.
+  Друга прогалина — інваріант «стратегія не вирішує розмір» без тесту (див.
+  `test_missing_reason` вище).
+  Розходження з docs/ (перевірені в коді):
+  1) `docs/06-ryzyk-metryky.md` §«Звідки береться стоп» пише, що ATR — «не класичне
+     згладжування Вайлдера, а просте середнє». У коді
+     `domain/atr.py::AverageTrueRange` — саме рекурсія Вайлдера
+     (сід — середнє перших `n` TR, далі `ATR_t = (ATR_{t-1}(n-1) + TR_t)/n`), і це
+     закріплено тестом
+     `tests/unit/test_audit_fixes.py::test_atr_uses_wilders_recursion_not_a_rolling_mean`.
+     Той самий застарілий рядок є в карті файлів `docs/12` (опис `atr.py`), хоча
+     `docs/03` §4 каже «ATR Вайлдера», а `docs/12` нижче (опис тестів) згадує
+     «рекурсію Вайлдера». Це важливо не заради термінології: від ATR залежить
+     `stop_distance()`, а отже й розмір позиції, — тобто документ описує не той
+     механізм, за яким рахуються гроші.
+  2) `docs/06` §4 стверджує, що роботи кличуть `effective_risk_fraction` без
+     `win_rate`/`reward_risk`, тому Келлі на розмір не впливає. Код передає
+     накопичену статистику угод (`stats=self._trade_stats` у
+     `infrastructure/nautilus/signal_strategy.py`), і підсумок той самий лише тому,
+     що `USE_FRACTIONAL_KELLY` типово вимкнено: механізм описано неправильно, хоч
+     висновок збігається.
+  3) `docs/06` §5 пише, що HAR-RV і vol-scaling «підключені до роботів не».
+     Насправді `signal_strategy.py` рахує `HarRealizedVolatility` на кожному барі й
+     передає прогноз у `resolve_risk_fraction()`, тож `USE_VOL_SCALING=true` справді
+     зменшує ризик. Це opt-in-механізм, а не «не підключено».
+  Що документи описують правильно (перевірено, щоб не приписати зайвого):
+  `risk_per_trade` як частку, яку можна втратити (`docs/02` §змінні), порядок і
+  тексти причин у `evaluate_entry` (`docs/06` §3), недосяжність
+  `MAX_OPEN_POSITIONS` при перевірці `>` (`docs/06` §3, п.2) і те, що
+  `atr_stop_multiplier` не має змінної в `.env`.
+
+references:
+  - docs/02-vstanovlennya.md
+  - docs/03-arhitektura.md
+  - docs/06-ryzyk-metryky.md
+  - docs/07-yak-stvoryty-strategiyu.md
+  - docs/11-troubleshooting-faq.md
+  - docs/12-karta-fayliv.md
+  - docs/15-audit-vypravlennya.md
+  - docs/16-llm-vidpovidnist.md

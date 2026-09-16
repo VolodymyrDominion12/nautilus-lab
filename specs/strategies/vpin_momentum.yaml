@@ -104,6 +104,11 @@ invariants:
 evidence:
   measured: true
   beats_buy_hold: false
+  reproduce: >
+    uv run lab ingest --start 2024-01-01 --symbols ETHUSDT,BTCUSDT   # каталог ETH/USDT 1h
+    uv run lab research --robot vpin_momentum --folds 4
+    Сирий лог прогону — reports/wf-vpin-folds4.txt, зведення — reports/ai-2026-comparison.md.
+    Обидва у .gitignore, тому саме ця команда (а не файл) є джерелом істини.
   notes: >
     Вимір є, і він негативний: багатовіконний прогін на 4 ковзних фолдах показує
     0/4 прибуткових фолдів, середній OOS нижчий за baseline buy&hold за той самий

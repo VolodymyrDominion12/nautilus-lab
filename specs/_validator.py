@@ -48,6 +48,7 @@ REGIME_PY = ROOT / "src/nautilus_lab/domain/regime.py"
 PARAM_GRID_PY = ROOT / "src/nautilus_lab/application/param_grid.py"
 SETTINGS_PY = ROOT / "src/nautilus_lab/infrastructure/settings.py"
 RESEARCH_PY = ROOT / "src/nautilus_lab/application/run_research_backtest.py"
+WALK_FORWARD_PY = ROOT / "src/nautilus_lab/application/run_walk_forward.py"
 
 # Адаптер, який рушій реально інстанціює. Клас стратегії може жити або в
 # доменному модулі, або в самому адаптері (так зроблено для pairs/спредів) —
@@ -69,6 +70,8 @@ class CodeFacts:
     wired: set[str] = field(default_factory=set)
     minimum_bars: dict[str, int] = field(default_factory=dict)
     minimum_bars_default: int | None = None
+    warmup_bars: dict[str, int] = field(default_factory=dict)
+    warmup_bars_default: int | None = None
     grid_robots: set[str] = field(default_factory=set)
     setting_fields: set[str] = field(default_factory=set)
     problems: list[str] = field(default_factory=list)
@@ -140,6 +143,58 @@ def collect_wired(facts: CodeFacts) -> None:
     facts.problems.append("не знайдено BACKTEST_WIRED_ROBOTS у domain/regime.py")
 
 
+def _bucketed_ints(path: Path, func_name: str) -> tuple[dict[str, int], int | None] | None:
+    """Розібрати «ланцюг порогів по роботах» у функції.
+
+    Вміє дві форми, які реально вжито в проєкті:
+        if robot in (RobotName.A, ...): return 150      # minimum_bars()
+        if robot is RobotName.A: minimum = 150          # _require_warmup()
+    плюс `elif` і завершальний `else` як типове значення.
+    Повертає None, якщо форму не розпізнано — краще гучна відмова, ніж тиха.
+    """
+    try:
+        tree = _parse(path)
+    except (OSError, SyntaxError):
+        return None
+    func = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == func_name:
+            func = node
+            break
+    if func is None:
+        return None
+
+    def first_int(body: list[ast.stmt]) -> int | None:
+        for stmt in body:
+            if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Constant):
+                if isinstance(stmt.value.value, int):
+                    return stmt.value.value
+            if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant):
+                if isinstance(stmt.value.value, int):
+                    return stmt.value.value
+        return None
+
+    found: dict[str, int] = {}
+    default: int | None = None
+    for stmt in func.body:
+        node = stmt
+        while isinstance(node, ast.If):
+            members = {m for m in (_robot_member(n) for n in ast.walk(node.test)) if m}
+            value = first_int(node.body)
+            if members and value is not None:
+                for member in members:
+                    found[member] = value
+            if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+                node = node.orelse[0]
+                continue
+            if node.orelse and not isinstance(node.orelse[0], ast.If):
+                value = first_int(node.orelse)
+                if value is not None:
+                    default = value
+            break
+    return (found, default) if found else None
+
+
 def collect_minimum_bars(facts: CodeFacts) -> None:
     """Розбір minimum_bars() — точково під його конкретну форму.
 
@@ -191,6 +246,29 @@ def collect_minimum_bars(facts: CodeFacts) -> None:
         facts.problems.append(
             "не вдалось розібрати minimum_bars() — форма змінилась, онови валідатор"
         )
+
+    # Те саме правило продубльовано в _require_warmup() (walk-forward перевіряє
+    # бари на КОЖЕН фолд окремо). Дві копії одного правила розходяться тихо,
+    # тому звіряємо їх між собою, а не довіряємо одній.
+    walk_forward = _bucketed_ints(WALK_FORWARD_PY, "_require_warmup")
+    if walk_forward is None:
+        facts.problems.append(
+            "не вдалось розібрати _require_warmup() у run_walk_forward.py — "
+            "правило мінімуму барів тепер НЕ звіряється між двома місцями"
+        )
+    else:
+        facts.warmup_bars, facts.warmup_bars_default = walk_forward
+        drift = {
+            robot: (value, facts.warmup_bars.get(robot, facts.warmup_bars_default))
+            for robot, value in facts.minimum_bars.items()
+            if value != facts.warmup_bars.get(robot, facts.warmup_bars_default)
+        }
+        if drift:
+            facts.problems.append(
+                "правило мінімуму барів РОЗІЙШЛОСЬ у двох файлах "
+                "(minimum_bars() vs _require_warmup()): "
+                + ", ".join(f"{r}: {a} vs {b}" for r, (a, b) in drift.items())
+            )
 
 
 def collect_grid_robots(facts: CodeFacts) -> None:
@@ -301,6 +379,15 @@ def check_strategy(spec: dict, name: str, report: Report, schema: dict, facts: C
         report.error(
             f"status='{status}' вимагає щонайменше "
             f"{status_cfg['min_edge_conditions']} edge_conditions, є {len(conditions)}"
+        )
+
+    # measured: true без команди відтворення — твердження без джерела:
+    # reports/ у .gitignore, тож у свіжому клоні доказу не буде.
+    evidence_block = spec.get("evidence") or {}
+    if evidence_block.get("measured") and not evidence_block.get("reproduce"):
+        report.error(
+            "evidence.measured: true вимагає evidence.reproduce — команду, якою "
+            "цей вимір відтворюється (reports/ у .gitignore, доказ може зникнути)"
         )
 
     if status_cfg.get("requires_evidence"):

@@ -95,6 +95,11 @@ invariants:
 evidence:
   measured: true
   beats_buy_hold: false
+  reproduce: >
+    uv run lab ingest --start 2024-01-01 --symbols ETHUSDT,BTCUSDT   # каталог ETH/USDT 1h
+    uv run lab research --robot regime --folds 4
+    Числа фолд-таблиці — docs/05-roboty.md §4; рядок-вердикт
+    «does not beat buy&hold» друкує сам CLI.
   notes: >
     За README.md і docs/05-roboty.md §4: багатовіконний прогін (`--folds N`)
     з порівнянням проти buy&hold за той самий OOS-період не показує переваги —

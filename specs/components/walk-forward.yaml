@@ -1,0 +1,127 @@
+# =============================================================================
+#  walk-forward — механізм, який відділяє вибір параметрів від звіту
+# =============================================================================
+#  Компонент, а не робот: тут описано не стратегію, а дисципліну, без якої
+#  жодне число з `lab research` нічого не варте.
+#
+#  Кожен інваріант нижче має пару (enforced_by — модуль, який його тримає,
+#  verified_by — тест, який його пінить). Інваріант без тесту — твердження,
+#  а не гарантія; тому якщо тесту немає, це написано прямо в test_missing_reason.
+# =============================================================================
+kind: component
+name: walk-forward
+version: "1.0"
+status: active
+title: "In-sample лише обирає параметри, out-of-sample лише звітує"
+
+hypothesis: >
+  Якщо підбір параметрів і звіт про результат живуть на різних, неперетинних
+  відрізках історії, то число, яке лабораторія називає результатом, описує
+  поведінку робота на даних, яких він не бачив. Механізм гарантує саме це:
+  in-sample лише обирає, out-of-sample лише звітує, а між ними лежить
+  embargo-розрив, який не дає сусіднім барам протекти з вибірки у звіт.
+
+# Спільний блок `invariants` обов'язковий для КОЖНОЇ спеки (specs/_schema.yaml,
+# common.required). Тут він повторює дисципліну проєкту в тому ж словнику, що й
+# у спек роботів. Машинно перевірені пари «модуль + тест» — у invariants_enforced.
+invariants:
+  no_lookahead: true
+  in_sample_is_selection_only: true
+  out_of_sample_is_the_report: true
+
+invariants_enforced:
+  - statement: >
+      In-sample і out-of-sample ніколи не перекриваються, а між ними лежить
+      embargo-розрив: WalkForwardWindow відхиляє in_sample_end, пізніший за
+      out_of_sample_start, а split_by_window після нарізки додатково перевіряє,
+      що останній IS-бар строго передує першому OOS-бару.
+    enforced_by: src/nautilus_lab/domain/walk_forward.py
+    verified_by: tests/unit/test_walk_forward.py::test_window_rejects_overlap
+    note: >
+      Розрив як окрема властивість ковзних вікон піниться
+      test_rolling_windows_leave_an_embargo_gap, а дозволений «карантинний»
+      зазор — test_window_allows_purge_gap. Навіщо: бар, який потрапив і у
+      вибір, і у звіт, перетворює OOS-число з прогнозу на підказку.
+
+  - statement: >
+      Межі вікон напіввідкриті [start, end): кінець виключний, тому бар на межі
+      належить рівно одному вікну і жоден бар за межами вікна не читається.
+    enforced_by: src/nautilus_lab/domain/walk_forward.py
+    verified_by: tests/unit/test_walk_forward.py::test_bars_in_range_excludes_end
+    note: >
+      Суміжність IS і OOS на одному барі пінить
+      test_split_is_half_open_and_contiguous. Останній фолд окремо дістає
+      +1 мікросекунду, щоб найновіший бар усе ж увійшов у звіт —
+      test_rolling_windows_reach_the_most_recent_bar.
+
+  - statement: >
+      У багатовіконному прогоні кожен фолд перенабирає параметри на власному
+      IS-вікні, яке зсувається вперед разом із ним, а не перечитує перший блок:
+      інакше агрегат вимірював би ту саму підгонку кілька разів і виглядав би
+      стабільнішим, ніж є.
+    enforced_by: src/nautilus_lab/application/run_walk_forward.py
+    verified_by: tests/unit/test_run_walk_forward.py::test_execute_multi_runs_one_walk_forward_per_fold_with_sliding_selection
+
+  - statement: >
+      Планка buy&hold рахується за той самий OOS-період, що й дохідність
+      робота: у _run_fold базою слугує рівно той зріз split.out_of_sample, який
+      пішов у OOS-прогін, тож +4% робота проти +12% утримання не виглядає
+      перевагою.
+    enforced_by: src/nautilus_lab/application/run_walk_forward.py
+    verified_by: tests/unit/test_run_walk_forward.py::test_execute_multi_derives_returns_and_baseline_per_fold
+    note: >
+      Арифметику порівняння пінить tests/unit/test_multi_window_report.py::
+      test_aggregate_compares_against_buy_and_hold, а випадок «числа немає —
+      отже й вердикту немає» — ::test_verdict_is_unknown_without_measurable_returns.
+
+  - statement: >
+      In-sample ніколи не подається як результат: CLI друкує окремі рядки
+      «in-sample (selection only)» і «out-of-sample (report this)», а в журналі
+      IS-число потрапляє в колонку «Причина», тоді як колонки OOS і buy&hold
+      лишаються n/a — інакше підгонка виглядала б як досягнення.
+    enforced_by: src/nautilus_lab/interfaces/cli.py
+    verified_by: tests/unit/test_cli_propose_journal.py::test_research_journal_appends_row_when_asked
+    note: >
+      Той тест пінить саме заборону класти IS-повернення в OOS-колонку
+      («| n/a | n/a |» плюс «IS return» у причині); сам рендер рядка живе в
+      application/journal.py, де _pct перетворює None на «n/a». Чесна межа
+      цієї перевірки: друковані CLI-мітки «in-sample (selection only)» і
+      «out-of-sample (report this)» жоден тест не читає — зафіксований текстом
+      лише журнальний шлях. Якщо колись зникне сама мітка, тест цього не
+      помітить.
+
+notes: >
+  Статус active: механізм працює, і всі п'ять інваріантів мають реальний тест —
+  прогалин тут немає. Це найдисциплінованіша частина лабораторії, і саме вона
+  робить решту чисел читабельними.
+
+  Два джерела правди про мінімум барів. Порог розігріву продубльовано:
+  application/run_research_backtest.py::minimum_bars() (ним користується
+  PBO-аудит) і application/run_walk_forward.py::_require_warmup() (ним
+  користується walk-forward). Сьогодні обидві таблиці збігаються — regime і
+  vpin_momentum 150, pairs 200, formulaic_lgbm 80, решта 50 — але це два місця,
+  які можуть розійтися мовчки, і тоді один і той самий робот матиме різні
+  вимоги до історії залежно від команди.
+
+  Розходження коду з docs/ (перевірено читанням коду, не довірою до тексту):
+  1) docs/05-roboty.md (перелік BACKTEST_WIRED_ROBOTS) і docs/10-cli-dovidnyk.md
+     (§«--folds N», «для всіх трьох підключених роботів regime, ema, pairs»)
+     описують три підключені роботи, тоді як у коді
+     BACKTEST_WIRED_ROBOTS = {regime, ema, pairs, vpin_momentum, formulaic_lgbm}
+     — п'ять. Для цього компонента це не дрібниця: RunWalkForward.execute()
+     гейтить робота через require_backtest_support(), тож walk-forward насправді
+     приймає п'ять роботів, а не три.
+  2) Таблиця помилок у docs/10 пише «regime 150, pairs 200, решта 50», тоді як
+     обидві функції вище мають чотири пороги (vpin_momentum теж 150,
+     formulaic_lgbm — 80).
+
+  Що механізм свідомо НЕ робить: не забороняє дивитися на OOS багато разів
+  підряд вручну. Код гарантує, що всередині одного прогону вибір і звіт
+  розведені; дисципліну «OOS дивляться один раз для фінальної конфігурації»
+  тримає дослідник, а не валідатор.
+
+references:
+  - docs/01-osnovy.md
+  - docs/04-tsykl-doslidzhennya.md
+  - docs/05-roboty.md
+  - docs/10-cli-dovidnyk.md

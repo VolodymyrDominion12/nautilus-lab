@@ -85,6 +85,12 @@ invariants:
 evidence:
   measured: true
   beats_buy_hold: false
+  reproduce: >
+    uv run lab ingest --start 2024-01-01 --symbols ETHUSDT,BTCUSDT   # каталог ETH/USDT 1h
+    uv run lab research --robot formulaic_lgbm --folds 4
+    Потрібен навчений бустер models/formulaic_lgbm.txt — без нього робот не
+    відтворюється (див. notes і blocked-умову в evidence).
+    Сирий лог — reports/wf-formulaic-folds4.txt (у .gitignore).
   notes: >
     Вимір є, і він негативний: багатовіконний прогін на 4 ковзних фолдах показує
     0/4 прибуткових фолдів, середній OOS нижчий за baseline buy&hold за той самий

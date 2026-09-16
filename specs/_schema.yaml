@@ -23,7 +23,9 @@ common:
     - version
     - status
     - hypothesis
-    - invariants
+    # `invariants` тут НЕ вимагається: він специфічний для стратегій (прапорці
+    # дисципліни) і вже перелічений у strategy.required. Для компонентів
+    # обов'язковий invariants_enforced — пари «інваріант + тест».
   optional:
     - title
     - notes
@@ -52,6 +54,7 @@ strategy:
       required: [edge_conditions, implementation, params]
       min_edge_conditions: 3
       requires_evidence: true
+
     rejected:
       description: >-
         Виміряно, переваги немає. Це ЦІННИЙ результат, а не провал: він
@@ -64,6 +67,14 @@ strategy:
         робот зобов'язаний падати fail closed, а не тихо підмінятись іншим.
       required: [blocked_reason, implementation]
       min_edge_conditions: 0
+
+  evidence:
+    item_rule: >-
+      Якщо measured: true — обов'язкове поле reproduce: КОМАНДА, якою цей вимір
+      відтворюється. Причина практична: `reports/` у .gitignore, тож у свіжому
+      клоні доказ зникає, і «measured: true» стає твердженням без джерела.
+      Команда робить вимір відтворюваним із самого репозиторію, а не з
+      артефакта, якого може не бути.
 
   required:
     - implementation

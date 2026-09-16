@@ -1,0 +1,119 @@
+# =============================================================================
+#  data-catalog — публічні Binance-klines → Parquet-каталог
+# =============================================================================
+#  Компонентна спека: механізм наскрізний, не робот. Головне правило той самий,
+#  що й у strategies/: КОЖЕН інваріант має пару (enforced_by — модуль, який його
+#  тримає; verified_by — тест, який його ловить). Інваріант без тесту — це
+#  твердження, а не гарантія, тому він записаний вголос через test_missing_reason,
+#  а не викинутий і не прикрашений вигаданим іменем тесту.
+# =============================================================================
+kind: component
+name: data-catalog
+version: "1.0"
+status: active
+title: "Parquet-каталог історії: публічний ingest Binance, один каталог — одна серія"
+
+hypothesis: >
+  Каталог — це єдине джерело реальної історії, тому саме його цілісність вирішує,
+  чи означає число з прогону бодай щось. Якщо бари приходять лише з публічного
+  REST, лягають закритими барами зі строго зростаючими мітками часу, а повторний
+  ingest замінює своє вікно, то кожен прогін читає рівно одну серію одного
+  інструмента й одного інтервалу — і його можна відтворити, а не переповісти.
+
+# Спільний блок `invariants` обов'язковий для КОЖНОЇ спеки (specs/_schema.yaml,
+# common.required). Тут він повторює дисципліну компонента тим самим словником,
+# що й у спек роботів. Машинно перевірені пари «модуль + тест» — нижче,
+# в invariants_enforced; там же видно, що саме з цього списку сьогодні без тесту.
+invariants:
+  public_endpoints_only: true
+  closed_bars_only: true
+  timestamps_strictly_increasing: true
+  end_is_exclusive: true
+  one_catalog_one_series: true
+
+invariants_enforced:
+  - statement: >
+      Каталог наповнюється лише через публічний REST Binance
+      (`api.binance.com/api/v3/klines`): жодних підписаних чи приватних
+      ендпоінтів, тож історію можна відтворити з нуля без біржових ключів.
+    enforced_by: src/nautilus_lab/infrastructure/binance_klines.py
+    verified_by: tests/unit/test_binance_klines.py::test_binance_feed_paginates_and_stops_before_end
+    note: >
+      Тест підміняє HTTP-клієнт і стверджує адресу кожного запиту, тож іншого
+      хоста в шляху даних бути не може. Порушення означало б історію з джерела,
+      яке не відтворити без чужих ключів, — і жоден прогін на ній не можна було б
+      перевірити. Чого тест не перевіряє: відсутність ключів у параметрах — це
+      тримається на тому, що `BinancePublicKlines` взагалі не має поля для ключа
+      (`Settings.exchange_api_key` існує, але ingest його не читає).
+
+  - statement: >
+      У каталозі лежать лише закриті бари: `ts_utc` — це час ЗАКРИТТЯ бару, а бар
+      із міткою в майбутньому відхиляється.
+    enforced_by: src/nautilus_lab/infrastructure/binance_klines.py
+    verified_by: tests/unit/test_binance_klines.py::test_parse_binance_kline_uses_close_time
+    note: >
+      Друга половина інваріанта (майбутнє відхиляється) закрита
+      tests/unit/test_bars.py::test_future_bar_is_rejected. Якби в каталог
+      потрапляв бар із майбутнього, кожен прогін виглядав би провидцем: рішення
+      ухвалювалося б на барі, якого на той момент ще не існувало.
+
+  - statement: >
+      Вікно ingest — напіввідкрите `[start, end)`: бар із міткою, рівною `end`,
+      до каталогу не потрапляє.
+    enforced_by: src/nautilus_lab/infrastructure/binance_klines.py
+    test_missing_reason: >
+      Тест мав би віддати з фейкового HTTP сторінку, у якій є бар із міткою >= `end`,
+      і стверджувати, що його відкинуто. Сьогодні ця гілка не покрита: у
+      tests/unit/test_binance_klines.py::test_binance_feed_paginates_and_stops_before_end
+      усі бари лежать усередині вікна, а запит іде з `endTime = end − 1 мс`, тож
+      бар на самій межі від біржі просто не приходить — і різницю між `[start, end)`
+      та `[start, end]` цей тест побачити не може.
+    note: >
+      Помилка тут не косметична: `[start, end]` і `[start, end)` дають різні
+      набори даних на стику вікон IS/OOS — один бар потрапив би і в підбір
+      параметрів, і у звіт, тобто OOS перестав би бути out-of-sample.
+
+  - statement: >
+      Мітки часу в серії строго зростають і не дублюються: повторний ingest із
+      перекриттям замінює свій діапазон, а читання дедуплікує за `ts_utc`.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/parquet_catalog.py
+    verified_by: tests/integration/test_research_backtest.py::test_load_deduplicates_a_catalog_with_overlapping_files
+    note: >
+      Друга половина (запис замінює, а не дописує) закрита
+      tests/integration/test_research_backtest.py::test_reingesting_an_overlapping_window_replaces_instead_of_duplicating,
+      а сама вимога монотонності — tests/unit/test_bars.py::test_non_monotonic_timestamps_are_rejected.
+      Дублікат бару — це не «зайвий рядок у файлі»: він важить двічі в кожній
+      метриці (оборот, комісії, просадка), і результат стає не тим, чим він був.
+
+  - statement: >
+      Серія впізнається за повним сегментом специфікації часу, тож 15-хвилинний
+      каталог неможливо прочитати як 5-хвилинний: один каталог — один інтервал.
+    enforced_by: src/nautilus_lab/infrastructure/timeframe.py
+    verified_by: tests/unit/test_audit_fixes.py::test_quarter_hour_is_not_read_as_five_minutes
+    note: >
+      Рядок `15-MINUTE` містить `5-MINUTE`, тому перевірка на підрядок тихо
+      читала б чвертьгодинну серію як п'ятихвилинну — і робот отримав би втричі
+      більше барів за той самий період, тобто інший ринок, ніж той, який
+      досліджували. Поруч закрито й невідомий інтервал:
+      tests/unit/test_audit_fixes.py::test_unknown_spec_is_rejected_instead_of_defaulting_to_one_hour.
+
+notes: >
+  Механізм працює й стоїть на тестах; єдина прогалина компонента записана вголос —
+  виключність `end` не покрита (див. test_missing_reason вище).
+  Розходження з docs/: `docs/10-cli-dovidnyk.md` (розділ одразу після `lab ingest`)
+  досі обіцяє, що «повторний запуск із вікном, що перекривається, створить
+  дублікати барів і зламає всі наступні `lab research`». Код робить протилежне:
+  `write()` спершу викликає `delete_data_range` (ідемпотентна заміна), а `load()`
+  дедуплікує за `ts_utc`. Це визнають `docs/04` §Крок 1 і `docs/11`, тобто
+  `docs/10` суперечить і коду, і двом іншим документам того ж репозиторію.
+  Окремо варто сказати, що НЕ є розходженням: мітка часу як час закриття бару —
+  `docs/03` §2 каже саме так, а `docs/15` §1 записує вибір `row[6]` (close time)
+  як свідоме рішення, закріплене тестом.
+
+references:
+  - docs/03-arhitektura.md
+  - docs/04-tsykl-doslidzhennya.md
+  - docs/10-cli-dovidnyk.md
+  - docs/11-troubleshooting-faq.md
+  - docs/12-karta-fayliv.md
+  - docs/15-audit-vypravlennya.md

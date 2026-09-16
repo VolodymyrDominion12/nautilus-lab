@@ -114,6 +114,11 @@ invariants:
 evidence:
   measured: true
   beats_buy_hold: false
+  reproduce: >
+    uv run lab ingest --start 2024-01-01 --symbols ETHUSDT,BTCUSDT   # каталог ETH/USDT 1h
+    uv run lab research --robot pairs --folds 4
+    Числа фолд-таблиці — docs/05-roboty.md §4 (рядок `pairs`); рядок-вердикт
+    «does not beat buy&hold» друкує сам CLI.
   notes: >
     За docs/05-roboty.md §3.7 і §4 (таблиця фолдів та агрегат OOS): робот
     виміряно — після виправлення ADF він справді торгує на обох вибірках, але

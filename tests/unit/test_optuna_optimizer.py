@@ -150,3 +150,22 @@ def test_formulaic_trials_search_the_threshold() -> None:
     optimizer.optimize(request, mock_run_is)
     assert len(set(seen)) > 1
     assert all(Decimal("0.35") <= value <= Decimal("0.75") for value in seen)
+
+
+def test_meta_label_trials_search_the_threshold() -> None:
+    optimizer = OptunaParamOptimizer(n_trials=6, seed=13)
+    request = _dummy_request(RobotName.META_LABEL)
+    seen: list[Decimal] = []
+
+    def mock_run_is(candidate: BacktestRequest) -> BacktestReport:
+        seen.append(candidate.meta_label_threshold)
+        return BacktestReport(
+            fills=1,
+            positions=1,
+            ending_balance=Decimal("100000"),
+            notes="mock run",
+        )
+
+    optimizer.optimize(request, mock_run_is)
+    assert len(set(seen)) > 1
+    assert all(Decimal("0.35") <= value <= Decimal("0.75") for value in seen)

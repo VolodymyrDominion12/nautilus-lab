@@ -44,3 +44,13 @@ def test_formulaic_grid_varies_threshold_only() -> None:
         Decimal("0.55"),
         Decimal("0.60"),
     }
+
+
+def test_meta_label_grid_varies_threshold_only() -> None:
+    grid = list(iter_param_grid(_request(RobotName.META_LABEL)))
+    assert len(grid) == 3
+    assert {item.meta_label_threshold for item in grid} == {
+        Decimal("0.50"),
+        Decimal("0.55"),
+        Decimal("0.60"),
+    }

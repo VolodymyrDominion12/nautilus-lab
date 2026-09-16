@@ -4,7 +4,7 @@
 # =============================================================================
 kind: strategy
 name: formulaic_lgbm
-version: "1.0"
+version: "1.1"
 status: candidate
 title: "Formulaic LGBM: напрямок бару з 12 формульних ознак OHLCV + пороговий класифікатор"
 
@@ -133,6 +133,13 @@ notes: >
   через `Decimal(str(...))`. Гроші й ціни лишаються `Decimal`, а сам бустер
   працює в float — це властивість LightGBM, а не порушення інваріанта грошових
   обчислень, але межу варто бачити.
+  Четверте: індекси класів бустера зафіксовані
+  `domain/ml_classifier.py::DIRECTION_CLASSES` як `(down, flat, up)` — тобто
+  `predict()`[0] це P(down), [1] P(flat), [2] P(up). Навчання
+  (`train_formulaic.py`) і інференс (`LightGBMDirectionClassifier`) мусять
+  читати цей самий кортеж; розпакування `(up, down, flat)` було б тихою
+  підміною сторін. Перевіряє
+  `tests/unit/test_formulaic_modules.py::test_direction_scores_map_down_flat_up`.
   Гіперпараметри бустера (кількість дерев, глибина, learning rate) у спеці не
   наводяться: вони живуть в офлайн-скрипті навчання й не є полями `Settings`,
   тому тут їх не можна ні перевірити машинно, ні задати через `.env`.

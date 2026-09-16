@@ -18,6 +18,11 @@ from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_research_backtest import minimum_bars
 from nautilus_lab.domain.align import align_bars_inner_join
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.deflated_sharpe import (
+    DeflatedSharpeResult,
+    deflated_sharpe_ratio,
+    sharpe_ratio,
+)
 from nautilus_lab.domain.overfitting import probability_of_backtest_overfitting
 from nautilus_lab.domain.regime import RobotName, require_backtest_support
 
@@ -136,8 +141,10 @@ def _report(
     matrix: tuple[tuple[Decimal | None, ...], ...],
     block_count: int,
 ) -> OverfitAuditReport:
-    result = probability_of_backtest_overfitting(_numeric_matrix(matrix))
+    numeric = _numeric_matrix(matrix)
+    result = probability_of_backtest_overfitting(numeric)
     best = labels[index_of_best_configuration(matrix)]
+    deflated = deflated_sharpe_for_winner(numeric, matrix)
     return OverfitAuditReport(
         pbo=result.pbo,
         split_count=result.split_count,
@@ -145,14 +152,40 @@ def _report(
         blocks=block_count,
         block_returns=matrix,
         labels=labels,
+        deflated_sharpe=deflated,
         notes=(
             f"PBO/CSCV over {block_count} contiguous blocks: {result.split_count} symmetric "
             "splits, parameters re-selected on each train half and ranked on the test half. "
             "A PBO near 0.5 means the in-sample winner is a coin flip; above 0.5 means the "
             f"selection actively hurts. Best mean block score: {best}. Every block is "
-            "simulated from a flat start, so each one loses its own warm-up bars."
+            "simulated from a flat start, so each one loses its own warm-up bars. "
+            f"{deflated.summary_line()} — DSR asks a different question than PBO: whether the "
+            f"winner's Sharpe is more than the best of {result.configuration_count} coin-flip "
+            f"trials, judged on {block_count} block returns (see --pbo-blocks for a wider "
+            "sample), and it never certifies profitability."
         ),
     )
+
+
+def deflated_sharpe_for_winner(
+    numeric: tuple[tuple[Decimal, ...], ...],
+    matrix: tuple[tuple[Decimal | None, ...], ...],
+) -> DeflatedSharpeResult:
+    """Deflate the winning configuration's Sharpe on the PBO score matrix.
+
+    One observation per block, one trial per grid configuration — the same evidence PBO
+    ranks. A configuration whose block returns have zero variance gets a Sharpe of zero
+    rather than being dropped from the trial set: the number of things that were tried is
+    a fact about the search, not about how well each attempt happened to score, and
+    shrinking it would flatter the winner.
+    """
+    columns = tuple(zip(*numeric, strict=True))
+    trial_sharpes: list[Decimal] = []
+    for column in columns:
+        value = sharpe_ratio(column)
+        trial_sharpes.append(Decimal("0") if value is None else value)
+    winner = index_of_best_configuration(matrix)
+    return deflated_sharpe_ratio(columns[winner], trial_sharpes)
 
 
 def _numeric_matrix(

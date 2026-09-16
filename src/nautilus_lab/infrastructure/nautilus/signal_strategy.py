@@ -22,6 +22,7 @@ from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
+from nautilus_lab.domain.meta_label_strategy import MetaLabelStrategy
 from nautilus_lab.domain.ratchet_stop import RatchetState, initial_ratchet, step_ratchet
 from nautilus_lab.domain.regime import RegimeParams, RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
@@ -34,6 +35,8 @@ from nautilus_lab.domain.vpin_momentum import VpinMomentum
 from nautilus_lab.infrastructure.lightgbm_classifier import (
     HeuristicDirectionClassifier,
     LightGBMDirectionClassifier,
+    LightGBMSuccessClassifier,
+    require_model_path,
 )
 
 
@@ -71,6 +74,8 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
     formulaic_model_path: str | None = None
     formulaic_threshold: Decimal = Decimal("0.55")
+    meta_label_model_path: str | None = None
+    meta_label_threshold: Decimal = Decimal("0.55")
     use_vol_scaling: bool = False
     vol_scaling_target: Decimal = Decimal("0.02")
     use_fractional_kelly: bool = False
@@ -299,6 +304,18 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             classifier=classifier,
             threshold=config.formulaic_threshold,
         )
+    if robot is RobotName.META_LABEL:
+        model_path = require_model_path(config.meta_label_model_path, robot="meta_label")
+        return MetaLabelStrategy(
+            instrument_id=instrument_id,
+            primary=_regime_primary(config, instrument_id),
+            classifier=LightGBMSuccessClassifier(model_path=model_path),
+            threshold=config.meta_label_threshold,
+        )
+    return _regime_primary(config, instrument_id)
+
+
+def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRouter:
     vpin = None
     if config.use_bar_vpin:
         vpin = BarVpin(

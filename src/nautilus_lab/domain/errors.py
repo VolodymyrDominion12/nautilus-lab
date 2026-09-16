@@ -27,6 +27,10 @@ class RobotNotWiredError(DomainError):
     """Robot has no execution adapter yet. Fail closed instead of running another robot."""
 
 
+class ModelArtifactMissingError(DomainError):
+    """A robot that needs an offline-trained booster was started without a model file."""
+
+
 class InvalidHypothesisError(DomainError):
     """An alpha proposal is malformed or breaks the hypothesis contract.
 

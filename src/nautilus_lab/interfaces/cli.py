@@ -507,6 +507,7 @@ def _run_pbo(cfg: Settings, args: argparse.Namespace, robot: RobotName | None) -
         cells = " ".join(_pct(row[index]) for row in report.block_returns)
         print(f"  [{index}] {label} :: {cells}")
     print(report.summary_line())
+    print(report.deflated_sharpe.summary_line())
     if getattr(args, "notify", False):
         notifier(cfg).notify(f"Overfitting audit complete: {report.summary_line()}")
     if _journal_enabled(cfg, args):

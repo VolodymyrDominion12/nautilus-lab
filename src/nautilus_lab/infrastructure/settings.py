@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
     formulaic_model_path: str | None = None
     formulaic_threshold: Decimal = Decimal("0.55")
+    meta_label_model_path: str | None = None
+    meta_label_threshold: Decimal = Decimal("0.55")
     robot: RobotName = RobotName.REGIME
     fast_ema: int = 10
     slow_ema: int = 20

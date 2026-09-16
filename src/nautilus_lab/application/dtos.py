@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
+from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
 from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.metrics import BacktestMetrics
 from nautilus_lab.domain.pairs.params import PairsParams
@@ -47,6 +48,8 @@ class BacktestRequest:
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
     formulaic_model_path: str | None = None
     formulaic_threshold: Decimal = Decimal("0.55")
+    meta_label_model_path: str | None = None
+    meta_label_threshold: Decimal = Decimal("0.55")
     tearsheet_path: str | None = None
 
 
@@ -107,12 +110,14 @@ class SelectedParams:
     vpin_ema_period: int = 50
     vpin_atr_multiple: Decimal = Decimal("2")
     formulaic_threshold: Decimal = Decimal("0.55")
+    meta_label_threshold: Decimal = Decimal("0.55")
 
     def label(self) -> str:
         return (
             f"fast_ema={self.fast_ema} slow_ema={self.slow_ema} "
             f"donchian={self.donchian_period} bb_k={self.bb_k} "
-            f"z_entry={self.z_entry} formulaic_threshold={self.formulaic_threshold}"
+            f"z_entry={self.z_entry} formulaic_threshold={self.formulaic_threshold} "
+            f"meta_label_threshold={self.meta_label_threshold}"
         )
 
 
@@ -278,6 +283,11 @@ class OverfitAuditReport:
     reported no balance for that run, which is scored as the worst possible outcome
     instead of being silently dropped (dropping it would shorten the matrix and
     quietly change which configurations are compared).
+
+    `deflated_sharpe` comes from the same matrix — PBO and DSR must never be computed
+    from different evidence. It judges the winning configuration against the best Sharpe
+    that the same number of zero-skill trials would have produced, and it may legitimately
+    be undefined (too few blocks), in which case its `summary_line()` says so.
     """
 
     pbo: Decimal
@@ -287,6 +297,7 @@ class OverfitAuditReport:
     block_returns: tuple[tuple[Decimal | None, ...], ...]
     labels: tuple[str, ...]
     notes: str
+    deflated_sharpe: DeflatedSharpeResult
 
     @property
     def is_meaningful(self) -> bool:
@@ -333,6 +344,7 @@ def selected_from_request(request: BacktestRequest) -> SelectedParams:
         vpin_ema_period=request.vpin_momentum_ema_period,
         vpin_atr_multiple=request.vpin_momentum_atr_multiple,
         formulaic_threshold=request.formulaic_threshold,
+        meta_label_threshold=request.meta_label_threshold,
     )
 
 
@@ -357,4 +369,5 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
         vpin_momentum_ema_period=params.vpin_ema_period,
         vpin_momentum_atr_multiple=params.vpin_atr_multiple,
         formulaic_threshold=params.formulaic_threshold,
+        meta_label_threshold=params.meta_label_threshold,
     )

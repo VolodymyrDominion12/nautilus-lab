@@ -57,6 +57,23 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
                 formulaic_threshold=threshold,
             )
         return
+    if request.robot is RobotName.META_LABEL:
+        for threshold in (Decimal("0.50"), Decimal("0.55"), Decimal("0.60")):
+            yield SelectedParams(
+                fast_ema=base.fast_ema,
+                slow_ema=base.slow_ema,
+                donchian_period=base.donchian_period,
+                bb_period=base.bb_period,
+                bb_k=base.bb_k,
+                enter_trend_er=base.enter_trend_er,
+                exit_trend_er=base.exit_trend_er,
+                z_entry=base.z_entry,
+                z_exit=base.z_exit,
+                vpin_ema_period=base.vpin_ema_period,
+                vpin_atr_multiple=base.vpin_atr_multiple,
+                meta_label_threshold=threshold,
+            )
+        return
     if request.robot is RobotName.EMA:
         for fast, slow in ((5, 20), (10, 20), (10, 40), (12, 26)):
             yield SelectedParams(

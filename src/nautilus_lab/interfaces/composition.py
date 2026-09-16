@@ -189,6 +189,8 @@ def research_request(
         vpin_momentum_atr_multiple=cfg.vpin_momentum_atr_multiple,
         formulaic_model_path=cfg.formulaic_model_path,
         formulaic_threshold=cfg.formulaic_threshold,
+        meta_label_model_path=cfg.meta_label_model_path,
+        meta_label_threshold=cfg.meta_label_threshold,
         tearsheet_path=tearsheet_path,
     )
 

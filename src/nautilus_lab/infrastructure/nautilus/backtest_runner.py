@@ -60,6 +60,8 @@ class NautilusResearchBacktest:
                 vpin_momentum_atr_multiple=request.vpin_momentum_atr_multiple,
                 formulaic_model_path=request.formulaic_model_path,
                 formulaic_threshold=request.formulaic_threshold,
+                meta_label_model_path=request.meta_label_model_path,
+                meta_label_threshold=request.meta_label_threshold,
                 use_vol_scaling=request.risk_overlay.use_vol_scaling,
                 vol_scaling_target=request.risk_overlay.vol_scaling_target,
                 use_fractional_kelly=request.risk_overlay.use_fractional_kelly,

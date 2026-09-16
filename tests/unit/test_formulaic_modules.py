@@ -5,7 +5,12 @@ from nautilus_lab.application.train_formulaic import build_formulaic_dataset
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.formulaic_alphas import MIN_HISTORY, FormulaicAlphaEngine
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
-from nautilus_lab.domain.ml_classifier import DirectionProbabilities
+from nautilus_lab.domain.ml_classifier import (
+    DIRECTION_CLASS_INDEX,
+    DIRECTION_CLASSES,
+    DirectionProbabilities,
+    probabilities_from_ordered_scores,
+)
 from nautilus_lab.domain.signals import SignalSide
 
 
@@ -62,3 +67,13 @@ def test_build_formulaic_dataset_labels_rows() -> None:
     assert len(dataset.features) > 0
     assert len(dataset.features) == len(dataset.labels)
     assert set(dataset.labels).issubset({"up", "down", "flat"})
+
+
+def test_direction_scores_map_down_flat_up() -> None:
+    """Training writes down=0, flat=1, up=2; unpacking (up, down, flat) would swap sides."""
+    assert DIRECTION_CLASSES == ("down", "flat", "up")
+    assert DIRECTION_CLASS_INDEX == {"down": 0, "flat": 1, "up": 2}
+    probs = probabilities_from_ordered_scores((Decimal("0.7"), Decimal("0.2"), Decimal("0.1")))
+    assert probs.down == Decimal("0.7")
+    assert probs.flat == Decimal("0.2")
+    assert probs.up == Decimal("0.1")

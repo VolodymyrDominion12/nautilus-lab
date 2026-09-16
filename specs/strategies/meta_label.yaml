@@ -1,0 +1,112 @@
+# =============================================================================
+#  meta_label — мета-маркування поверх regime за Triple Barrier
+#  Структура й тон — за еталоном specs/strategies/regime.yaml.
+# =============================================================================
+kind: strategy
+name: meta_label
+version: "1.0"
+status: candidate
+title: "Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни"
+
+hypothesis: >
+  Прямий прогноз напрямку наступного бару на 1h OHLCV дає точність біля монети
+  і не покриває комісії (`formulaic_lgbm`). Мета-маркування розділяє задачі:
+  первинна модель (`regime`) дає напрямок з високим recall, а вторинна модель
+  (бінарний LightGBM на 12 формульних ознаках + знак сторони) оцінює лише
+  ймовірність, що цей вхід першим торкнеться take-profit бар'єра Triple Barrier,
+  а не стопа чи вертикального горизонту. Якщо p(успіх) ≥ `meta_label_threshold`,
+  сигнал пропускається далі в ризик-шар; інакше вхід ігнорується. Виходи
+  первинної моделі (FLAT) ніколи не гейтуються. Гіпотеза сфальсифікована, якщо
+  OOS-агрегат не обганяє buy&hold за той самий період, або якщо мета-модель
+  на purged CV не перевершує константу «брати всі сигнали».
+
+edge_conditions:
+  - name: primary_supplies_recall
+    description: >
+      `regime` на закритих барах генерує достатньо вхідних подій (BUY/SELL),
+      щоб бінарна мета-модель мала що класифікувати. Якщо первинна модель
+      мовчить, гейт не має роботи, і робот еквівалентний «не торгувати».
+  - name: meta_model_filters_losing_bets
+    description: >
+      На даних, яких бустер не бачив, precision узятих угод вища, ніж у
+      негейтнутого `regime` на тому ж вікні: частка входів, що першими
+      торкаються take-profit, зростає. Інакше поріг лише зменшує кількість
+      угод, не змінюючи якості.
+  - name: exits_are_never_gated
+    description: >
+      FLAT від первинної моделі завжди доходить до виконання. Мета-модель
+      фільтрує лише нові входи; інакше позиція може зависнути проти руху.
+  - name: signal_frequency_after_gate_covers_costs
+    description: >
+      Математичне сподівання на угоду після taker round-trip додатне:
+      вища precision × менша кількість угод усе ще покриває комісію, і
+      OOS-агрегат обганяє buy&hold за той самий період.
+
+implementation:
+  domain_module: src/nautilus_lab/domain/meta_label_strategy.py
+  strategy_class: MetaLabelStrategy
+  backtest_adapter: signal_strategy
+  wired_in_backtest: true
+  minimum_bars: 150
+  grid_source: explicit
+  signal_kind: direction
+
+params:
+  - env: META_LABEL_THRESHOLD
+    default: 0.55
+    grid: [0.50, 0.55, 0.60]
+    description: >
+      Поріг P(успіх | сигнал regime). Вхід, якщо ймовірність ≥ порогу;
+      інакше сигнал ігнорується. Єдиний параметр сітки
+      (`param_grid.py`, гілка `RobotName.META_LABEL`). Optuna шукає його
+      в [0.35, 0.75] з кроком 0.05. Бар'єри Triple Barrier у сітку не
+      входять: вони визначають мітки офлайн-навчання, а не runtime.
+  - env: META_LABEL_MODEL_PATH
+    tuned: false
+    note: >
+      Шлях до бінарного LightGBM-бустера, навченого офлайн
+      (`scripts/train_meta_label.py`) на мітках Triple Barrier. Поза сіткою:
+      це артефакт, не число. Без шляху робот падає fail closed
+      (`ModelArtifactMissingError`) — на відміну від `formulaic_lgbm`,
+      тихий heuristic-фолбек тут заборонений, бо «гейтує» чужі сигнали
+      випадковим класифікатором.
+
+invariants:
+  no_lookahead: true
+  closed_bars_only: true
+  decimal_not_float: true
+  fail_closed_without_adapter: false
+  fail_closed_without_model: true
+  exits_not_gated: true
+
+evidence:
+  measured: false
+  beats_buy_hold: null
+  notes: >
+    Виміру немає: робот додано за протоколом spec-before-code. OOS проти
+    buy&hold і проти негейтнутого `regime` ще не ганяли. Не вигадувати
+    чисел. Відтворення після навчання:
+    `uv run python scripts/train_meta_label.py --catalog catalog
+    --output models/meta_label.txt` і
+    `uv run lab research --robot meta_label --folds 4`
+    (потрібен `META_LABEL_MODEL_PATH`).
+
+notes: >
+  Первинна модель — завжди `RegimeRouter` з параметрами `Settings` / сітки
+  regime за замовчуванням. Сітка `meta_label` навмисно НЕ крутить Donchian
+  і Bollinger: підбір первинної логіки на IS разом із порогом мета-моделі
+  змішав би два шари й розмив, що саме вимірюється.
+  Ознаки мета-моделі — `FEATURE_NAMES` (12) плюс `signal_side` (+1 buy, −1
+  sell), разом 13. Мітка = 1 лише коли шлях після входу (з наступного бару)
+  першим торкається take-profit; стоп і вичерпання горизонту = 0. Якщо в
+  одному барі зачіпаються обидва бар'єри, мітка STOP_LOSS (песимістично).
+  Навчання — purged K-fold, embargo ≥ `max_holding_bars` (типово 10).
+  LLM на `on_bar` немає: бустер навчається офлайн і читається з файлу.
+  Існуючий `formulaic_lgbm` лишається окремим роботом прогнозу напрямку;
+  цей робот не замінює його й не голосує з XGBoost/CatBoost.
+
+references:
+  - specs/components/triple-barrier-labeling.yaml
+  - specs/strategies/regime.yaml
+  - specs/strategies/formulaic_lgbm.yaml
+  - ML Ансамблі У Криптотрейдингу.md

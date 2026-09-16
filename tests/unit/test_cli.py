@@ -90,6 +90,11 @@ def test_cli_robot_without_adapter_fails_closed(robot: str) -> None:
     assert main(["research", "--robot", robot, "--synthetic", "--bars", "200"]) == 1
 
 
+def test_cli_meta_label_without_model_fails_closed() -> None:
+    """Meta-label must not silently fall back to an untrained heuristic."""
+    assert main(["research", "--robot", "meta_label", "--synthetic", "--bars", "200"]) == 1
+
+
 @pytest.mark.parametrize("folds", ["0", "-3"])
 def test_cli_rejects_a_non_positive_fold_count(folds: str) -> None:
     """`--folds 0` used to fall through to the single split and report one window."""

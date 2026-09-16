@@ -7,6 +7,7 @@ from pathlib import Path
 from nautilus_lab.application.train_classifier import label_direction, purged_k_fold
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.formulaic_alphas import MIN_HISTORY, FormulaicAlphaEngine
+from nautilus_lab.domain.ml_classifier import DIRECTION_CLASS_INDEX
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +71,7 @@ def train_formulaic_lightgbm(
     if len(dataset.features) < n_splits * 4:
         raise ValueError("dataset too short for purged k-fold training")
 
-    label_map = {"down": 0, "flat": 1, "up": 2}
+    label_map = DIRECTION_CLASS_INDEX
     x_all = np.array(
         [[float(item) for item in row] for row in dataset.features],
         dtype=np.float64,

@@ -113,6 +113,26 @@ class OptunaParamOptimizer:
                         )
                     ),
                 )
+            elif request.robot is RobotName.META_LABEL:
+                params = SelectedParams(
+                    fast_ema=base.fast_ema,
+                    slow_ema=base.slow_ema,
+                    donchian_period=base.donchian_period,
+                    bb_period=base.bb_period,
+                    bb_k=base.bb_k,
+                    enter_trend_er=base.enter_trend_er,
+                    exit_trend_er=base.exit_trend_er,
+                    z_entry=base.z_entry,
+                    z_exit=base.z_exit,
+                    meta_label_threshold=Decimal(
+                        str(
+                            round(
+                                trial.suggest_float("meta_label_threshold", 0.35, 0.75, step=0.05),
+                                2,
+                            )
+                        )
+                    ),
+                )
             else:
                 donchian = trial.suggest_int("donchian_period", 10, 50, step=5)
                 bb_period = trial.suggest_int("bb_period", 10, 50, step=5)

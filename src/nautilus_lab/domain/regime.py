@@ -21,6 +21,7 @@ class RobotName(StrEnum):
     PAIRS = "pairs"
     VPIN_MOMENTUM = "vpin_momentum"
     FORMULAIC_LGBM = "formulaic_lgbm"
+    META_LABEL = "meta_label"
     FUNDING = "funding"
     ML_OBI = "ml_obi"
     GLFT = "glft"
@@ -37,6 +38,7 @@ BACKTEST_WIRED_ROBOTS: frozenset[RobotName] = frozenset(
         RobotName.PAIRS,
         RobotName.VPIN_MOMENTUM,
         RobotName.FORMULAIC_LGBM,
+        RobotName.META_LABEL,
     }
 )
 

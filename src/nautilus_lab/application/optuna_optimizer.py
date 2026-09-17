@@ -133,6 +133,30 @@ class OptunaParamOptimizer:
                         )
                     ),
                 )
+            elif request.robot is RobotName.ADAPTIVE_EMA:
+                # Same trap as vpin_momentum: the else-branch searches donchian/bb,
+                # which this robot inherits from `regime` but does not claim as its
+                # hypothesis. The hypothesis is the input-dependent step.
+                params = SelectedParams(
+                    fast_ema=base.fast_ema,
+                    slow_ema=base.slow_ema,
+                    donchian_period=base.donchian_period,
+                    bb_period=base.bb_period,
+                    bb_k=base.bb_k,
+                    enter_trend_er=base.enter_trend_er,
+                    exit_trend_er=base.exit_trend_er,
+                    z_entry=base.z_entry,
+                    z_exit=base.z_exit,
+                    adaptive_period=trial.suggest_int("adaptive_period", 10, 40, step=10),
+                    adaptive_selectivity=Decimal(
+                        str(
+                            round(
+                                trial.suggest_float("adaptive_selectivity", 0.0, 1.0, step=0.25),
+                                2,
+                            )
+                        )
+                    ),
+                )
             else:
                 donchian = trial.suggest_int("donchian_period", 10, 50, step=5)
                 bb_period = trial.suggest_int("bb_period", 10, 50, step=5)

@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import tempfile
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,8 @@ from pydantic import BaseModel
 
 from nautilus_lab.api.catalog_service import (
     describe_catalog,
+    describe_catalog_cached,
+    invalidate_catalog_cache,
     list_catalogs,
     load_catalog_bars,
     resolve_catalog_path,
@@ -37,9 +40,11 @@ from nautilus_lab.api.settings_schema import (
     validate_settings_update,
 )
 from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
+from nautilus_lab.application.run_paper import PAPER_SUPPORTED_ROBOTS
 from nautilus_lab.domain.errors import InvalidHypothesisError
 from nautilus_lab.domain.regime import BACKTEST_WIRED_ROBOTS, RobotName
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
+from nautilus_lab.interfaces.composition import settings
 
 app = FastAPI(title="Nautilus Lab API")
 
@@ -63,6 +68,10 @@ CURRENT_RESEARCH_PROCESS: subprocess.Popen[str] | None = None
 CURRENT_INGEST_PROCESS: subprocess.Popen[str] | None = None
 CURRENT_ML_PROCESS: subprocess.Popen[str] | None = None
 CURRENT_PAPER_PROCESS: subprocess.Popen[str] | None = None
+
+#: When each job was launched, so the dashboard can show elapsed time instead of a
+#: bare "running". Only read while the matching process handle is alive.
+JOB_STARTED: dict[str, datetime.datetime] = {}
 
 SECRET_SETTING_SUFFIXES = ("_TOKEN", "_SECRET", "_KEY", "_URL")
 
@@ -172,32 +181,61 @@ def _default_catalog_dir() -> str:
     return str(resolve_catalog_path(None))
 
 
-@app.get("/api/status")
-def get_status() -> dict[str, Any]:
-    global CURRENT_RESEARCH_PROCESS, CURRENT_INGEST_PROCESS
-    res_proc = CURRENT_RESEARCH_PROCESS
-    ing_proc = CURRENT_INGEST_PROCESS
-    research_running = res_proc is not None and res_proc.poll() is None
-    ingest_running = ing_proc is not None and ing_proc.poll() is None
-    catalog_dir = _default_catalog_dir()
-    catalog_exists = os.path.exists(catalog_dir)
-    catalog_instruments = 0
-    if catalog_exists:
-        try:
-            summary = describe_catalog(catalog_dir)
-            catalog_instruments = int(summary.get("total_instruments", 0))
-        except Exception:
-            catalog_instruments = 0
+JOB_LABELS: dict[str, str] = {
+    "research": "Walk-forward / backtest",
+    "ingest": "Binance klines ingest",
+    "ml_train": "ML training",
+    "paper": "Paper order log",
+}
 
+
+def _job_payload(name: str, process: subprocess.Popen[str] | None) -> dict[str, Any]:
+    """One job's live state: running, when it started, and how long it has run."""
+    running = process is not None and process.poll() is None
+    started = JOB_STARTED.get(name)
+    elapsed = None
+    if running and started is not None:
+        elapsed = round((datetime.datetime.now(UTC) - started).total_seconds(), 1)
+    return {
+        "running": running,
+        "label": JOB_LABELS.get(name, name),
+        "started_at": started.isoformat() if running and started else None,
+        "elapsed_seconds": elapsed,
+    }
+
+
+def current_jobs() -> dict[str, dict[str, Any]]:
+    """Live state of every job the dashboard can launch, from the process handles."""
+    return {
+        "research": _job_payload("research", CURRENT_RESEARCH_PROCESS),
+        "ingest": _job_payload("ingest", CURRENT_INGEST_PROCESS),
+        "ml_train": _job_payload("ml_train", CURRENT_ML_PROCESS),
+        "paper": _job_payload("paper", CURRENT_PAPER_PROCESS),
+    }
+
+
+@app.get("/api/status")
+def get_status(catalog_path: str | None = None) -> dict[str, Any]:
+    """Dashboard heartbeat. `catalog_path` selects which catalog is described."""
+    resolved_catalog = str(resolve_catalog_path(catalog_path))
+    jobs = current_jobs()
+    summary = describe_catalog_cached(resolved_catalog)
+    cfg = settings()
     return {
         "active_bots": 0,
-        "research_running": research_running,
-        "ingest_running": ingest_running,
+        "research_running": jobs["research"]["running"],
+        "ingest_running": jobs["ingest"]["running"],
+        "ml_running": jobs["ml_train"]["running"],
+        "paper_running": jobs["paper"]["running"],
+        "jobs": jobs,
         "strategies_available": [item.value for item in RobotName],
         "wired_robots": sorted(item.value for item in BACKTEST_WIRED_ROBOTS),
-        "catalog_exists": catalog_exists,
-        "catalog_instruments": catalog_instruments,
-        "catalog_path": catalog_dir,
+        "catalog_exists": bool(summary.get("exists", False)),
+        "catalog_instruments": int(summary.get("total_instruments", 0) or 0),
+        "catalog_path": resolved_catalog,
+        "bar_interval": cfg.bar_interval,
+        "trading_mode": cfg.trading_mode.value,
+        "paper_robots": sorted(item.value for item in PAPER_SUPPORTED_ROBOTS),
         "is_live": False,
         "live_safe_mode": "FAIL_CLOSED",
     }
@@ -376,6 +414,7 @@ def run_research(background_tasks: BackgroundTasks, req: ResearchRunRequest) -> 
         f"robot={req.robot} source={req.source}"
     )
     background_tasks.add_task(run_research_subprocess, config)
+    JOB_STARTED["research"] = datetime.datetime.now(UTC)
     return {
         "status": "started",
         "message": f"Research run launched for {req.robot} ({req.source} mode)",
@@ -487,6 +526,14 @@ def _legacy_summary_from_log(log_text: str) -> dict[str, Any]:
     return summary
 
 
+def _catalog_arg(cmd: list[str]) -> str | None:
+    """The `--catalog` value in a built CLI command, if the flag carries one."""
+    if "--catalog" not in cmd:
+        return None
+    index = cmd.index("--catalog") + 1
+    return cmd[index] if index < len(cmd) else None
+
+
 def run_ingest_subprocess(cmd: list[str], log_path: str) -> None:
     global CURRENT_INGEST_PROCESS
     with open(log_path, "w", encoding="utf-8") as f:
@@ -502,6 +549,9 @@ def run_ingest_subprocess(cmd: list[str], log_path: str) -> None:
             )
             CURRENT_INGEST_PROCESS.wait()
             f.write(f"\nProcess finished with code {CURRENT_INGEST_PROCESS.returncode}\n")
+            # The status endpoint caches catalog descriptions; an ingest is exactly the
+            # event that makes the cached counts wrong.
+            invalidate_catalog_cache(_catalog_arg(cmd))
         except Exception as e:
             f.write(f"\nException occurred: {e!s}\n")
 
@@ -529,6 +579,7 @@ def run_ingest(background_tasks: BackgroundTasks, req: IngestRunRequest) -> dict
         cmd.append("--incremental")
 
     background_tasks.add_task(run_ingest_subprocess, cmd, log_path)
+    JOB_STARTED["ingest"] = datetime.datetime.now(UTC)
     return {
         "status": "started",
         "message": f"Ingest started for symbols: {req.symbols}",
@@ -745,6 +796,7 @@ def run_ml_train(background_tasks: BackgroundTasks, req: MLTrainRequest) -> dict
         return {"status": "error", "message": "Another ML training job is already running."}
     config = req.model_dump()
     background_tasks.add_task(run_ml_subprocess, config)
+    JOB_STARTED["ml_train"] = datetime.datetime.now(UTC)
     return {
         "status": "started",
         "message": f"ML training started for {req.model_type}",
@@ -799,8 +851,22 @@ def run_paper(background_tasks: BackgroundTasks, req: PaperRunRequest) -> dict[s
     global CURRENT_PAPER_PROCESS
     if CURRENT_PAPER_PROCESS is not None and CURRENT_PAPER_PROCESS.poll() is None:
         return {"status": "error", "message": "Another paper simulation is already running."}
+    try:
+        robot = RobotName(req.robot)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"unknown robot: {req.robot}") from exc
+    if robot not in PAPER_SUPPORTED_ROBOTS:
+        supported = ", ".join(sorted(item.value for item in PAPER_SUPPORTED_ROBOTS))
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"paper mode cannot build robot {robot.value!r}; supported: {supported}. "
+                "Other robots need a paper adapter that does not exist yet."
+            ),
+        )
     config = req.model_dump()
     background_tasks.add_task(run_paper_subprocess, config)
+    JOB_STARTED["paper"] = datetime.datetime.now(UTC)
     return {
         "status": "started",
         "message": f"Paper simulation started for {req.robot} ({req.source})",

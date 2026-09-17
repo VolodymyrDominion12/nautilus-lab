@@ -18,7 +18,7 @@
 | `vpin_momentum` | `VpinMomentum` | ✅ так | Момент на токсичному потоці (VPIN); див. `specs/strategies/vpin_momentum.yaml` |
 | `formulaic_lgbm` | `FormulaicLgbmStrategy` | ✅ так | Напрямок із 12 формульних ознак; потрібен навчений бустер або евристичний замінник |
 | `meta_label` | `MetaLabelStrategy` | ✅ так | Мета-модель гейтить входи `regime`; потрібен `META_LABEL_MODEL_PATH` |
-| `adaptive_ema` | `AdaptiveEmaRouter` | ✅ так | Режимний фільтр зі змінним кроком EMA (selectivity). **Гіпотезу закрито виміром** — див. [18](18-transformery-ssm-vidpovidnist.md) §3 (P3) |
+| `adaptive_ema` | `AdaptiveEmaRouter` | ✅ так | Режимний фільтр зі змінним кроком EMA (selectivity). **Гіпотезу відхилено виміром** (адаптивний α не кращий за сталий, обидва програють buy&hold) — [18](18-transformery-ssm-vidpovidnist.md) §3 P3 |
 | `funding` | `FundingCashAndCarry` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 | `ml_obi` | `MlObiStrategy` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 | `glft` | `GlftMarketMaker` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |

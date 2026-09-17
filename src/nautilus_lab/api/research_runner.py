@@ -14,12 +14,15 @@ from nautilus_lab.api.experiment_history import archive_job_result
 from nautilus_lab.api.serializers import build_job_result, pct, serialize_backtest
 from nautilus_lab.api.settings_coerce import apply_setting_overrides
 from nautilus_lab.application.dtos import BacktestReport, MultiWindowReport, WalkForwardReport
+from nautilus_lab.application.journal import JournalEntry, record_run
 from nautilus_lab.application.run_walk_forward import window_return
 from nautilus_lab.domain.bars import BarOrigin
+from nautilus_lab.domain.errors import JournalFormatError
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.composition import (
+    journal_paths,
     notifier,
     overfit_audit_request,
     overfit_audit_use_case,
@@ -74,6 +77,50 @@ class _Tee(io.TextIOBase):
 
     def flush(self) -> None:
         self._original.flush()
+
+
+def _journal_entry(
+    *,
+    subject: str,
+    gates: str,
+    oos_return: Decimal | None = None,
+    buy_and_hold: Decimal | None = None,
+    fills: int | None = None,
+    reason: str = "",
+    artifact: str | None = None,
+) -> JournalEntry:
+    """One journal row, in the same shape the CLI writes.
+
+    Same conventions as `interfaces/cli.py`: `gates` records what was enforced, and the
+    OOS column is only ever filled from a real out-of-sample measurement.
+    """
+    return JournalEntry(
+        created_at=datetime.now(UTC),
+        source="lab api research",
+        subject=subject,
+        gates=gates,
+        oos_return=oos_return,
+        buy_and_hold_return=buy_and_hold,
+        fills=fills,
+        reason=reason,
+        artifact=artifact,
+    )
+
+
+def _record_journal(cfg: Settings, entry: JournalEntry) -> None:
+    """Append a finished run to the research journal.
+
+    Bookkeeping must never turn a successful backtest into a failed job: a journal that
+    cannot be written (bad marker pair, unwritable path) is reported in the run log and
+    the run still reports its numbers.
+    """
+    try:
+        markdown_path, jsonl_path = journal_paths(cfg)
+        record_run(markdown_path=markdown_path, jsonl_path=jsonl_path, entry=entry)
+    except (OSError, JournalFormatError) as exc:
+        print(f"journal_row_failed={exc}")
+        return
+    print(f"journal_row_appended={markdown_path}")
 
 
 def _parse_utc(value: str) -> datetime:
@@ -178,6 +225,16 @@ def execute_research(
         cfg = _apply_config(settings(), job)
         if job.folds < 1:
             raise ValueError(f"folds must be >= 1, got {job.folds}")
+        # `--journal` forces the write; JOURNAL_ENABLED makes it the default for every run.
+        journal_enabled = job.journal or cfg.journal_enabled
+        subject = f"{robot.value} {cfg.instrument_id}"
+        if job.full_sample and job.use_optuna and job.source == "catalog":
+            # The CLI lets --full-sample win and ignores --optuna; doing the opposite
+            # silently would make the same two flags mean different things per interface.
+            raise ValueError(
+                "full_sample and use_optuna are mutually exclusive: full-sample is one "
+                "in-sample run, Optuna needs a walk-forward split to select on. Drop one."
+            )
 
         if job.pbo:
             if job.tearsheet_path and job.generate_tearsheet:
@@ -211,7 +268,22 @@ def execute_research(
                 pbo=pbo_report,
                 report_label="PBO/CSCV overfitting audit",
                 finished_at=finished_at,
+                starting_equity=cfg.starting_equity,
             )
+            if job.notify:
+                notifier(cfg).notify(f"Overfitting audit complete: {pbo_report.summary_line()}")
+            if journal_enabled:
+                _record_journal(
+                    cfg,
+                    _journal_entry(
+                        subject=subject,
+                        gates=(
+                            f"PBO/CSCV blocks={pbo_report.blocks} "
+                            f"configurations={pbo_report.configuration_count}"
+                        ),
+                        reason=pbo_report.summary_line(),
+                    ),
+                )
             return result, buffer.getvalue()
 
         bar_origin = BarOrigin.SYNTHETIC if job.source == "synthetic" else BarOrigin.CATALOG
@@ -239,11 +311,27 @@ def execute_research(
                 tearsheet_path=backtest_report.tearsheet_path,
                 report_label="Full-sample catalog run (in-sample only; not an OOS report)",
                 finished_at=finished_at,
+                starting_equity=cfg.starting_equity,
             )
             if job.notify:
                 notifier(cfg).notify(
                     f"Full-sample backtest complete: fills={backtest_report.fills} "
                     f"ending={backtest_report.ending_balance}"
+                )
+            if journal_enabled:
+                _record_journal(
+                    cfg,
+                    _journal_entry(
+                        subject=subject,
+                        gates="full-sample catalog (no OOS split)",
+                        fills=backtest_report.fills,
+                        reason=(
+                            "auto: in-sample only; "
+                            f"IS return {pct(window_return(backtest_report, cfg.starting_equity))} "
+                            "(not an OOS number)"
+                        ),
+                        artifact=backtest_report.tearsheet_path,
+                    ),
                 )
             return result, buffer.getvalue()
 
@@ -267,7 +355,28 @@ def execute_research(
                 tearsheet_path=backtest_report.tearsheet_path,
                 report_label="Synthetic smoke backtest (not an OOS report)",
                 finished_at=finished_at,
+                starting_equity=cfg.starting_equity,
             )
+            if job.notify:
+                notifier(cfg).notify(
+                    f"Synthetic backtest complete: fills={backtest_report.fills} "
+                    f"ending={backtest_report.ending_balance}"
+                )
+            if journal_enabled:
+                _record_journal(
+                    cfg,
+                    _journal_entry(
+                        subject=subject,
+                        gates="synthetic backtest (no OOS split)",
+                        fills=backtest_report.fills,
+                        reason=(
+                            "auto: in-sample only; "
+                            f"IS return {pct(window_return(backtest_report, cfg.starting_equity))} "
+                            "(not an OOS number)"
+                        ),
+                        artifact=backtest_report.tearsheet_path,
+                    ),
+                )
             return result, buffer.getvalue()
 
         wf_request = walk_forward_request(
@@ -301,9 +410,25 @@ def execute_research(
                 tearsheet_path=tearsheet_path,
                 report_label="Out-of-sample multi-window walk-forward",
                 finished_at=finished_at,
+                starting_equity=cfg.starting_equity,
             )
             if job.notify:
                 notifier(cfg).notify(f"Multi-window walk-forward complete: {multi.summary_line()}")
+            if journal_enabled:
+                _record_journal(
+                    cfg,
+                    _journal_entry(
+                        subject=subject,
+                        gates=f"walk-forward {job.source} folds={job.folds}",
+                        oos_return=multi.mean_oos_return,
+                        buy_and_hold=multi.mean_buy_and_hold_return,
+                        fills=multi.total_oos_fills,
+                        reason=(
+                            f"auto: profitable {multi.profitable_folds}/{len(multi.folds)} folds"
+                        ),
+                        artifact=tearsheet_path,
+                    ),
+                )
             return result, buffer.getvalue()
 
         wf = use_case.execute(wf_request)
@@ -316,6 +441,7 @@ def execute_research(
             tearsheet_path=wf.out_of_sample.tearsheet_path,
             report_label="Single-split walk-forward",
             finished_at=finished_at,
+            starting_equity=cfg.starting_equity,
         )
         oos_return = window_return(wf.out_of_sample, cfg.starting_equity)
         result["single_backtest"] = serialize_backtest(wf.out_of_sample)
@@ -325,6 +451,18 @@ def execute_research(
             notifier(cfg).notify(
                 f"Walk-forward complete: OOS fills={wf.out_of_sample.fills} "
                 f"ending={wf.out_of_sample.ending_balance}"
+            )
+        if journal_enabled:
+            _record_journal(
+                cfg,
+                _journal_entry(
+                    subject=subject,
+                    gates=f"walk-forward {job.source} single split",
+                    oos_return=oos_return,
+                    fills=wf.out_of_sample.fills,
+                    reason="auto: single split; buy&hold not measured",
+                    artifact=wf.out_of_sample.tearsheet_path,
+                ),
             )
         return result, buffer.getvalue()
     except Exception as exc:
@@ -342,6 +480,43 @@ def execute_research(
         sys.stdout = original_stdout
 
 
+def config_from_job(job: ResearchJobConfig) -> dict[str, Any]:
+    """The full job configuration, archived with every run.
+
+    Everything accepted by `POST /api/research` is recorded, not just the handful of
+    fields the first dashboard version needed. "Load config" then replays the experiment
+    that actually ran: while the stress slice, embargo, Optuna and PBO settings were
+    missing from this record, replaying a run silently changed its conditions.
+    """
+    return {
+        "config_version": 2,
+        "robot": job.robot,
+        "source": job.source,
+        "bars": job.bars,
+        "folds": job.folds,
+        "is_fraction": str(job.is_fraction),
+        "embargo_bars": job.embargo_bars,
+        "use_optuna": job.use_optuna,
+        "optuna_trials": job.optuna_trials,
+        "pbo": job.pbo,
+        "pbo_blocks": job.pbo_blocks,
+        "bar_vpin": job.bar_vpin,
+        "stress_slice": job.stress_slice,
+        "generate_tearsheet": job.generate_tearsheet,
+        "journal": job.journal,
+        "notify": job.notify,
+        "full_sample": job.full_sample,
+        "catalog_path": job.catalog_path,
+        "instrument_id": job.instrument_id,
+        "bar_interval": job.bar_interval,
+        "is_start": job.is_start,
+        "is_end": job.is_end,
+        "oos_start": job.oos_start,
+        "oos_end": job.oos_end,
+        "param_overrides": job.param_overrides or {},
+    }
+
+
 def write_job_artifacts(
     result: dict[str, Any],
     log_text: str,
@@ -354,20 +529,7 @@ def write_job_artifacts(
     if job is not None:
         result = {
             **result,
-            "config": {
-                "robot": job.robot,
-                "source": job.source,
-                "folds": job.folds,
-                "is_fraction": str(job.is_fraction),
-                "full_sample": job.full_sample,
-                "instrument_id": job.instrument_id,
-                "catalog_path": job.catalog_path,
-                "is_start": job.is_start,
-                "is_end": job.is_end,
-                "oos_start": job.oos_start,
-                "oos_end": job.oos_end,
-                "param_overrides": job.param_overrides or {},
-            },
+            "config": config_from_job(job),
         }
     log_path = reports_dir / "last_run.log"
     json_path = reports_dir / "last_run.json"
@@ -406,6 +568,11 @@ def summary_from_result(result: dict[str, Any] | None) -> dict[str, Any]:
             "is_finished": False,
             "is_error": False,
             "run_type": None,
+            "robot": None,
+            "source": None,
+            "finished_at": None,
+            "config": None,
+            "starting_equity": None,
             "tearsheet_url": None,
             "multi_window": None,
             "walk_forward": None,
@@ -420,7 +587,12 @@ def summary_from_result(result: dict[str, Any] | None) -> dict[str, Any]:
         "is_finished": bool(result.get("is_finished")),
         "is_error": bool(result.get("is_error")),
         "run_type": result.get("run_type"),
+        "robot": result.get("robot"),
+        "source": result.get("source"),
+        "finished_at": result.get("finished_at"),
         "report_label": result.get("report_label"),
+        "config": result.get("config"),
+        "starting_equity": result.get("starting_equity"),
         "error_message": result.get("error_message"),
         "tearsheet_url": result.get("tearsheet_url"),
         "multi_window": multi,

@@ -59,6 +59,13 @@ def test_feature_names_match_engine_order() -> None:
     assert features[FEATURE_NAMES.index("ret")] == (closes[-1] - closes[-2]) / closes[-2]
     assert features[FEATURE_NAMES.index("momentum_10")] == (closes[-1] - closes[-11]) / closes[-11]
     assert features[FEATURE_NAMES.index("reversal_3")] == -((closes[-1] - closes[-4]) / closes[-4])
+    # Documented collinearity (docs/18 section 2a): both slots are (high-low)/close.
+    # Collapsing the contract would invalidate the saved booster; do not "fix"
+    # by silently changing the formula.
+    assert (
+        features[FEATURE_NAMES.index("high_low_spread")]
+        == features[FEATURE_NAMES.index("range_pct")]
+    )
 
 
 def test_parse_hypotheses_accepts_array() -> None:

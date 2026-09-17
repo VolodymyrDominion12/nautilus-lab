@@ -54,3 +54,21 @@ def test_meta_label_grid_varies_threshold_only() -> None:
         Decimal("0.55"),
         Decimal("0.60"),
     }
+
+
+def test_adaptive_ema_grid_contains_the_fixed_alpha_control() -> None:
+    grid = list(iter_param_grid(_request(RobotName.ADAPTIVE_EMA)))
+    pairs = {(item.adaptive_period, item.adaptive_selectivity) for item in grid}
+    assert pairs == {
+        (10, Decimal("0")),
+        (10, Decimal("0.5")),
+        (10, Decimal("1")),
+        (20, Decimal("0")),
+        (20, Decimal("0.5")),
+        (20, Decimal("1")),
+        (40, Decimal("0")),
+        (40, Decimal("0.5")),
+        (40, Decimal("1")),
+    }
+    # Without this zero column the grid could not falsify "selectivity adds nothing".
+    assert any(selectivity == Decimal("0") for _, selectivity in pairs)

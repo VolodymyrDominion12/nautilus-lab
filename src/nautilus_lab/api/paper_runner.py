@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, TextIO, cast
 
 from nautilus_lab.application.risk import require_simulated_mode
-from nautilus_lab.application.run_paper import RunPaperResearch
+from nautilus_lab.application.run_paper import PAPER_SUPPORTED_ROBOTS, RunPaperResearch
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.interfaces.composition import research_request, research_use_case, settings
@@ -41,11 +41,19 @@ def execute_paper(job: PaperRunConfig) -> tuple[dict[str, Any], str]:
     cfg = settings()
     try:
         require_simulated_mode(cfg.trading_mode)
+        robot = RobotName(job.robot)
+        if robot not in PAPER_SUPPORTED_ROBOTS:
+            supported = ", ".join(sorted(item.value for item in PAPER_SUPPORTED_ROBOTS))
+            msg = (
+                f"paper mode cannot build robot {robot.value!r}; supported: {supported}. "
+                "Refusing rather than substituting a different robot."
+            )
+            raise ValueError(msg)
         bar_origin = BarOrigin.SYNTHETIC if job.source == "synthetic" else BarOrigin.CATALOG
         request = research_request(
             cfg,
             bar_count=job.bars,
-            robot=RobotName(job.robot),
+            robot=robot,
             source=bar_origin,
         )
         bars = research_use_case(cfg)._feed.load(request)

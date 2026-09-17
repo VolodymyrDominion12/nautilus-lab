@@ -169,3 +169,29 @@ def test_meta_label_trials_search_the_threshold() -> None:
     optimizer.optimize(request, mock_run_is)
     assert len(set(seen)) > 1
     assert all(Decimal("0.35") <= value <= Decimal("0.75") for value in seen)
+
+
+def test_adaptive_ema_trials_search_the_step_not_donchian() -> None:
+    """`--optuna --robot adaptive_ema` used to fall through to the regime search."""
+    optimizer = OptunaParamOptimizer(n_trials=8, seed=17)
+    request = _dummy_request(RobotName.ADAPTIVE_EMA)
+    seen_period: list[int] = []
+    seen_selectivity: list[Decimal] = []
+    seen_donchian: list[int] = []
+
+    def mock_run_is(candidate: BacktestRequest) -> BacktestReport:
+        seen_period.append(candidate.adaptive_params.base_period)
+        seen_selectivity.append(candidate.adaptive_params.selectivity)
+        seen_donchian.append(candidate.regime.donchian_period)
+        return BacktestReport(
+            fills=1,
+            positions=1,
+            ending_balance=Decimal("100000"),
+            notes="mock run",
+        )
+
+    optimizer.optimize(request, mock_run_is)
+    assert len(set(seen_period)) > 1
+    assert len(set(seen_selectivity)) > 1
+    assert set(seen_donchian) == {request.regime.donchian_period}
+    assert all(Decimal("0") <= value <= Decimal("1") for value in seen_selectivity)

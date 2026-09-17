@@ -12,6 +12,12 @@ from nautilus_lab.domain.risk import AccountSnapshot
 from nautilus_lab.domain.signals import SignalSide
 from nautilus_lab.infrastructure.paper_trading import PaperTradingLogger
 
+#: Robots `lab paper` can actually build. `_build_robot` maps only EMA to `EmaCrossover`
+#: and everything else to `RegimeRouter`, so any other name would run the regime robot
+#: while the artifact recorded the name that was asked for. The CLI restricts its
+#: `--robot` choices to exactly this set (cli.py) and the API validates against it too.
+PAPER_SUPPORTED_ROBOTS: frozenset[RobotName] = frozenset({RobotName.REGIME, RobotName.EMA})
+
 
 class RunPaperResearch:
     """Paper mode: public-data path, log hypothetical orders only."""

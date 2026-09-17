@@ -15,9 +15,20 @@
 # =============================================================================
 kind: strategy
 name: adaptive_ema
-version: "1.0"
-status: candidate
+version: "1.1"
+status: rejected
 title: "Adaptive EMA: фільтр режиму на EMA з α, що залежить від efficiency ratio"
+
+rejection_reason: >
+  Контрольний A/B на каталозі 1h (23 697 барів на інструмент, 4 rolling-фолди,
+  embargo 10, конфігурації зафіксовані всередині фолду і НЕ відібрані на IS —
+  `scripts/experiment_adaptive_filter.py`). ETH: selectivity=0 mean OOS=−3.80%
+  (1/4), 0.5 mean=−3.83% (парна Δ=−0.03%), 1 mean=−3.38% (Δ=+0.42%); buy&hold
+  mean=+2.44%. BTC: 0 mean=−5.25% (0/4), 0.5 mean=−5.58% (Δ=−0.33%), 1
+  mean=−5.91% (Δ=−0.66%); buy&hold mean≈−0.73%. На ETH при 0.5 шляхи збігаються
+  з контролем на 3/4 фолдів (ті самі fills і notional). На BTC більша
+  селективність гірша. Жодна конфігурація не обганяє buy&hold. Адаптивний α
+  нічого не додає до фіксованого — гіпотезу закрито, а не «підкручувати».
 
 hypothesis: >
   Якщо фільтр режиму замінити на EMA зі змінним кроком — α_t = α_base ·
@@ -79,7 +90,10 @@ params:
     description: >
       Сила селективності в [0, 1]: 0 = сталий α (контроль, тотожний `regime` за
       тих самих параметрів), 1 = максимальний розмах α у межах [α_base/2, 3α_base/2]
-      (з відсіканням у (0, 1)).
+      (з відсіканням у (0, 1)). Optuna шукає той самий простір, що й сітка:
+      period ∈ {10,20,30,40} і selectivity ∈ [0, 1] з кроком 0.25
+      (`optuna_optimizer.py`). Без власної гілки Optuna тихо крутить donchian/bb
+      від `regime` — саме ту пастку, яку вже ловили на `vpin_momentum`.
   - env: ADAPTIVE_ER_PERIOD
     default: 20
     tuned: false
@@ -97,14 +111,28 @@ invariants:
   no_lookahead: true
   closed_bars_only: true
   decimal_not_float: true
-  fail_closed_without_adapter: true
+  # Робот підключений до рушія (щоб контроль лишався відтворюваним), тож
+  # fail-closed-вимога до нього не діє.
+  fail_closed_without_adapter: false
+
+evidence:
+  measured: true
+  beats_buy_hold: false
+  reproduce: >
+    .venv/bin/python scripts/experiment_adaptive_filter.py
+    .venv/bin/python scripts/experiment_adaptive_filter.py --instrument BTC/USDT.SIM
+    Конфігурації зафіксовані всередині кожного фолду (selectivity ∈ {0, 0.5, 1},
+    period=40). Це навмисно не `lab research --folds 4`: підбір на IS сховав би
+    ефект, бо контроль (selectivity=0) міг би виграти відбір з причин, не
+    пов'язаних із селективністю.
+  notes: >
+    Числа — у rejection_reason. Код лишається підключеним до рушія, щоб вимір
+    можна було повторити; rejected означає «гіпотезу закрито», а не «видалили
+    робота».
 
 notes: >
-  Порівняння, яке має сенс: `--robot adaptive_ema --folds 4` проти
-  `--robot regime --folds 4` і проти `--robot ema --folds 4` на тому самому
-  каталозі (той самий OOS-період), плюс buy&hold, який CLI друкує сам.
-
-  Чому selectivity=0 у сітці, а не «просто перевіримо на око»: сітка з трьома
-  значеннями selectivity містить власну нульову гіпотезу. Якщо переможцем
-  виявиться selectivity=0, це прямо означає, що адаптивність не потрібна — і
-  тоді робота треба закривати як `rejected`, а не «підкручувати».
+  Порівняння, яке має сенс, уже зроблене скриптом вище, а не
+  `--robot adaptive_ema --folds 4` проти `--robot regime`: друге порівнює дві
+  різні осі підбору (period×selectivity проти donchian×bb_k). Сітка з трьома
+  значеннями selectivity містить власну нульову гіпотезу — і контроль її не
+  програв.

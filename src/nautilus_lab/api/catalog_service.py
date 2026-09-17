@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -87,6 +88,36 @@ def list_catalogs(cfg: Settings | None = None) -> dict[str, Any]:
         "default": resolved.catalog_path,
         "catalogs": catalogs,
     }
+
+
+# Describing a catalog loads every bar of every instrument from Parquet. The dashboard
+# polls its status endpoint on a timer, so an uncached describe means re-reading the whole
+# catalog several times a minute for numbers that only change when an ingest finishes.
+# The cache is keyed by resolved absolute path and invalidated explicitly after ingest.
+_CATALOG_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_CATALOG_CACHE_TTL_SECONDS = 10.0
+
+
+def invalidate_catalog_cache(catalog_path: str | None = None) -> None:
+    """Drop cached catalog descriptions, for one path or all of them."""
+    if catalog_path is None:
+        _CATALOG_CACHE.clear()
+        return
+    _CATALOG_CACHE.pop(str(Path(catalog_path).expanduser().resolve()), None)
+
+
+def describe_catalog_cached(
+    catalog_path: str | None = None, *, ttl_seconds: float = _CATALOG_CACHE_TTL_SECONDS
+) -> dict[str, Any]:
+    """`describe_catalog` behind a short TTL cache. Treat the result as read-only."""
+    key = str(resolve_catalog_path(catalog_path))
+    now = time.monotonic()
+    cached = _CATALOG_CACHE.get(key)
+    if cached is not None and now - cached[0] < ttl_seconds:
+        return cached[1]
+    payload = describe_catalog(catalog_path)
+    _CATALOG_CACHE[key] = (now, payload)
+    return payload
 
 
 def load_catalog_bars(

@@ -82,6 +82,11 @@ class FormulaicAlphaEngine:
         vol_of_vol = _std([abs(item) for item in self._returns[-20:]])
         trend_er = _efficiency_ratio(closes[-21:])
         range_pct = range_span / closes[-1] if closes[-1] > 0 else Decimal("0")
+        # Identical to `range_pct` (both are (high-low)/close). Kept because
+        # FEATURE_NAMES is a public 12-slot contract (prompts, DSL, saved booster);
+        # collapsing it would invalidate `models/formulaic_lgbm.txt`. Documented in
+        # docs/18 section 2a; do not "fix" by swapping in candle wicks — that was measured
+        # and added nothing.
         high_low_spread = (highs[-1] - lows[-1]) / closes[-1] if closes[-1] > 0 else Decimal("0")
         return (
             ret,

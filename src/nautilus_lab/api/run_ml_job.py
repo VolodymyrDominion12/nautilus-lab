@@ -27,6 +27,9 @@ def main(argv: list[str] | None = None) -> int:
         profit_multiple=str(payload.get("profit_multiple", "2")),
         stop_multiple=str(payload.get("stop_multiple", "1")),
         vol_window=int(payload.get("vol_window", 20)),
+        start=payload.get("start"),
+        end=payload.get("end"),
+        threshold=str(payload.get("threshold", "0.55")),
     )
     result, log_text = execute_ml_train(job)
     log_path = reports_dir / "ml_train.log"

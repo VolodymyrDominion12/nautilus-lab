@@ -4,7 +4,7 @@
 # =============================================================================
 kind: strategy
 name: meta_label
-version: "1.0"
+version: "1.1"
 status: candidate
 title: "Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни"
 
@@ -85,11 +85,13 @@ evidence:
   notes: >
     Виміру немає: робот додано за протоколом spec-before-code. OOS проти
     buy&hold і проти негейтнутого `regime` ще не ганяли. Не вигадувати
-    чисел. Відтворення після навчання:
+    чисел. Відтворення після навчання на IS-вікні (кінець виключно):
     `uv run python scripts/train_meta_label.py --catalog catalog
-    --output models/meta_label.txt` і
+    --end YYYY-MM-DD --output models/meta_label.txt` і
     `uv run lab research --robot meta_label --folds 4`
-    (потрібен `META_LABEL_MODEL_PATH`).
+    (потрібен `META_LABEL_MODEL_PATH`). Без `--end` скрипт збереже модель,
+    але позначить `train_window` як in-sample only: такий артефакт не є
+    OOS для моделі, навіть якщо walk-forward далі ріже пороги.
 
 notes: >
   Первинна модель — завжди `RegimeRouter` з параметрами `Settings` / сітки
@@ -100,13 +102,18 @@ notes: >
   sell), разом 13. Мітка = 1 лише коли шлях після входу (з наступного бару)
   першим торкається take-profit; стоп і вичерпання горизонту = 0. Якщо в
   одному барі зачіпаються обидва бар'єри, мітка STOP_LOSS (песимістично).
-  Навчання — purged K-fold, embargo ≥ `max_holding_bars` (типово 10).
-  LLM на `on_bar` немає: бустер навчається офлайн і читається з файлу.
+  Навчання — purged K-fold за часом події: `sample_times` = індекс бара
+  входу, `label_ends` = вхід + `bars_held` + 1 (ексклюзивно). Embargo —
+  бари після тестового span, не «10 подій». OOF-звіт друкує precision на
+  `meta_label_threshold` і `beats_always_take` проти `take_profit_rate`
+  (константа «брати всі сигнали»); accuracy сама по собі гіпотезу не
+  закриває. LLM на `on_bar` немає: бустер навчається офлайн і читається
+  з файлу.
   Існуючий `formulaic_lgbm` лишається окремим роботом прогнозу напрямку;
   цей робот не замінює його й не голосує з XGBoost/CatBoost.
 
 references:
-  - specs/components/triple-barrier-labeling.yaml
+  - specs/components/purged-k-fold.yaml
   - specs/strategies/regime.yaml
   - specs/strategies/formulaic_lgbm.yaml
-  - ML Ансамблі У Криптотрейдингу.md
+  - docs/19-ml-steking-vidpovidnist.md

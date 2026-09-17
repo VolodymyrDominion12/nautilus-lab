@@ -8,6 +8,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, TextIO, cast
 
+from nautilus_lab.application.train_classifier import (
+    describe_train_window,
+    parse_optional_utc,
+    require_exclusive_window,
+)
 from nautilus_lab.application.train_formulaic import (
     build_formulaic_dataset,
     train_formulaic_lightgbm,
@@ -36,6 +41,9 @@ class MLTrainConfig:
     profit_multiple: str = "2"
     stop_multiple: str = "1"
     vol_window: int = 20
+    start: str | None = None
+    end: str | None = None
+    threshold: str = "0.55"
 
 
 class _Tee(io.TextIOBase):
@@ -52,6 +60,14 @@ class _Tee(io.TextIOBase):
         self._original.flush()
 
 
+def _pct(value: Decimal | None) -> str:
+    return "n/a" if value is None else f"{float(value) * 100:.2f}%"
+
+
+def _flag(value: bool | None) -> str:
+    return "n/a" if value is None else str(value).lower()
+
+
 def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
     buffer = io.StringIO()
     original = cast(TextIO, sys.stdout)
@@ -63,7 +79,11 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
         interval = job.bar_interval or cfg.bar_interval
         store = NautilusParquetCatalog(catalog_path, fees=FeeSchedule.binance_spot_vip0())
         bar_type = nautilus_bar_type(instrument, interval)
-        bars = store.load(bar_type=bar_type)
+        start = parse_optional_utc(job.start)
+        end = parse_optional_utc(job.end)
+        require_exclusive_window(start, end)
+        window = describe_train_window(start=start, end=end)
+        bars = store.load(bar_type=bar_type, start=start, end=end)
 
         if job.model_type == "formulaic":
             output = Path(job.output_path or "models/formulaic_lgbm.txt")
@@ -73,11 +93,15 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
                 output,
                 n_splits=job.folds,
                 embargo=job.embargo,
+                train_window=window,
             )
-            accuracy = "n/a" if report.accuracy is None else f"{float(report.accuracy) * 100:.2f}%"
+            accuracy = _pct(report.accuracy)
+            majority = _pct(report.majority_rate)
+            beats = _flag(report.beats_majority)
             print(
                 f"saved={report.model_path} rows={report.rows} folds={report.folds} "
-                f"purged_cv_accuracy={accuracy}"
+                f"purged_cv_accuracy={accuracy} majority_rate={majority} "
+                f"beats_majority={beats} train_window={report.train_window}"
             )
             result = {
                 "is_finished": True,
@@ -88,6 +112,9 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
                 "folds": report.folds,
                 "accuracy": accuracy,
                 "accuracy_raw": str(report.accuracy) if report.accuracy is not None else None,
+                "majority_rate": majority,
+                "beats_majority": beats,
+                "train_window": report.train_window,
             }
             return result, buffer.getvalue()
 
@@ -109,20 +136,19 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
                 output,
                 n_splits=job.folds,
                 embargo=job.embargo,
+                threshold=Decimal(job.threshold),
+                train_window=window,
             )
-            accuracy = (
-                "n/a"
-                if meta_report.accuracy is None
-                else f"{float(meta_report.accuracy) * 100:.2f}%"
-            )
-            tp_rate = (
-                "n/a"
-                if meta_report.take_profit_rate is None
-                else f"{float(meta_report.take_profit_rate) * 100:.2f}%"
-            )
+            accuracy = _pct(meta_report.accuracy)
+            tp_rate = _pct(meta_report.take_profit_rate)
+            precision = _pct(meta_report.oof_precision)
+            recall = _pct(meta_report.oof_recall)
+            beats = _flag(meta_report.beats_always_take)
             print(
                 f"saved={meta_report.model_path} rows={meta_report.rows} folds={meta_report.folds} "
-                f"purged_cv_accuracy={accuracy} take_profit_rate={tp_rate}"
+                f"purged_cv_accuracy={accuracy} take_profit_rate={tp_rate} "
+                f"oof_precision={precision} oof_recall={recall} beats_always_take={beats} "
+                f"train_window={meta_report.train_window}"
             )
             result = {
                 "is_finished": True,
@@ -133,6 +159,10 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
                 "folds": meta_report.folds,
                 "accuracy": accuracy,
                 "take_profit_rate": tp_rate,
+                "oof_precision": precision,
+                "oof_recall": recall,
+                "beats_always_take": beats,
+                "train_window": meta_report.train_window,
             }
             return result, buffer.getvalue()
 

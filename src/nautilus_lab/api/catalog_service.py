@@ -30,8 +30,17 @@ def resolve_catalog_path(catalog_path: str | None) -> Path:
 
 def describe_catalog(catalog_path: str | None = None) -> dict[str, Any]:
     resolved = resolve_catalog_path(catalog_path)
+    # The interval is a property of this process's settings, not of the directory, but the
+    # dashboard needs it to request bars and to label its chart: one catalog holds one
+    # interval, and a chart asking for the wrong one renders empty with no explanation.
+    interval = settings().bar_interval
     if not resolved.exists():
-        return {"catalog_path": str(resolved), "exists": False, "instruments": []}
+        return {
+            "catalog_path": str(resolved),
+            "exists": False,
+            "bar_interval": interval,
+            "instruments": [],
+        }
 
     try:
         cat = ParquetDataCatalog(str(resolved))
@@ -59,6 +68,7 @@ def describe_catalog(catalog_path: str | None = None) -> dict[str, Any]:
         return {
             "catalog_path": str(resolved),
             "exists": True,
+            "bar_interval": interval,
             "instruments": instruments_info,
             "total_instruments": len(instruments_info),
         }
@@ -66,6 +76,7 @@ def describe_catalog(catalog_path: str | None = None) -> dict[str, Any]:
         return {
             "catalog_path": str(resolved),
             "exists": True,
+            "bar_interval": interval,
             "error": str(exc),
             "instruments": [],
         }

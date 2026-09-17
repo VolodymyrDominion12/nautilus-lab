@@ -127,6 +127,9 @@ class MLTrainRequest(BaseModel):
     profit_multiple: str = "2"
     stop_multiple: str = "1"
     vol_window: int = 20
+    start: str | None = None
+    end: str | None = None
+    threshold: str = "0.55"
 
 
 class PaperRunRequest(BaseModel):
@@ -273,34 +276,67 @@ def get_catalog_bars(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def strategy_spec_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """One spec file as the dashboard needs it.
+
+    `wired_in_backtest`, `minimum_bars`, `grid_source`, `domain_module` and
+    `strategy_class` live under `implementation:` in the spec schema — the same paths
+    `specs/_validator.py` checks. Reading them from the top level made every robot report
+    `wired_in_backtest: false` and `minimum_bars: 100`, so the UI labelled working robots
+    as fail-closed and the research preflight would have blocked every run. The top-level
+    fallback keeps an older-format spec readable instead of silently blank.
+    """
+    implementation = data.get("implementation")
+    impl: dict[str, Any] = implementation if isinstance(implementation, dict) else {}
+
+    def field(name: str, default: object = None) -> object:
+        value = impl.get(name)
+        if value is None:
+            value = data.get(name)
+        return default if value is None else value
+
+    params = data.get("params")
+    return {
+        "name": data.get("name"),
+        "title": data.get("title", ""),
+        "domain_module": field("domain_module"),
+        "strategy_class": field("strategy_class"),
+        "backtest_adapter": impl.get("backtest_adapter"),
+        "wired_in_backtest": bool(field("wired_in_backtest", False)),
+        "minimum_bars": field("minimum_bars", 100),
+        "grid_source": field("grid_source"),
+        "signal_kind": impl.get("signal_kind"),
+        "status": data.get("status", "candidate"),
+        # Specs carry no free-text `summary`; `title` is the human one-liner.
+        "summary": data.get("summary") or data.get("title", ""),
+        "params": params if isinstance(params, list) else [],
+        "hypothesis": data.get("hypothesis", ""),
+        "invariants": data.get("invariants", []),
+    }
+
+
 @app.get("/api/strategies")
 def get_strategies() -> dict[str, Any]:
     results = []
+    failed: list[str] = []
     if not os.path.exists(SPECS_DIR):
-        return {"strategies": []}
+        return {"strategies": [], "failed_specs": []}
 
     for spec_file in sorted(glob.glob(os.path.join(SPECS_DIR, "*.yaml"))):
         try:
             with open(spec_file) as f:
                 data = yaml.safe_load(f)
-                results.append(
-                    {
-                        "name": data.get("name"),
-                        "domain_module": data.get("domain_module"),
-                        "strategy_class": data.get("strategy_class"),
-                        "wired_in_backtest": bool(data.get("wired_in_backtest")),
-                        "minimum_bars": data.get("minimum_bars", 100),
-                        "grid_source": data.get("grid_source"),
-                        "status": data.get("status", "candidate"),
-                        "summary": data.get("summary", ""),
-                        "params": data.get("params", []),
-                        "hypothesis": data.get("hypothesis", ""),
-                    }
-                )
-        except Exception:
+        except (OSError, yaml.YAMLError):
+            # A spec that cannot be parsed is reported, not skipped: a silently missing
+            # robot looks identical to one that was never written.
+            failed.append(os.path.basename(spec_file))
             continue
+        if not isinstance(data, dict) or not data.get("name"):
+            failed.append(os.path.basename(spec_file))
+            continue
+        results.append(strategy_spec_payload(data))
 
-    return {"strategies": results}
+    return {"strategies": results, "failed_specs": failed}
 
 
 @app.get("/api/reports")
@@ -370,6 +406,34 @@ def run_research(background_tasks: BackgroundTasks, req: ResearchRunRequest) -> 
     res_proc = CURRENT_RESEARCH_PROCESS
     if res_proc is not None and res_proc.poll() is None:
         return {"status": "error", "message": "Another research process is already running."}
+
+    # Refuse impossible combinations here, before the job is spawned and before the previous
+    # run's artifacts are cleared: a request that cannot mean anything should not cost a
+    # process launch and should not blank the dashboard's last result.
+    if req.full_sample and req.use_optuna and req.source == "catalog":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "full_sample and use_optuna are mutually exclusive: full-sample is one "
+                "in-sample run, Optuna needs a walk-forward split to select on."
+            ),
+        )
+    if req.folds > 1 and req.is_start:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "multi-window runs derive their own windows; drop the explicit is_start/"
+                "oos_start dates or run a single fold."
+            ),
+        )
+    if req.pbo and req.generate_tearsheet:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "a PBO audit simulates blocks x configurations runs, so a tearsheet has no "
+                "single run to draw; drop one of them."
+            ),
+        )
 
     log_path = os.path.join(REPORTS_DIR, "last_run.log")
     json_path = os.path.join(REPORTS_DIR, "last_run.json")
@@ -836,6 +900,14 @@ def get_ml_train_log() -> dict[str, Any]:
             "model_path": result.get("model_path"),
             "accuracy": result.get("accuracy"),
             "rows": result.get("rows"),
+            "take_profit_rate": result.get("take_profit_rate"),
+            "oof_precision": result.get("oof_precision"),
+            "oof_recall": result.get("oof_recall"),
+            "beats_always_take": result.get("beats_always_take"),
+            "majority_rate": result.get("majority_rate"),
+            "beats_majority": result.get("beats_majority"),
+            "train_window": result.get("train_window"),
+            "created_at": result.get("created_at"),
             "error_message": result.get("error_message"),
         }
     elif content:

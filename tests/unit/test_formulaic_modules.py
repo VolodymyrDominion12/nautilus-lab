@@ -62,11 +62,13 @@ def test_formulaic_strategy_emits_signal_after_warmup() -> None:
     assert any(signal is not None and signal.side is SignalSide.BUY for signal in signals)
 
 
-def test_build_formulaic_dataset_labels_rows() -> None:
+def test_build_formulaic_dataset_records_label_span() -> None:
     dataset = build_formulaic_dataset(_bars(80), horizon=3)
-    assert len(dataset.features) > 0
     assert len(dataset.features) == len(dataset.labels)
     assert set(dataset.labels).issubset({"up", "down", "flat"})
+    assert dataset.sample_times
+    assert dataset.label_ends == tuple(time + 4 for time in dataset.sample_times)
+    assert dataset.sample_times[0] >= MIN_HISTORY
 
 
 def test_direction_scores_map_down_flat_up() -> None:

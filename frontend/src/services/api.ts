@@ -1,16 +1,44 @@
 import { apiUrl } from '../config';
 
+export interface JobState {
+  running: boolean;
+  label: string;
+  started_at: string | null;
+  elapsed_seconds: number | null;
+}
+
+export type JobKey = 'research' | 'ingest' | 'ml_train' | 'paper';
+
 export interface StatusResponse {
   active_bots: number;
   research_running: boolean;
   ingest_running: boolean;
+  ml_running: boolean;
+  paper_running: boolean;
+  jobs: Record<JobKey, JobState>;
   strategies_available: string[];
   wired_robots: string[];
+  /** Robots `lab paper` can actually build. Others are refused, never substituted. */
+  paper_robots: string[];
   catalog_exists: boolean;
   catalog_instruments: number;
-  catalog_path?: string;
+  catalog_path: string;
+  bar_interval: string;
+  trading_mode: string;
   is_live: boolean;
   live_safe_mode: string;
+}
+
+/**
+ * Every job-launching `POST` answers HTTP 200 with `status: "error"` when another job of
+ * the same kind is already running. Callers must check this: ignoring it left the UI
+ * spinning while showing the previous run's numbers as if they were new.
+ */
+export interface ActionResult {
+  status: 'started' | 'error' | 'idle' | 'cancelled' | 'success' | 'dry_run';
+  message?: string;
+  command?: string;
+  disclaimer?: string;
 }
 
 export interface CatalogSummary {
@@ -39,6 +67,8 @@ export interface CatalogInstrument {
 export interface CatalogResponse {
   catalog_path: string;
   exists: boolean;
+  /** One catalog holds one interval; the chart needs it to request the right bar type. */
+  bar_interval?: string;
   total_instruments?: number;
   instruments: CatalogInstrument[];
   error?: string;
@@ -46,15 +76,21 @@ export interface CatalogResponse {
 
 export interface StrategySpec {
   name: string;
-  domain_module: string;
-  strategy_class: string;
+  title?: string;
+  domain_module: string | null;
+  strategy_class: string | null;
+  backtest_adapter?: string | null;
   wired_in_backtest: boolean;
   minimum_bars: number;
-  grid_source: string;
+  /** 'explicit' = own grid branch in param_grid.py; 'default_branch' = the regime grid applies. */
+  grid_source: string | null;
+  signal_kind?: string | null;
   status: string;
   summary: string;
   hypothesis?: string;
-  params: Array<{ name: string; type: string; default: any; env: string }>;
+  invariants?: unknown[];
+  /** `env` is required by the spec schema (`params[].env` is validated against Settings). */
+  params: Array<{ env: string; name?: string; type?: string; default?: unknown; description?: string }>;
 }
 
 export interface ReportItem {
@@ -117,44 +153,197 @@ export interface HistoryEntry {
   robot: string;
   run_type: string;
   finished_at?: string;
+  archived_at?: string;
   report_label?: string;
+  source?: string;
+  is_error?: boolean;
+  starting_equity?: number | null;
+  tearsheet_url?: string | null;
   multi_window?: MultiWindowSummary | null;
+  walk_forward?: WalkForwardSummary | null;
   single_backtest?: SingleBacktestSummary | null;
-  config?: Record<string, unknown>;
+  pbo?: PboSummary | null;
+  config?: ResearchRunConfig;
+}
+
+export interface BacktestCosts {
+  /** Two-sided traded notional. `turnover` is entry-only, so it cannot carry a cost rate. */
+  traded_notional: number | null;
+  /** Largest constant fee per unit of traded notional that leaves PnL at zero. */
+  breakeven_cost: number | null;
+  paid_cost_rate: number | null;
+  /** `breakeven - paid`. Negative means the result only worked because execution was cheap. */
+  cost_headroom: number | null;
+}
+
+export interface FoldSummary {
+  index: number;
+  oos_return: string;
+  oos_return_raw: string | null;
+  buy_and_hold_return: string;
+  buy_and_hold_return_raw: string | null;
+  excess_return: string;
+  excess_return_raw: string | null;
+  /** null when either side is unmeasurable — never a guess. */
+  beats_buy_and_hold: boolean | null;
+  selected: string;
+  candidates_tried: number;
+  fills: number;
+  in_sample_fills: number;
+  oos_ending_balance: number | null;
+  oos_metrics: BacktestMetricsPayload | null;
+  window: { out_of_sample_start: string; out_of_sample_end: string };
+}
+
+export interface BacktestMetricsPayload {
+  fees_paid: number;
+  max_drawdown: number;
+  max_dd_pct: string;
+  turnover: number;
+  sharpe_like: number | null;
+  traded_notional: number | null;
+  breakeven_cost: number | null;
+  paid_cost_rate: number | null;
+  cost_headroom: number | null;
 }
 
 export interface MultiWindowSummary {
   profitable: string;
+  fold_count: number;
   mean_oos: string;
+  mean_oos_raw: string | null;
   median_oos: string;
   worst_oos: string;
   best_oos: string;
+  spread: string;
+  spread_raw: string | null;
   buy_and_hold_mean: string;
+  buy_and_hold_mean_raw: string | null;
+  mean_excess_return: string;
+  mean_excess_return_raw: string | null;
   total_oos_fills: number;
   beats_buy_and_hold?: boolean | null;
+  mean_breakeven_cost: number | null;
+  breakeven_costs: (number | null)[];
+  mean_paid_cost_rate: number | null;
+  cost_headroom: number | null;
+  folds: FoldSummary[];
+  notes?: string;
+  summary_line?: string;
+}
+
+export interface DeflatedSharpeSummary {
+  summary_line: string;
+  probability: string | null;
+  sharpe: string | null;
+  threshold_sharpe: string | null;
+  observations: number;
+  trials: number;
+  note: string;
+}
+
+export interface PboSummary {
+  pbo: string | null;
+  blocks: number;
+  configuration_count: number;
+  split_count: number;
+  is_meaningful: boolean;
+  summary_line: string;
+  deflated_sharpe: DeflatedSharpeSummary;
+  labels: string[];
+  /** blocks x configurations. null = the engine reported no balance for that run. */
+  block_returns: (number | null)[][];
+  best_configuration_index: number | null;
+  best_configuration_label: string | null;
+  notes?: string;
+}
+
+export interface WalkForwardSummary {
+  selected: string;
+  candidates_tried: number;
+  window: {
+    in_sample_start: string;
+    in_sample_end: string;
+    out_of_sample_start: string;
+    out_of_sample_end: string;
+  };
+  in_sample: SingleBacktestSummary;
+  out_of_sample: SingleBacktestSummary;
+  in_sample_return: string | null;
+  in_sample_return_raw: string | null;
+  out_of_sample_return: string | null;
+  out_of_sample_return_raw: string | null;
+  notes?: string;
 }
 
 export interface SingleBacktestSummary {
   fills: number;
   positions: number;
-  ending_balance: number;
+  ending_balance: number | null;
   fees_paid: number;
   max_dd_pct: string;
   turnover: number;
-  sharpe: number;
+  sharpe: number | null;
+  breakeven_cost: number | null;
+  paid_cost_rate: number | null;
+  cost_headroom: number | null;
+  traded_notional: number | null;
+  metrics?: BacktestMetricsPayload | null;
+  notes?: string;
 }
+
+export interface ResearchRunConfig {
+  config_version?: number;
+  robot?: string;
+  source?: string;
+  bars?: number;
+  folds?: number;
+  is_fraction?: string;
+  embargo_bars?: number | null;
+  use_optuna?: boolean;
+  optuna_trials?: number;
+  pbo?: boolean;
+  pbo_blocks?: number;
+  bar_vpin?: boolean;
+  stress_slice?: string | null;
+  generate_tearsheet?: boolean;
+  journal?: boolean;
+  notify?: boolean;
+  full_sample?: boolean;
+  catalog_path?: string | null;
+  instrument_id?: string | null;
+  bar_interval?: string | null;
+  is_start?: string | null;
+  is_end?: string | null;
+  oos_start?: string | null;
+  oos_end?: string | null;
+  param_overrides?: Record<string, string>;
+}
+
+export type ResearchRunType =
+  | 'multi_window'
+  | 'walk_forward'
+  | 'full_sample'
+  | 'backtest'
+  | 'pbo'
+  | 'error';
 
 export interface ResearchSummary {
   is_finished: boolean;
   is_error: boolean;
-  run_type?: string | null;
+  run_type?: ResearchRunType | string | null;
+  robot?: string | null;
+  source?: string | null;
+  finished_at?: string | null;
   report_label?: string | null;
+  config?: ResearchRunConfig | null;
+  starting_equity?: number | null;
   error_message?: string | null;
   tearsheet_url: string | null;
   multi_window: MultiWindowSummary | null;
-  walk_forward?: Record<string, unknown> | null;
+  walk_forward?: WalkForwardSummary | null;
   single_backtest: SingleBacktestSummary | null;
-  pbo?: Record<string, unknown> | null;
+  pbo?: PboSummary | null;
   raw_summary?: string | null;
 }
 
@@ -188,8 +377,9 @@ async function parseJson<T>(res: Response): Promise<T> {
   return res.json();
 }
 
-export async function fetchStatus(): Promise<StatusResponse> {
-  return parseJson(await fetch(apiUrl('/api/status')));
+export async function fetchStatus(catalogPath?: string): Promise<StatusResponse> {
+  const query = catalogPath ? `?catalog_path=${encodeURIComponent(catalogPath)}` : '';
+  return parseJson(await fetch(apiUrl(`/api/status${query}`)));
 }
 
 export async function fetchCatalog(catalogPath?: string): Promise<CatalogResponse> {
@@ -225,7 +415,7 @@ export async function runIngest(params: {
   end?: string;
   catalog?: string;
   incremental?: boolean;
-}) {
+}): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/catalog/ingest'), {
       method: 'POST',
@@ -235,7 +425,7 @@ export async function runIngest(params: {
   );
 }
 
-export async function cancelIngest() {
+export async function cancelIngest(): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/catalog/ingest/cancel'), {
       method: 'POST',
@@ -251,7 +441,7 @@ export async function fetchStrategies(): Promise<{ strategies: StrategySpec[] }>
   return parseJson(await fetch(apiUrl('/api/strategies')));
 }
 
-export async function runResearch(params: ResearchRunParams) {
+export async function runResearch(params: ResearchRunParams): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/research'), {
       method: 'POST',
@@ -261,7 +451,7 @@ export async function runResearch(params: ResearchRunParams) {
   );
 }
 
-export async function cancelResearch() {
+export async function cancelResearch(): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/research/cancel'), {
       method: 'POST',
@@ -289,7 +479,7 @@ export async function fetchSettings(): Promise<{ settings: Record<string, string
   return parseJson(await fetch(apiUrl('/api/settings')));
 }
 
-export async function saveSettings(settings: Record<string, string>) {
+export async function saveSettings(settings: Record<string, string>): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/settings'), {
       method: 'PUT',
@@ -302,6 +492,8 @@ export async function saveSettings(settings: Record<string, string>) {
 export interface CommandCenterJob {
   running: boolean;
   label: string;
+  started_at?: string | null;
+  elapsed_seconds?: number | null;
 }
 
 export interface CommandCenterResponse {
@@ -312,7 +504,8 @@ export interface CommandCenterResponse {
   recent_experiments: HistoryEntry[];
   models: MlModelInfo[];
   journal: Record<string, number>;
-  last_research: Record<string, unknown> | null;
+  /** The raw `last_run.json`, which carries the same fields as a research summary. */
+  last_research: ResearchSummary | null;
 }
 
 export interface JournalEntry {
@@ -320,6 +513,8 @@ export interface JournalEntry {
   created_at: string;
   source: string;
   subject: string;
+  /** What was enforced for this run, e.g. "walk-forward catalog folds=4". */
+  gates?: string;
   decision: string;
   reason?: string;
   oos_return?: string | null;
@@ -342,6 +537,15 @@ export interface MlTrainSummary {
   model_path?: string;
   accuracy?: string;
   rows?: number;
+  /** Meta-label runs only: share of labels that hit the profit barrier. */
+  take_profit_rate?: string | null;
+  oof_precision?: string | null;
+  oof_recall?: string | null;
+  beats_always_take?: string | null;
+  majority_rate?: string | null;
+  beats_majority?: string | null;
+  train_window?: string | null;
+  created_at?: string | null;
   error_message?: string;
 }
 
@@ -350,6 +554,14 @@ export interface MlTrainLogResponse {
   log: string;
   summary: MlTrainSummary;
   result?: Record<string, unknown> | null;
+}
+
+export interface PaperOrder {
+  ts: string;
+  instrument_id: string;
+  side: string;
+  qty: string;
+  reason: string;
 }
 
 export interface PaperSummary {
@@ -399,7 +611,10 @@ export async function runMlTrain(params: {
   instrument_id?: string;
   bar_interval?: string;
   output_path?: string;
-}) {
+  start?: string;
+  end?: string;
+  threshold?: string;
+}): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/ml/train'), {
       method: 'POST',
@@ -409,7 +624,7 @@ export async function runMlTrain(params: {
   );
 }
 
-export async function cancelMlTrain() {
+export async function cancelMlTrain(): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/ml/train/cancel'), {
       method: 'POST',
@@ -421,7 +636,11 @@ export async function fetchMlTrainLog(): Promise<MlTrainLogResponse> {
   return parseJson(await fetch(apiUrl('/api/ml/train/log')));
 }
 
-export async function runPaper(params: { robot: string; bars?: number; source?: string }) {
+export async function runPaper(params: {
+  robot: string;
+  bars?: number;
+  source?: string;
+}): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/paper/run'), {
       method: 'POST',
@@ -431,7 +650,7 @@ export async function runPaper(params: { robot: string; bars?: number; source?: 
   );
 }
 
-export async function cancelPaper() {
+export async function cancelPaper(): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/paper/cancel'), {
       method: 'POST',
@@ -477,4 +696,10 @@ export async function runPropose(params: {
       body: JSON.stringify(params),
     }),
   );
+}
+
+export async function fetchHistoryEntry(
+  historyId: string,
+): Promise<{ entry: HistoryEntry }> {
+  return parseJson(await fetch(apiUrl(`/api/research/history/${encodeURIComponent(historyId)}`)));
 }

@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from nautilus_lab.application.train_classifier import purged_k_fold
+from nautilus_lab.application.train_classifier import (
+    binary_oof_metrics,
+    describe_train_window,
+    purged_k_fold,
+)
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.formulaic_alphas import MIN_HISTORY, FormulaicAlphaEngine
 from nautilus_lab.domain.meta_label_strategy import PrimaryRobot, encode_meta_features
@@ -25,6 +29,8 @@ class MetaLabelDataset:
     features: list[tuple[Decimal, ...]]
     labels: list[int]
     outcomes: list[TripleBarrierOutcome]
+    sample_times: tuple[int, ...]
+    label_ends: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +40,11 @@ class MetaLabelTrainReport:
     folds: int
     accuracy: Decimal | None
     take_profit_rate: Decimal | None
+    oof_precision: Decimal | None
+    oof_recall: Decimal | None
+    beats_always_take: bool | None
+    threshold: Decimal
+    train_window: str
 
 
 def build_meta_label_dataset(
@@ -58,6 +69,8 @@ def build_meta_label_dataset(
     features: list[tuple[Decimal, ...]] = []
     labels: list[int] = []
     outcomes: list[TripleBarrierOutcome] = []
+    sample_times: list[int] = []
+    label_ends: list[int] = []
     awaiting_entry = True
     for index, bar in enumerate(bars):
         row = engine.update(bar)
@@ -86,8 +99,16 @@ def build_meta_label_dataset(
         features.append(encode_meta_features(row, signal.side))
         labels.append(1 if outcome.touch is BarrierTouch.PROFIT else 0)
         outcomes.append(outcome)
+        sample_times.append(index)
+        label_ends.append(index + outcome.bars_held + 1)
         awaiting_entry = False
-    return MetaLabelDataset(features=features, labels=labels, outcomes=outcomes)
+    return MetaLabelDataset(
+        features=features,
+        labels=labels,
+        outcomes=outcomes,
+        sample_times=tuple(sample_times),
+        label_ends=tuple(label_ends),
+    )
 
 
 def train_meta_label_lightgbm(
@@ -96,6 +117,8 @@ def train_meta_label_lightgbm(
     *,
     n_splits: int = 5,
     embargo: int = 10,
+    threshold: Decimal = Decimal("0.55"),
+    train_window: str | None = None,
 ) -> MetaLabelTrainReport:
     try:
         import lightgbm as lgb
@@ -111,7 +134,13 @@ def train_meta_label_lightgbm(
         dtype=np.float64,
     )
     y_all = np.array(dataset.labels, dtype=np.int32)
-    folds = purged_k_fold(len(dataset.features), n_splits=n_splits, embargo=embargo)
+    folds = purged_k_fold(
+        len(dataset.features),
+        n_splits=n_splits,
+        embargo=embargo,
+        sample_times=dataset.sample_times,
+        label_ends=dataset.label_ends,
+    )
     booster_params = {
         "objective": "binary",
         "metric": "binary_logloss",
@@ -119,8 +148,8 @@ def train_meta_label_lightgbm(
         "num_leaves": 15,
         "learning_rate": 0.05,
     }
-    correct = 0
-    total = 0
+    oof_true: list[int] = []
+    oof_scores: list[Decimal] = []
     for fold in folds:
         train_x = x_all[list(fold.train_indices)]
         train_y = y_all[list(fold.train_indices)]
@@ -134,9 +163,8 @@ def train_meta_label_lightgbm(
             num_boost_round=80,
         )
         probs = np.asarray(booster.predict(test_x))
-        preds = (probs >= 0.5).astype(np.int32)
-        correct += int((preds == test_y).sum())
-        total += len(test_y)
+        oof_true.extend(int(value) for value in test_y.tolist())
+        oof_scores.extend(Decimal(str(float(value))) for value in probs.tolist())
 
     final_model = lgb.train(
         booster_params,
@@ -145,13 +173,18 @@ def train_meta_label_lightgbm(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     final_model.save_model(str(output_path))
-    accuracy = Decimal(correct) / Decimal(total) if total else None
+    oof = binary_oof_metrics(oof_true, oof_scores, threshold=threshold)
     wins = sum(dataset.labels)
     take_profit_rate = Decimal(wins) / Decimal(len(dataset.labels)) if dataset.labels else None
     return MetaLabelTrainReport(
         model_path=str(output_path),
         rows=len(dataset.features),
         folds=len(folds),
-        accuracy=accuracy,
+        accuracy=oof.accuracy,
         take_profit_rate=take_profit_rate,
+        oof_precision=oof.precision,
+        oof_recall=oof.recall,
+        beats_always_take=oof.beats_always_take,
+        threshold=threshold,
+        train_window=train_window or describe_train_window(start=None, end=None),
     )

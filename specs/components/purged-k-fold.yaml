@@ -1,0 +1,77 @@
+# =============================================================================
+#  purged-k-fold — крос-валідація моделі без витоку мітки в тест
+# =============================================================================
+#  Компонент, не робот. Джерело — López de Prado (purging + embargo), не Wolpert
+#  stacking: стекінг-огляд називає CPCV, але не дає формули. Тут реалізовано
+#  purged K-fold з очищенням за ЧАСОМ мітки, не комбінаторні шляхи CSCV
+#  (`overfitting-audit` / `--pbo` — інший механізм, інша матриця).
+# =============================================================================
+kind: component
+name: purged-k-fold
+version: "1.0"
+status: active
+title: "Purged K-fold: embargo в одиницях часу мітки, не в кількості рядків"
+
+hypothesis: >
+  Оцінка моделі на випадковому або індексному K-fold завищена, коли мітка
+  спостереження тягнеться в тестове вікно (фіксований горизонт, Triple Barrier)
+  або коли сусідні події стоять ближче, ніж embargo в барах. Якщо тренування
+  викидає всі рядки, чий інтервал мітки перетинає тестовий проміжок, а embargo
+  відкладається в тих самих одиницях, що й час події (бари), то purged-CV
+  accuracy / precision більше не містять look-ahead з перекриття міток.
+
+invariants:
+  no_lookahead: true
+  embargo_is_in_label_time: true
+  undefined_beats_guessing: true
+
+invariants_enforced:
+  - statement: >
+      Без явних sample_times/label_ends поведінка збігається зі старим індексним
+      embargo: тестовий фолд — суцільний відрізок індексів, з тренування
+      випадають сусіди на ±embargo індексів. Старі виклики (експерименти,
+      тести) не змінюють спліт.
+    enforced_by: src/nautilus_lab/application/train_classifier.py
+    verified_by: tests/unit/test_train_classifier.py::test_index_embargo_matches_the_legacy_split
+
+  - statement: >
+      Рядок, чия мітка заходить у тестовий проміжок, не потрапляє в train —
+      навіть коли його індекс далеко від межі фолда. Дві події через 2 бари
+      з горизонтом 10 не опиняються по різні боки спліту.
+    enforced_by: src/nautilus_lab/application/train_classifier.py
+    verified_by: tests/unit/test_train_classifier.py::test_overlapping_label_is_purged_from_train
+
+  - statement: >
+      Embargo рахується в одиницях sample_times (бари), не в кількості подій:
+      після кінця тестового span викидаються спостереження з часом у
+      [span_end, span_end + embargo), навіть якщо між подіями десятки барів.
+    enforced_by: src/nautilus_lab/application/train_classifier.py
+    verified_by: tests/unit/test_train_classifier.py::test_embargo_uses_sample_time_not_event_count
+
+  - statement: >
+      Бінарна OOF-оцінка не видає precision, коли модель не бере жодного
+      прикладу, і не оголошує перемогу над константою «брати всі»:
+      beats_always_take тоді хибне. Інакше accuracy моделі «ніколи не брати»
+      виглядала б як успіх на рідкісному take-profit.
+    enforced_by: src/nautilus_lab/application/train_classifier.py
+    verified_by: tests/unit/test_train_classifier.py::test_never_taking_does_not_beat_always_take
+
+  - statement: >
+      Без виключного --end вікно навчання описується як in-sample only, а не як
+      OOS-артефакт: describe_train_window без кінця не повертає вигляд
+      «чесного» інтервалу, який можна сплутати з walk-forward OOS.
+    enforced_by: src/nautilus_lab/application/train_classifier.py
+    verified_by: tests/unit/test_train_classifier.py::test_missing_end_is_labelled_in_sample_only
+
+notes: >
+  train_formulaic і train_meta_label передають sample_times/label_ends з
+  датасету. Скрипти й API приймають --start/--end (exclusive) і ріжуть каталог
+  до навчання; фінальний бустер вчиться лише на цьому вікні. Чесний протокол
+  walk-forward: --end = in-sample_end фолда. Без --end модель можна зберігати
+  (дослідження), але рядок train_window прямо каже, що це не OOS-артефакт.
+
+references:
+  - ML стекінг у біржовій торгівлі.md
+  - docs/19-ml-steking-vidpovidnist.md
+  - specs/strategies/meta_label.yaml
+  - specs/strategies/formulaic_lgbm.yaml

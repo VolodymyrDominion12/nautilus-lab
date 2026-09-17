@@ -20,6 +20,7 @@
 | Хочу застосувати ідеї з «Алгоритми ШІ У Криптоторгівлі 2026» | [13-ai-2026-vidpovidnist.md](13-ai-2026-vidpovidnist.md) |
 | Хочу застосувати ідеї з «ML Ансамблі У Криптотрейдингу» (ансамблі, TBM, мета-маркування, DSR, FFD) | [17-ml-ansambli-vidpovidnist.md](17-ml-ansambli-vidpovidnist.md) |
 | Хочу зрозуміти, чи варто брати Transformer / Mamba (SSM) / xLSTM / Kronos | [18-transformery-ssm-vidpovidnist.md](18-transformery-ssm-vidpovidnist.md) |
+| Хочу зрозуміти, чи стекінг (Wolpert) щось дає поверх мета-маркування | [19-ml-steking-vidpovidnist.md](19-ml-steking-vidpovidnist.md) |
 | Хочу зрозуміти, як LLM/LRM-модель реально допомагає в торгівлі (і де їй не місце) | [14-llm-model-u-torhivli.md](14-llm-model-u-torhivli.md) |
 | Хочу знати, які помилки знайшли в коді та чи їх виправлено | [15-audit-vypravlennya.md](15-audit-vypravlennya.md) |
 | Хочу використати MFT-модулі (VPIN, Хоукс, Келлі, GLFT...) у своєму коді | [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md) |
@@ -49,6 +50,7 @@
 | [16-llm-vidpovidnist.md](16-llm-vidpovidnist.md) | Мапа LLM-огляду → код: які ролі LLM реалізовані (офлайн-контур `lab propose`), які ні і чому |
 | [17-ml-ansambli-vidpovidnist.md](17-ml-ansambli-vidpovidnist.md) | Мапа ML-огляду (ансамблі GBDT, інформаційні бари, TBM, мета-маркування, CPCV/DSR/PBO, ONNX) → код: що є, що додано (DSR), що свідомо не беремо |
 | [18-transformery-ssm-vidpovidnist.md](18-transformery-ssm-vidpovidnist.md) | Мапа огляду «Трансформери проти SSM» → код: чому жодна з архітектур не береться, що переноситься дешево (breakeven-cost, відбір ознак, адаптивне згладжування) і вимір геометрії свічки з Kronos |
+| [19-ml-steking-vidpovidnist.md](19-ml-steking-vidpovidnist.md) | Мапа огляду «ML стекінг»: мета-маркування ≠ стекінг; три дірки в навчанні моделей (purging, повний каталог, accuracy vs precision); TabPFN/ONNX/HMM свідомо не беруться |
 
 ## Що вміє проєкт (коротко)
 

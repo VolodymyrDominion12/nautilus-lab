@@ -4,7 +4,7 @@
 # =============================================================================
 kind: strategy
 name: formulaic_lgbm
-version: "1.1"
+version: "1.2"
 status: candidate
 title: "Formulaic LGBM: напрямок бару з 12 формульних ознак OHLCV + пороговий класифікатор"
 
@@ -140,6 +140,13 @@ notes: >
   читати цей самий кортеж; розпакування `(up, down, flat)` було б тихою
   підміною сторін. Перевіряє
   `tests/unit/test_formulaic_modules.py::test_direction_scores_map_down_flat_up`.
+  П'яте: навчання ріже каталог за `--start/--end` (кінець виключно) і чистить
+  фолди за інтервалом мітки (`sample_times` = індекс бара, `label_ends` =
+  індекс + horizon + 1). Без `--end` артефакт позначено
+  `full-catalog (in-sample only; not an out-of-sample model)` — walk-forward
+  тоді підбирає поріг на OOS, який модель уже бачила. OOF-звіт друкує
+  `majority_rate` і `beats_majority`: accuracy > 0.50 на трикласовій мітці
+  ще не б'є константу «завжди найчастіший клас».
   Гіперпараметри бустера (кількість дерев, глибина, learning rate) у спеці не
   наводяться: вони живуть в офлайн-скрипті навчання й не є полями `Settings`,
   тому тут їх не можна ні перевірити машинно, ні задати через `.env`.
@@ -153,4 +160,5 @@ references:
   - docs/13-ai-2026-vidpovidnist.md
   - docs/14-llm-model-u-torhivli.md
   - docs/16-llm-vidpovidnist.md
-  - reports/ai-2026-comparison.md
+  - specs/components/purged-k-fold.yaml
+  - docs/19-ml-steking-vidpovidnist.md

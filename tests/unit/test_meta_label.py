@@ -125,6 +125,8 @@ def test_build_meta_label_dataset_labels_primary_entries() -> None:
     assert len(dataset.features) == len(dataset.labels) == len(dataset.outcomes)
     assert len(dataset.features[0]) == 13
     assert set(dataset.labels) <= {0, 1}
+    assert dataset.sample_times == (39,)
+    assert dataset.label_ends == (39 + dataset.outcomes[0].bars_held + 1,)
 
 
 def test_require_model_path_fails_closed_without_a_file(tmp_path: Path) -> None:

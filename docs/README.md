@@ -22,6 +22,7 @@
 | Хочу зрозуміти, чи варто брати Transformer / Mamba (SSM) / xLSTM / Kronos | [18-transformery-ssm-vidpovidnist.md](18-transformery-ssm-vidpovidnist.md) |
 | Хочу зрозуміти, чи стекінг (Wolpert) щось дає поверх мета-маркування | [19-ml-steking-vidpovidnist.md](19-ml-steking-vidpovidnist.md) |
 | Хочу зрозуміти, як LLM/LRM-модель реально допомагає в торгівлі (і де їй не місце) | [14-llm-model-u-torhivli.md](14-llm-model-u-torhivli.md) |
+| Хочу працювати через веб-дашборд та генерувати гіпотези в Alpha Proposer | [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md) |
 | Хочу знати, які помилки знайшли в коді та чи їх виправлено | [15-audit-vypravlennya.md](15-audit-vypravlennya.md) |
 | Хочу використати MFT-модулі (VPIN, Хоукс, Келлі, GLFT...) у своєму коді | [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md) |
 | Шукаю точний синтаксис команд | [10-cli-dovidnyk.md](10-cli-dovidnyk.md) |
@@ -51,6 +52,7 @@
 | [17-ml-ansambli-vidpovidnist.md](17-ml-ansambli-vidpovidnist.md) | Мапа ML-огляду (ансамблі GBDT, інформаційні бари, TBM, мета-маркування, CPCV/DSR/PBO, ONNX) → код: що є, що додано (DSR), що свідомо не беремо |
 | [18-transformery-ssm-vidpovidnist.md](18-transformery-ssm-vidpovidnist.md) | Мапа огляду «Трансформери проти SSM» → код: чому жодна з архітектур не береться, що переноситься дешево (breakeven-cost, відбір ознак, адаптивне згладжування) і вимір геометрії свічки з Kronos |
 | [19-ml-steking-vidpovidnist.md](19-ml-steking-vidpovidnist.md) | Мапа огляду «ML стекінг»: мета-маркування ≠ стекінг; три дірки в навчанні моделей (purging, повний каталог, accuracy vs precision); TabPFN/ONNX/HMM свідомо не беруться |
+| [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md) | Веб-дашборд лабораторії (React + FastAPI) та посібник з генератора гіпотез Alpha Proposer (offline LLM) |
 
 ## Що вміє проєкт (коротко)
 

@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+/*
+ * The whole app is a dark theme, but native form controls are drawn by the browser, not by
+ * our CSS. Without a declared colour scheme, Chrome renders a <select> popup with its light
+ * default background while the options inherit this page's light text colour — the list
+ * comes out blank and reads as "the dropdown does not open". The same mismatch makes the
+ * calendar icon of <input type="date"> almost invisible on a dark field.
+ *
+ * Declaring it once fixes every native control: select popups, date pickers, scrollbars.
+ */
+:root {
+  color-scheme: dark;
+}
+
 body {
   @apply bg-gray-950 text-gray-100 antialiased;
+}
+
+/* Belt and braces: the popup is a separate surface and does not always inherit :root. */
+select,
+option,
+input[type='date'] {
+  color-scheme: dark;
 }

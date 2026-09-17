@@ -615,20 +615,31 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
               <label className="text-xs font-medium text-gray-300">
                 Instrument {catalogInstruments.length > 1 && `(${catalogInstruments.length} in catalog)`}
               </label>
-              <select
-                value={selectedInstrument?.instrument_id ?? ''}
-                onChange={(e) => setInstrumentId(e.target.value)}
-                disabled={catalogInstruments.length === 0}
-                className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 font-mono focus:border-blue-500 focus:outline-none disabled:text-gray-600"
-              >
-                {catalogInstruments.length === 0 && <option value="">no instruments — run ingest</option>}
-                {catalogInstruments.map((item) => (
-                  <option key={item.instrument_id} value={item.instrument_id}>
-                    {item.raw_symbol} · {item.bars_count.toLocaleString()} bars ·{' '}
-                    {item.first_date?.slice(0, 10) ?? '?'} → {item.last_date?.slice(0, 10) ?? '?'}
-                  </option>
-                ))}
-              </select>
+              {catalogInstruments.length === 0 ? (
+                // A disabled select with a single "no instruments" option is a dead control:
+                // it opens nothing and explains nothing. Say what to do instead.
+                <div className="bg-amber-950/30 border border-amber-800/50 text-amber-300 text-xs rounded-xl p-2.5 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>
+                    This catalog has no instruments, so there is nothing to backtest. Open{' '}
+                    <span className="font-mono">Parquet Catalog</span> and run an ingest
+                    {catalogError ? ` (catalog error: ${catalogError})` : ''}.
+                  </span>
+                </div>
+              ) : (
+                <select
+                  value={selectedInstrument?.instrument_id ?? ''}
+                  onChange={(e) => setInstrumentId(e.target.value)}
+                  className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 font-mono focus:border-blue-500 focus:outline-none"
+                >
+                  {catalogInstruments.map((item) => (
+                    <option key={item.instrument_id} value={item.instrument_id}>
+                      {item.raw_symbol} · {item.bars_count.toLocaleString()} bars ·{' '}
+                      {item.first_date?.slice(0, 10) ?? '?'} → {item.last_date?.slice(0, 10) ?? '?'}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           ) : (
             <div className="flex flex-col gap-1.5 xl:col-span-2">

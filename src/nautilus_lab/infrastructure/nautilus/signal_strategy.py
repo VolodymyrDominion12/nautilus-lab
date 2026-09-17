@@ -18,6 +18,7 @@ from nautilus_lab.application.risk import (
     size_position,
     stop_distance,
 )
+from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRouter
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
@@ -76,6 +77,10 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     formulaic_threshold: Decimal = Decimal("0.55")
     meta_label_model_path: str | None = None
     meta_label_threshold: Decimal = Decimal("0.55")
+    adaptive_period: int = 40
+    adaptive_er_period: int = 20
+    adaptive_selectivity: Decimal = Decimal("0.5")
+    adaptive_slope_lookback: int = 10
     use_vol_scaling: bool = False
     vol_scaling_target: Decimal = Decimal("0.02")
     use_fractional_kelly: bool = False
@@ -303,6 +308,21 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             instrument_id=instrument_id,
             classifier=classifier,
             threshold=config.formulaic_threshold,
+        )
+    if robot is RobotName.ADAPTIVE_EMA:
+        return AdaptiveEmaRouter(
+            instrument_id=instrument_id,
+            params=AdaptiveEmaParams(
+                base_period=config.adaptive_period,
+                er_period=config.adaptive_er_period,
+                selectivity=config.adaptive_selectivity,
+                slope_lookback=config.adaptive_slope_lookback,
+                enter_trend_er=config.enter_trend_er,
+                exit_trend_er=config.exit_trend_er,
+                donchian_period=config.donchian_period,
+                bb_period=config.bb_period,
+                bb_k=config.bb_k,
+            ),
         )
     if robot is RobotName.META_LABEL:
         model_path = require_model_path(config.meta_label_model_path, robot="meta_label")

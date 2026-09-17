@@ -65,7 +65,8 @@ symbol=ETHUSDT wrote=5088 first=2025-01-01T00:59:59.999000+00:00 last=2025-07-31
 
 ```
 usage: lab research [-h] [--bars BARS]
-                    [--robot {regime,ema,pairs,funding,ml_obi,glft,tri_scan}]
+                    [--robot {regime,ema,pairs,vpin_momentum,formulaic_lgbm,meta_label,
+                              adaptive_ema,funding,ml_obi,glft,tri_scan}]
                     [--synthetic] [--full-sample] [--walk-forward]
                     [--is-start IS_START] [--is-end IS_END]
                     [--oos-start OOS_START] [--oos-end OOS_END]
@@ -78,7 +79,7 @@ usage: lab research [-h] [--bars BARS]
 | Прапорець | Типово | Опис |
 |-----------|--------|------|
 | `--bars` | `3000` | Кількість барів для синтетичного режиму |
-| `--robot` | `ROBOT` з `.env` (`regime`) | Який робот запускати. Підключені до рушія: `regime`, `ema`, `pairs`. `funding`, `ml_obi`, `glft`, `tri_scan` **падають з помилкою** (код 1), бо адаптера ще немає — див. [05](05-roboty.md#0-таблиця-стану-читати-першою) |
+| `--robot` | `ROBOT` з `.env` (`regime`) | Який робот запускати. Підключені до рушія (7 із 11 значень `RobotName`): `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`. `funding`, `ml_obi`, `glft`, `tri_scan` **падають з помилкою** (код 1), бо адаптера ще немає — див. [05](05-roboty.md#0-таблиця-стану-читати-першою) |
 | `--synthetic` | вимкнено | Синтетичні бари замість каталогу (мережа не потрібна). Режим **повного прогону**, не walk-forward |
 | `--full-sample` | вимкнено | Один прогін каталогу на всій серії. **Не** є out-of-sample звітом |
 | `--walk-forward` | увімкнено для каталогу | Підбір на in-sample, звіт на out-of-sample |

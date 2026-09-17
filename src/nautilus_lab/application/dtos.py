@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
+from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
 from nautilus_lab.domain.fees import FeeSchedule
@@ -50,6 +51,7 @@ class BacktestRequest:
     formulaic_threshold: Decimal = Decimal("0.55")
     meta_label_model_path: str | None = None
     meta_label_threshold: Decimal = Decimal("0.55")
+    adaptive_params: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
     tearsheet_path: str | None = None
 
 
@@ -111,13 +113,17 @@ class SelectedParams:
     vpin_atr_multiple: Decimal = Decimal("2")
     formulaic_threshold: Decimal = Decimal("0.55")
     meta_label_threshold: Decimal = Decimal("0.55")
+    adaptive_period: int = 40
+    adaptive_selectivity: Decimal = Decimal("0.5")
 
     def label(self) -> str:
         return (
             f"fast_ema={self.fast_ema} slow_ema={self.slow_ema} "
             f"donchian={self.donchian_period} bb_k={self.bb_k} "
             f"z_entry={self.z_entry} formulaic_threshold={self.formulaic_threshold} "
-            f"meta_label_threshold={self.meta_label_threshold}"
+            f"meta_label_threshold={self.meta_label_threshold} "
+            f"adaptive_period={self.adaptive_period} "
+            f"adaptive_selectivity={self.adaptive_selectivity}"
         )
 
 
@@ -366,6 +372,8 @@ def selected_from_request(request: BacktestRequest) -> SelectedParams:
         vpin_atr_multiple=request.vpin_momentum_atr_multiple,
         formulaic_threshold=request.formulaic_threshold,
         meta_label_threshold=request.meta_label_threshold,
+        adaptive_period=request.adaptive_params.base_period,
+        adaptive_selectivity=request.adaptive_params.selectivity,
     )
 
 
@@ -391,4 +399,9 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
         vpin_momentum_atr_multiple=params.vpin_atr_multiple,
         formulaic_threshold=params.formulaic_threshold,
         meta_label_threshold=params.meta_label_threshold,
+        adaptive_params=replace(
+            request.adaptive_params,
+            base_period=params.adaptive_period,
+            selectivity=params.adaptive_selectivity,
+        ),
     )

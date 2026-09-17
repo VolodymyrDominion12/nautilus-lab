@@ -32,7 +32,11 @@ import numpy as np
 from nautilus_lab.application.train_classifier import label_direction, purged_k_fold
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.fees import FeeSchedule
-from nautilus_lab.domain.formulaic_alphas import MIN_HISTORY, FormulaicAlphaEngine
+from nautilus_lab.domain.formulaic_alphas import (
+    FEATURE_NAMES,
+    MIN_HISTORY,
+    FormulaicAlphaEngine,
+)
 from nautilus_lab.domain.ml_classifier import DIRECTION_CLASS_INDEX
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
@@ -213,6 +217,12 @@ def main() -> None:
         default="ETH/USDT.SIM,BTC/USDT.SIM",
         help="Comma-separated instrument ids",
     )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=6,
+        help="Features kept by the in-fold gain selector",
+    )
     args = parser.parse_args()
 
     store = NautilusParquetCatalog(Path(args.catalog), fees=FeeSchedule.binance_spot_vip0())
@@ -222,6 +232,16 @@ def main() -> None:
         base_accuracy, base_folds = purged_cv_accuracy(base, labels)
         extended_accuracy, extended_folds = purged_cv_accuracy(extended, labels)
         majority, counts = majority_class_rate(labels)
+        selected_accuracy, selected_folds, subsets, gain_share = cv_accuracy_with_selection(
+            base, labels, top_k=args.top_k
+        )
+        linear_accuracy, linear_folds = cv_accuracy_linear(base, labels)
+        gain_line = ", ".join(
+            f"{name}={gain_share[index]:.3f}" for index, name in enumerate(FEATURE_NAMES)
+        )
+        subset_lines = "\n".join(
+            f"  fold {index} subset={list(subset)}" for index, subset in enumerate(subsets)
+        )
         print(
             f"{instrument} bars={len(bars)} rows={len(labels)} labels={counts}\n"
             f"  majority_class_accuracy={majority:.4f}\n"
@@ -229,7 +249,12 @@ def main() -> None:
             f"folds={[round(value, 4) for value in base_folds]}\n"
             f"  12 + candle geometry    purged_cv_accuracy={extended_accuracy:.4f} "
             f"folds={[round(value, 4) for value in extended_folds]}\n"
-            f"  delta={extended_accuracy - base_accuracy:+.4f}"
+            f"  delta={extended_accuracy - base_accuracy:+.4f}\n"
+            f"  top-{args.top_k} by gain (in-fold) purged_cv_accuracy={selected_accuracy:.4f} "
+            f"folds={[round(value, 4) for value in selected_folds]}\n"
+            f"  linear ridge reference  purged_cv_accuracy={linear_accuracy:.4f} "
+            f"folds={[round(value, 4) for value in linear_folds]}\n"
+            f"  gain_share={gain_line}\n{subset_lines}"
         )
 
 

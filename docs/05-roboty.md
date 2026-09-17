@@ -1,8 +1,12 @@
 # 05. Роботи: хто що робить
 
-У проєкті є **три повністю робочі роботи** (`regime`, `ema`, `pairs`) і **чотири набори MFT-модулів**,
-які поки що не підключені до CLI (`funding`, `ml_obi`, `glft`, `tri_scan`). Це різниця, яку треба
-розуміти з першого дня, бо CLI приймає всі сім назв.
+У проєкті **11 значень `--robot`**: **сім підключені до рушія** (`regime`, `ema`, `pairs`,
+`vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`) і **чотири — набори MFT-модулів**,
+які до CLI не підключені (`funding`, `ml_obi`, `glft`, `tri_scan`) і падають fail closed. Це різниця,
+яку треба розуміти з першого дня.
+
+Детальні розділи нижче написані для `regime`, `ema` і `pairs`; решта підключених роботів описана
+специфікаціями `specs/strategies/*.yaml` (там же — гіпотеза, edge-умови й виміряний стан).
 
 ## 0. Таблиця стану (читати першою)
 
@@ -11,6 +15,10 @@
 | `regime` | `RegimeRouter` | ✅ так | Класифікує режим і торгує однією з трьох підстратегій |
 | `ema` | `EmaCrossover` | ✅ так | Перетин EMA, завжди в ринку |
 | `pairs` | `PairsTrading` + `SpreadRobot` | ✅ так (дві ноги) | Статистичний арбітраж ETH/BTC |
+| `vpin_momentum` | `VpinMomentum` | ✅ так | Момент на токсичному потоці (VPIN); див. `specs/strategies/vpin_momentum.yaml` |
+| `formulaic_lgbm` | `FormulaicLgbmStrategy` | ✅ так | Напрямок із 12 формульних ознак; потрібен навчений бустер або евристичний замінник |
+| `meta_label` | `MetaLabelStrategy` | ✅ так | Мета-модель гейтить входи `regime`; потрібен `META_LABEL_MODEL_PATH` |
+| `adaptive_ema` | `AdaptiveEmaRouter` | ✅ так | Режимний фільтр зі змінним кроком EMA (selectivity). **Гіпотезу закрито виміром** — див. [18](18-transformery-ssm-vidpovidnist.md) §3 (P3) |
 | `funding` | `FundingCashAndCarry` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 | `ml_obi` | `MlObiStrategy` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 | `glft` | `GlftMarketMaker` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
@@ -19,7 +27,17 @@
 Перелік підключених роботів зберігається в одному місці — `domain/regime.py`:
 
 ```python
-BACKTEST_WIRED_ROBOTS = frozenset({RobotName.REGIME, RobotName.EMA, RobotName.PAIRS})
+BACKTEST_WIRED_ROBOTS = frozenset(
+    {
+        RobotName.REGIME,
+        RobotName.EMA,
+        RobotName.PAIRS,
+        RobotName.VPIN_MOMENTUM,
+        RobotName.FORMULAIC_LGBM,
+        RobotName.META_LABEL,
+        RobotName.ADAPTIVE_EMA,
+    }
+)
 ```
 
 Перевірка `require_backtest_support()` викликається на вході у `RunResearchBacktest.execute()`,
@@ -30,7 +48,7 @@ BACKTEST_WIRED_ROBOTS = frozenset({RobotName.REGIME, RobotName.EMA, RobotName.PA
 
 ```
 $ uv run lab research --robot ml_obi --synthetic --bars 200
-robot 'ml_obi' has no backtest adapter yet; use one of: ema, pairs, regime. Its module is a domain building block only and is not wired to the engine.
+robot 'ml_obi' has no backtest adapter yet; use one of: adaptive_ema, ema, formulaic_lgbm, meta_label, pairs, regime, vpin_momentum. Its module is a domain building block only and is not wired to the engine.
 $ echo $?
 1
 ```

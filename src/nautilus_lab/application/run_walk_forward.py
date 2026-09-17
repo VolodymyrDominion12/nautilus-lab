@@ -319,7 +319,12 @@ def _multi_report(
 def _require_warmup(robot: RobotName, bar_count: int, fold: str) -> None:
     if robot is RobotName.PAIRS:
         minimum = 200
-    elif robot in (RobotName.REGIME, RobotName.VPIN_MOMENTUM, RobotName.META_LABEL):
+    elif robot in (
+        RobotName.REGIME,
+        RobotName.VPIN_MOMENTUM,
+        RobotName.META_LABEL,
+        RobotName.ADAPTIVE_EMA,
+    ):
         minimum = 150
     elif robot is RobotName.FORMULAIC_LGBM:
         minimum = 80

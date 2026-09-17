@@ -74,6 +74,24 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
                 meta_label_threshold=threshold,
             )
         return
+    if request.robot is RobotName.ADAPTIVE_EMA:
+        # selectivity=0 is the control: it keeps the step constant, i.e. the same
+        # robot with a fixed-alpha filter. If the winner is the control, adaptive
+        # smoothing adds nothing — see specs/strategies/adaptive_ema.yaml.
+        for period in (10, 20, 40):
+            for selectivity in (Decimal("0"), Decimal("0.5"), Decimal("1")):
+                yield SelectedParams(
+                    fast_ema=base.fast_ema,
+                    slow_ema=base.slow_ema,
+                    donchian_period=base.donchian_period,
+                    bb_period=base.bb_period,
+                    bb_k=base.bb_k,
+                    enter_trend_er=base.enter_trend_er,
+                    exit_trend_er=base.exit_trend_er,
+                    adaptive_period=period,
+                    adaptive_selectivity=selectivity,
+                )
+        return
     if request.robot is RobotName.EMA:
         for fast, slow in ((5, 20), (10, 20), (10, 40), (12, 26)):
             yield SelectedParams(

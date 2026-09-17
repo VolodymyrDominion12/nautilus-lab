@@ -5,6 +5,7 @@ from decimal import Decimal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
@@ -54,6 +55,13 @@ class Settings(BaseSettings):
     donchian_period: int = 20
     bb_period: int = 20
     bb_k: Decimal = Decimal("2")
+    # adaptive_ema: the filter regime leg gets a step that depends on the efficiency
+    # ratio (selectivity). 0 reproduces the fixed-alpha EMA exactly - the null
+    # hypothesis lives inside the grid, see specs/strategies/adaptive_ema.yaml.
+    adaptive_period: int = 40
+    adaptive_er_period: int = 20
+    adaptive_selectivity: Decimal = Decimal("0.5")
+    adaptive_slope_lookback: int = 10
     use_bar_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
@@ -117,6 +125,21 @@ class Settings(BaseSettings):
             er_period=self.er_period,
             trend_ema_period=self.trend_ema_period,
             slope_lookback=self.slope_lookback,
+            enter_trend_er=self.enter_trend_er,
+            exit_trend_er=self.exit_trend_er,
+            donchian_period=self.donchian_period,
+            bb_period=self.bb_period,
+            bb_k=self.bb_k,
+        )
+
+    def adaptive_ema_params(self) -> AdaptiveEmaParams:
+        """Filter parameters for `adaptive_ema`. The ER hysteresis gates are shared
+        with `regime`, so the adaptive step is the only difference between them."""
+        return AdaptiveEmaParams(
+            base_period=self.adaptive_period,
+            er_period=self.adaptive_er_period,
+            selectivity=self.adaptive_selectivity,
+            slope_lookback=self.adaptive_slope_lookback,
             enter_trend_er=self.enter_trend_er,
             exit_trend_er=self.exit_trend_er,
             donchian_period=self.donchian_period,

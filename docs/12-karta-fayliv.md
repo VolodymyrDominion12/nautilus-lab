@@ -37,6 +37,7 @@
 | `mean_reversion.py` | `RangeMeanReversion` | Повернення до середнього за смугами Боллінджера |
 | `ema_crossover.py` | `EmaCrossover` | Класичний перетин EMA, завжди в ринку |
 | `regime_router.py` | `RegimeRouter` | Класифікує бар → викликає відповідну стратегію; `FLAT` при зміні режиму; VPIN-фільтр |
+| `adaptive_ema.py` | `AdaptiveEmaParams`, `AdaptiveEma`, `AdaptiveEmaSnapshot`, `AdaptiveEmaRouter`, `efficiency_ratio_of()` | Селективне згладжування (скалярна форма ідеї Mamba): крок EMA залежить від efficiency ratio, `selectivity=0` відтворює сталий крок тотожно. Той самий роутер і ті самі ноги, що в `regime` — єдиною змінною експерименту лишається фільтр |
 
 ### Пари (статистичний арбітраж)
 

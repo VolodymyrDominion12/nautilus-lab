@@ -48,7 +48,12 @@ def fake_completer(monkeypatch: pytest.MonkeyPatch) -> _FakeCompleter:
     ) -> ChatCompleter:
         return completer
 
-    monkeypatch.setattr(cli, "llm_completer", _factory)
+    # The completer is resolved inside `execute_propose`, not in `cli`, so the patch
+    # target is that module's namespace. Patching `cli` raised AttributeError.
+    monkeypatch.setattr(
+        "nautilus_lab.application.run_alpha_proposal.llm_completer",
+        _factory,
+    )
     monkeypatch.setenv("LLM_API_KEY", "test-key")
     return completer
 

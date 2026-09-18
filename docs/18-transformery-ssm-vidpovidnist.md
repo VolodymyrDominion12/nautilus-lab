@@ -274,7 +274,7 @@ BTC/USDT.SIM rows=23662  majority=0.4816
 
 ```python
 range_pct = range_span / closes[-1]
-high_low_spread = (highs[-1] - lows[-1]) / closes[-1]   # те саме число
+high_low_spread = (highs[-1] - lows[-1]) / closes[-1]  # те саме число
 ```
 
 Перевірено на каталозі: на всіх **23 667** барах ETHUSDT значення збігаються біт-у-біт. Тобто

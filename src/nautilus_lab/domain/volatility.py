@@ -1,8 +1,24 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from enum import StrEnum
 
 from nautilus_lab.domain.bars import OhlcvBar
+
+
+class VolModel(StrEnum):
+    """Which volatility forecaster feeds `use_vol_scaling`.
+
+    `HAR` is the default because it is the only one with no optional dependency
+    and it is the model every already-documented vol-scaled run used. The two
+    `arch`-backed models are opt-in: they need the `research` extra, and they fit
+    by maximum likelihood, which is far too slow to redo on every bar — see the
+    refit cadence in `infrastructure/vol_forecast.py`.
+    """
+
+    HAR = "har"
+    EGARCH = "egarch"
+    GJR_GARCH = "gjr_garch"
 
 
 class HarRealizedVolatility:

@@ -68,6 +68,8 @@ class NautilusResearchBacktest:
                 adaptive_slope_lookback=request.adaptive_params.slope_lookback,
                 use_vol_scaling=request.risk_overlay.use_vol_scaling,
                 vol_scaling_target=request.risk_overlay.vol_scaling_target,
+                vol_model=request.risk_overlay.vol_model,
+                vol_refit_every=request.risk_overlay.vol_refit_every,
                 use_fractional_kelly=request.risk_overlay.use_fractional_kelly,
                 kelly_min_trades=request.risk_overlay.kelly_min_trades,
                 use_cvar_breaker=request.risk_overlay.use_cvar_breaker,
@@ -175,6 +177,7 @@ class NautilusResearchBacktest:
             fees_paid = _fees_paid(fills_report)
             equity_curve = getattr(strategy, "equity_curve", ())
             turnover = getattr(strategy, "turnover", Decimal("0"))
+            risk_breaches = getattr(strategy, "risk_breaches", ())
             traded_notional = _traded_notional(fills_report)
             metrics = compute_metrics(
                 starting_equity=request.starting_equity,
@@ -224,6 +227,7 @@ class NautilusResearchBacktest:
                 ),
                 metrics=metrics,
                 tearsheet_path=saved_tearsheet,
+                risk_breaches=tuple(risk_breaches),
             )
         finally:
             engine.dispose()

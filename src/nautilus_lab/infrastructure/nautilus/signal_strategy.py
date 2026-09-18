@@ -12,6 +12,7 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.strategy import Strategy
 
 from nautilus_lab.application.risk import (
+    RiskBreachTally,
     TradeStats,
     evaluate_entry,
     resolve_risk_fraction,
@@ -30,7 +31,7 @@ from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.signals import Signal, SignalSide
-from nautilus_lab.domain.volatility import HarRealizedVolatility
+from nautilus_lab.domain.volatility import VolModel
 from nautilus_lab.domain.vpin import BarVpin
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
 from nautilus_lab.infrastructure.lightgbm_classifier import (
@@ -39,6 +40,7 @@ from nautilus_lab.infrastructure.lightgbm_classifier import (
     LightGBMSuccessClassifier,
     require_model_path,
 )
+from nautilus_lab.infrastructure.vol_forecast import build_vol_forecaster
 
 
 class SingleLegRobot(Protocol):
@@ -83,6 +85,8 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     adaptive_slope_lookback: int = 10
     use_vol_scaling: bool = False
     vol_scaling_target: Decimal = Decimal("0.02")
+    vol_model: VolModel = VolModel.HAR
+    vol_refit_every: int = 24
     use_fractional_kelly: bool = False
     kelly_min_trades: int = 30
     use_cvar_breaker: bool = False
@@ -126,8 +130,16 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._previous_equity: Decimal | None = None
         self._entry_equity: Decimal | None = None
         self._trade_stats = TradeStats()
+        self._breaches = RiskBreachTally()
         self._atr = AverageTrueRange(14)
-        self._har = HarRealizedVolatility()
+        # The forecaster is built once and fed one closed bar at a time; the arch
+        # models refit on their own cadence rather than on every bar (see
+        # infrastructure/vol_forecast.py for why that cadence is explicit).
+        self._vol = build_vol_forecaster(
+            self._overlay,
+            model=config.vol_model,
+            refit_every_bars=config.vol_refit_every,
+        )
         self._previous_close: Decimal | None = None
         self._ratchet: RatchetState | None = None
 
@@ -139,7 +151,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         validate_bar(domain_bar, previous_ts=self._previous_ts, now=domain_bar.ts_utc)
         self._previous_ts = domain_bar.ts_utc
         self._atr.update(domain_bar)
-        vol_forecast = self._har.update(domain_bar, self._previous_close)
+        vol_forecast = self._vol.update(domain_bar, self._previous_close)
         self._previous_close = domain_bar.close
 
         signal = self._robot.on_bar(domain_bar)
@@ -173,6 +185,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         decision = evaluate_entry(snapshot, self._limits, self._overlay)
         if not decision.allowed:
+            self._breaches.record(decision.reason)
             self.log.warning(f"Risk blocked entry: {decision.reason}")
             return
 
@@ -229,6 +242,11 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     @property
     def turnover(self) -> Decimal:
         return self._turnover
+
+    @property
+    def risk_breaches(self) -> tuple[tuple[str, int], ...]:
+        """Circuit-breaker refusals by reason, in the order they first fired."""
+        return self._breaches.summary()
 
     def _flatten(self, equity: Decimal | None) -> None:
         self._ratchet = None

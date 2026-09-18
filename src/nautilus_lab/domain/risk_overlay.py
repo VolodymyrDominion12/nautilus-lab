@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from nautilus_lab.domain.errors import InvalidRiskError
 from nautilus_lab.domain.ratchet_stop import RatchetParams
+from nautilus_lab.domain.volatility import VolModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +14,8 @@ class RiskOverlay:
 
     use_vol_scaling: bool = False
     vol_scaling_target: Decimal = Decimal("0.02")
+    vol_model: VolModel = VolModel.HAR
+    vol_refit_every: int = 24
     use_fractional_kelly: bool = False
     kelly_min_trades: int = 30
     use_cvar_breaker: bool = False
@@ -23,6 +26,8 @@ class RiskOverlay:
     def __post_init__(self) -> None:
         if self.vol_scaling_target <= 0 or self.vol_scaling_target > 1:
             raise InvalidRiskError("vol_scaling_target must be in (0, 1]")
+        if self.vol_refit_every < 1:
+            raise InvalidRiskError("vol_refit_every must be >= 1")
         if self.kelly_min_trades < 1:
             raise InvalidRiskError("kelly_min_trades must be >= 1")
         if self.max_cvar_99 <= 0 or self.max_cvar_99 > 1:

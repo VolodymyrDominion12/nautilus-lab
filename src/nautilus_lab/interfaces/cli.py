@@ -418,7 +418,8 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
             _print_multi_window(multi)
             if should_notify:
                 notifier(cfg).notify(
-                    f"Catalog multi-window walk-forward complete: {multi.summary_line()}"
+                    "Catalog multi-window walk-forward complete: "
+                    f"{multi.summary_line()}{_breach_suffix(_multi_window_breach_line(multi))}"
                 )
             if journal_enabled:
                 _record_journal(
@@ -442,6 +443,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
             notifier(cfg).notify(
                 f"Catalog walk-forward complete: IS={wf.in_sample.ending_balance} "
                 f"OOS={wf.out_of_sample.ending_balance}"
+                f"{_breach_suffix(_breach_line('oos', wf.out_of_sample))}"
             )
         if journal_enabled:
             _record_journal(
@@ -687,7 +689,32 @@ def _print_multi_window(report: MultiWindowReport) -> None:
         f"breakeven_cost mean_bps={_bps(report.mean_breakeven_cost)} "
         f"folds_measured={len(report.breakeven_costs)}/{len(report.folds)}"
     )
+    breaches = _multi_window_breach_line(report)
+    if breaches is not None:
+        print(breaches)
     print(report.summary_line())
+
+
+def _breach_suffix(line: str | None) -> str:
+    """Append breach detail to a notification, or nothing when no breaker fired."""
+    return "" if line is None else f" | {line}"
+
+
+def _multi_window_breach_line(report: MultiWindowReport) -> str | None:
+    """Circuit-breaker refusals summed across folds, per reason.
+
+    Aggregated rather than per-fold: the question this answers is "is this robot
+    being held back by a breaker across the whole walk-forward", which a per-fold
+    breakdown would bury. Per-fold detail is still in each fold's report.
+    """
+    totals: dict[str, int] = {}
+    for fold in report.folds:
+        for reason, count in fold.out_of_sample.risk_breaches:
+            totals[reason] = totals.get(reason, 0) + count
+    if not totals:
+        return None
+    detail = ", ".join(f"{reason}={count}" for reason, count in totals.items())
+    return f"risk_breaches blocked={sum(totals.values())} {detail}"
 
 
 def _pct(value: Decimal | None) -> str:
@@ -711,6 +738,19 @@ def _breakeven_line(label: str, report: BacktestReport) -> str | None:
     )
 
 
+def _breach_line(label: str, report: BacktestReport) -> str | None:
+    """Which circuit breakers refused entries, and how often.
+
+    Printed only when something actually tripped: an all-clear line on every run
+    would be noise, and the absence of the line means "no entry was blocked",
+    which the report's empty tuple already states.
+    """
+    if not report.risk_breaches:
+        return None
+    detail = ", ".join(f"{reason}={count}" for reason, count in report.risk_breaches)
+    return f"{label} risk_breaches blocked={sum(c for _, c in report.risk_breaches)} {detail}"
+
+
 def _print_backtest(report: BacktestReport) -> None:
     print(f"fills={report.fills} positions={report.positions} ending={report.ending_balance}")
     if report.metrics is not None:
@@ -721,6 +761,9 @@ def _print_backtest(report: BacktestReport) -> None:
         breakeven = _breakeven_line("cost", report)
         if breakeven is not None:
             print(breakeven)
+    breaches = _breach_line("cost", report)
+    if breaches is not None:
+        print(breaches)
     if report.tearsheet_path:
         print(f"tearsheet_saved={report.tearsheet_path}")
     print(report.notes)
@@ -739,6 +782,9 @@ def _print_walk_forward(report: WalkForwardReport) -> None:
     breakeven = _breakeven_line("out-of-sample", report.out_of_sample)
     if breakeven is not None:
         print(breakeven)
+    breaches = _breach_line("out-of-sample", report.out_of_sample)
+    if breaches is not None:
+        print(breaches)
     if report.out_of_sample.tearsheet_path:
         print(f"tearsheet_saved={report.out_of_sample.tearsheet_path}")
 

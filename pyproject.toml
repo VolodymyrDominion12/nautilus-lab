@@ -71,7 +71,17 @@ filterwarnings = [
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
-extend-exclude = [".venv"]
+# `notebooks/` holds a GENERATED artifact — `scripts/generate_research_notebook.py`
+# writes it, cells and all. Linting the output of a code generator is the wrong
+# target: formatting the `.ipynb` fights the generator (which emits `json.dumps`
+# output, so `ruff format` can never agree with it), and the only thing lint ever
+# found there was unused imports, which is a symptom rather than the problem.
+# The artifact is checked instead by RUNNING it — `scripts/check_notebook.py`,
+# wired into CI. That check caught real breakage lint had missed for a long time
+# (stale `pnl_percent`/`fill_count`/`pbo_request`/`JournalRecord` references and a
+# float passed where the domain requires `Decimal`). Lint the generator; execute
+# the artifact.
+extend-exclude = [".venv", "notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "ANN", "RUF"]
@@ -86,6 +96,16 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "ANN", "RUF"]
 # і tests/ лишається англійською, як і був.
 "specs/_validator.py" = ["RUF001", "RUF002", "RUF003"]
 "src/nautilus_lab/domain/errors.py" = ["N818"]
+# scripts/generate_research_notebook.py — генератор зошита, чий ВМІСТ це довгий
+# український текст і код комірок, записані рядковими літералами. Тому:
+#   * RUF001-003 — той самий випадок, що й у specs/_validator.py: легітимний
+#     український текст, а не «неоднозначні» символи, які правило шукає в коді;
+#   * E501 — довгі рядки тут це проза та код комірок усередині рядків, а не
+#     логіка. Поріг у 100 символів адресований коду; ламати ним речення
+#     природної мови означало б змінювати текст, який потрапляє в зошит.
+# Решта правил (F, I, N, UP, B, SIM, ANN, E402) до цього файлу застосовується
+# повністю — сам код генератора лишається перевіреним.
+"scripts/generate_research_notebook.py" = ["RUF001", "RUF002", "RUF003", "E501"]
 
 [tool.mypy]
 python_version = "3.12"

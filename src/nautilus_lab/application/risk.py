@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, Decimal
 
 from nautilus_lab.domain.errors import (
@@ -44,6 +44,39 @@ def size_position(
     qty = min(raw_qty, max_qty)
     steps = (qty / qty_step).to_integral_value(rounding=ROUND_DOWN)
     return steps * qty_step
+
+
+@dataclass
+class RiskBreachTally:
+    """How often each circuit breaker refused an entry, in first-trip order.
+
+    Before this existed, a blocked entry was a `log.warning` and nothing else: a
+    finished run could show `max_dd` sitting exactly on `MAX_DRAWDOWN` and still
+    give no way to tell *which* breaker had fired, or whether it fired once or
+    three hundred times. `RiskDecision.reason` already carries the answer, so this
+    only stops throwing it away.
+
+    First-trip order is kept (not alphabetical) so the report reads as the story of
+    the run, and so "which breaker fired first" is answerable.
+    """
+
+    counts: dict[str, int] = field(default_factory=dict)
+
+    def record(self, reason: str) -> int:
+        """Count one refusal and return its new total."""
+        self.counts[reason] = self.counts.get(reason, 0) + 1
+        return self.counts[reason]
+
+    def summary(self) -> tuple[tuple[str, int], ...]:
+        return tuple(self.counts.items())
+
+    @property
+    def total(self) -> int:
+        return sum(self.counts.values())
+
+    @property
+    def tripped(self) -> bool:
+        return bool(self.counts)
 
 
 @dataclass

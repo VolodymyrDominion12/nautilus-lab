@@ -8,6 +8,7 @@ from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.pairs.cointegration import CointegrationResult, fit_cointegration
 from nautilus_lab.domain.pairs.ou import OuFit, fit_ou_half_life, z_score
 from nautilus_lab.domain.pairs.params import PairsParams
+from nautilus_lab.domain.quantiles import empirical_quantile
 from nautilus_lab.domain.signals import LegIntent, SignalSide, SpreadSignal
 from nautilus_lab.domain.windows import RollingWindow
 
@@ -16,6 +17,7 @@ from nautilus_lab.domain.windows import RollingWindow
 class _PairState:
     coint: CointegrationResult
     ou: OuFit
+    spreads: tuple[Decimal, ...] = ()
     open_bars: int = 0
     in_position: bool = False
     direction: int = 0
@@ -85,17 +87,48 @@ class PairsTrading:
                 return self._flat_signal(ts, "pairs z exit")
             return None
 
-        if z >= self._params.z_entry:
+        # Only the entry path needs the thresholds, so they are resolved there
+        # rather than on every bar: a position already open exits on `z_exit` or
+        # the time stop, never on the entry gate.
+        z_low, z_high = self._entry_thresholds()
+
+        if z >= z_high:
             self._state.in_position = True
             self._state.direction = -1
             self._state.open_bars = 0
             return self._entry_signal(ts, z, short_a=True, reason="pairs z high short spread")
-        if z <= -self._params.z_entry:
+        if z <= z_low:
             self._state.in_position = True
             self._state.direction = 1
             self._state.open_bars = 0
             return self._entry_signal(ts, z, short_a=False, reason="pairs z low long spread")
         return None
+
+    def _entry_thresholds(self) -> tuple[Decimal, Decimal]:
+        """(long, short) entry thresholds in z units for the current fit.
+
+        With `z_entry_quantile` unset this is the fixed ``(-z_entry, +z_entry)``.
+        With it set, the thresholds are the empirical ``p`` and ``1 - p``
+        quantiles of the *same* spread window the fit came from, mapped into z
+        with the same ``(mean, sigma)`` the live reading uses — so the comparison
+        stays in one unit system.
+
+        Using the fitted window rather than an expanding one is what keeps this
+        free of lookahead: at ``refit_every_bars = 0`` the window is frozen for
+        the life of the position, exactly like mu and sigma, so a threshold can
+        never be revised by bars the robot had not yet seen.
+        """
+        assert self._state is not None
+        probability = self._params.z_entry_quantile
+        if probability is None:
+            return -self._params.z_entry, self._params.z_entry
+        ou = self._state.ou
+        low = empirical_quantile(self._state.spreads, probability)
+        high = empirical_quantile(self._state.spreads, Decimal("1") - probability)
+        return (
+            z_score(low, ou.mean, ou.sigma),
+            z_score(high, ou.mean, ou.sigma),
+        )
 
     def _maybe_refit(self, ts: datetime) -> SpreadSignal | None:
         refit_every = self._params.refit_every_bars
@@ -151,7 +184,7 @@ class PairsTrading:
         ou = fit_ou_half_life(spread)
         if ou.half_life_bars > Decimal(self._params.max_half_life_bars):
             return None
-        return _PairState(coint=coint, ou=ou)
+        return _PairState(coint=coint, ou=ou, spreads=spread)
 
     def _current_spread(self, price_a: Decimal, price_b: Decimal) -> Decimal:
         assert self._state is not None

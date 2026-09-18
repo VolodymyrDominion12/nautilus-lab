@@ -12,6 +12,7 @@ from nautilus_lab.domain.regime import RegimeParams, RobotName
 from nautilus_lab.domain.risk import RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.trading_mode import TradingMode
+from nautilus_lab.domain.volatility import VolModel
 
 
 class Settings(BaseSettings):
@@ -31,6 +32,8 @@ class Settings(BaseSettings):
     max_var_99: Decimal = Decimal("0.05")
     use_vol_scaling: bool = False
     vol_scaling_target: Decimal = Decimal("0.02")
+    vol_model: VolModel = VolModel.HAR
+    vol_refit_every: int = 24
     use_fractional_kelly: bool = False
     kelly_min_trades: int = 30
     use_cvar_breaker: bool = False
@@ -38,6 +41,11 @@ class Settings(BaseSettings):
     use_ratchet: bool = False
     ratchet_arm_pct: Decimal = Decimal("0.0125")
     pairs_refit_every: int = 0
+    # 0 disables the quantile gate and leaves the fixed `PairsParams.z_entry` in
+    # charge, which is how every documented `pairs` run was measured. A plain
+    # Decimal with a sentinel is used instead of `Decimal | None` so that an unset
+    # or empty env var cannot fail pydantic validation on the way in.
+    pairs_z_entry_quantile: Decimal = Decimal("0")
     vpin_momentum_ema_period: int = 50
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
     formulaic_model_path: str | None = None
@@ -151,6 +159,8 @@ class Settings(BaseSettings):
         return RiskOverlay(
             use_vol_scaling=self.use_vol_scaling,
             vol_scaling_target=self.vol_scaling_target,
+            vol_model=self.vol_model,
+            vol_refit_every=self.vol_refit_every,
             use_fractional_kelly=self.use_fractional_kelly,
             kelly_min_trades=self.kelly_min_trades,
             use_cvar_breaker=self.use_cvar_breaker,
@@ -160,4 +170,8 @@ class Settings(BaseSettings):
         )
 
     def pairs_params(self) -> PairsParams:
-        return PairsParams(refit_every_bars=self.pairs_refit_every)
+        quantile = self.pairs_z_entry_quantile
+        return PairsParams(
+            refit_every_bars=self.pairs_refit_every,
+            z_entry_quantile=quantile if quantile > 0 else None,
+        )

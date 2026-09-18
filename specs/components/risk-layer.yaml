@@ -108,6 +108,51 @@ invariants_enforced:
       лише явно, а стоп-рівень перевіряється від ціни, відомої на відкритті бару
       (tests/unit/test_factor_research.py::test_step_ratchet_checks_the_stop_known_at_bar_open).
 
+  - statement: >
+      Спрацювання circuit breaker не губиться: причина відмови, яку повертає
+      `evaluate_entry` (напр. «max drawdown circuit breaker»), потрапляє в звіт
+      прогону з кількістю, а не лишається рядком у логі.
+    enforced_by: src/nautilus_lab/application/risk.py
+    verified_by: tests/unit/test_risk_breaches.py::test_the_reasons_recorded_are_the_real_ones_from_evaluate_entry
+    note: >
+      До цього заблокований вхід був лише `log.warning`: завершений прогін міг
+      показати `max_dd` рівно на `MAX_DRAWDOWN` і не дати жодної змоги сказати,
+      ЯКИЙ запобіжник спрацював і скільки разів. Тепер `RiskBreachTally`
+      накопичує `(причина, кількість)` у порядку першого спрацювання, а
+      `BacktestReport.risk_breaches` і рядок `risk_breaches blocked=...` у
+      `lab research` його показують. Порядок першого спрацювання не
+      алфавітний навмисно — він відповідає на питання «що зламалося першим».
+      Окремо закріплено сам порядок перевірок у `evaluate_entry`: денний ліміт
+      перевіряється ПЕРЕД просадкою, тому при падінні і на день, і від піку
+      звіт назве денний ліміт
+      (tests/unit/test_risk_breaches.py::test_drawdown_is_the_reason_when_the_day_itself_is_flat
+      і сусідній тест). Порожній `risk_breaches` означає «жодного входу не
+      заблоковано» — це твердження, а не відсутність виміру, тому рядок не
+      друкується, коли все чисто, замість `blocked=0`.
+      Межа цієї правки: це звітність, а не стрімінг. Алерти `--notify` дописують
+      підсумок спрацювань до повідомлення про завершення прогону, а не
+      надсилаються в момент кожного спрацювання. Для бектесту, який завершується
+      за секунди, потокові алерти не додають нічого; вони стануть потрібні разом
+      із живим контуром, якого в лабораторії свідомо немає.
+
+  - statement: >
+      Вибір моделі волатильності не змінює типової поведінки: `VOL_MODEL=har`
+      лишається єдиним значенням, за якого вже задокументовані прогони чинні, а
+      `egarch`/`gjr_garch` вмикаються явно і без пакета `arch` дають «немає
+      прогнозу», а не падіння прогону.
+    enforced_by: src/nautilus_lab/domain/volatility.py
+    verified_by: tests/unit/test_vol_forecast.py::test_har_is_the_default_and_needs_no_extra
+    note: >
+      Модель — це селектор (`VolModel` у `domain/volatility.py`), а не окремий
+      шлях у стратегії: `build_vol_forecaster()` повертає `HarVolForecaster` або
+      `ArchVolForecaster`, і `signal_strategy.py` бачить лише `update(bar, prev)`.
+      Для GJR окремо закріплено, що він справді просить асиметричний член
+      (`o=1`), а EGARCH — ні
+      (tests/unit/test_vol_forecast.py::test_gjr_asks_for_the_asymmetry_term_and_egarch_does_not),
+      бо інакше «GJR» був би симметричним GARCH під іншою назвою. Сам leverage-
+      ефект перевірено на реальному фіті
+      (tests/unit/test_vol_forecast.py::test_gjr_estimates_a_positive_asymmetry_term_on_a_leverage_series).
+
 notes: >
   Статус `partial`, і причина конкретна: аварійного вимикача як механізму немає —
   є лише його заглушка. `domain/kill_switch.py` описує протокол `KillSwitch` і
@@ -140,9 +185,19 @@ notes: >
      що `USE_FRACTIONAL_KELLY` типово вимкнено: механізм описано неправильно, хоч
      висновок збігається.
   3) `docs/06` §5 пише, що HAR-RV і vol-scaling «підключені до роботів не».
-     Насправді `signal_strategy.py` рахує `HarRealizedVolatility` на кожному барі й
-     передає прогноз у `resolve_risk_fraction()`, тож `USE_VOL_SCALING=true` справді
+     Насправді `signal_strategy.py` рахує прогноз волатильності на кожному барі й
+     передає його в `resolve_risk_fraction()`, тож `USE_VOL_SCALING=true` справді
      зменшує ризик. Це opt-in-механізм, а не «не підключено».
+  4) Дотепер `EGARCH` існував як модуль без жодного виклику в `src/`: функція
+     `egarch_forecast_volatility()` була покрита тестом і згадана в `docs/09` як
+     приклад для ручного вжитку, але жоден прогін її не бачив. Додати поряд з нею
+     GJR-GARCH, як просив роудмап §3.3, означало б зробити ДРУГОГО сироту, тому
+     тут обидві моделі підключені через `VOL_MODEL` і мають спільний
+     `ArchVolForecaster`. Окремо варто знати: `USE_VOL_SCALING` на спредовому
+     шляху (`SpreadRobot`) усе ще інертний — `SpreadRobotConfig` приймає
+     `use_vol_scaling`, але жодного прогнозу в `resolve_risk_fraction()` не
+     передає, тож прапорець там ні на що не впливає. Це не змінено цією правкою і
+     лишається відкритим (див. docs/22 §5).
   Що документи описують правильно (перевірено, щоб не приписати зайвого):
   `risk_per_trade` як частку, яку можна втратити (`docs/02` §змінні), порядок і
   тексти причин у `evaluate_entry` (`docs/06` §3), недосяжність

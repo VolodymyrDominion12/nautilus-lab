@@ -25,6 +25,7 @@
 | Хочу працювати через веб-дашборд та генерувати гіпотези в Alpha Proposer | [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md) |
 | Хочу знати, які помилки знайшли в коді та чи їх виправлено | [15-audit-vypravlennya.md](15-audit-vypravlennya.md) |
 | Шукаю стратегічний роудмап розвитку та покращення результатів | [21-roadmap-rozvytku.md](21-roadmap-rozvytku.md) |
+| Хочу знати, що з роудмапу вже зроблено, а що в ньому застаріло | [22-plan-realizatsii-roadmap.md](22-plan-realizatsii-roadmap.md) |
 | Хочу використати MFT-модулі (VPIN, Хоукс, Келлі, GLFT...) у своєму коді | [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md) |
 | Шукаю точний синтаксис команд | [10-cli-dovidnyk.md](10-cli-dovidnyk.md) |
 | Щось упало з помилкою | [11-troubleshooting-faq.md](11-troubleshooting-faq.md) |
@@ -55,6 +56,7 @@
 | [19-ml-steking-vidpovidnist.md](19-ml-steking-vidpovidnist.md) | Мапа огляду «ML стекінг»: мета-маркування ≠ стекінг; три дірки в навчанні моделей (purging, повний каталог, accuracy vs precision); TabPFN/ONNX/HMM свідомо не беруться |
 | [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md) | Веб-дашборд лабораторії (React + FastAPI) та посібник з генератора гіпотез Alpha Proposer (offline LLM) |
 | [21-roadmap-rozvytku.md](21-roadmap-rozvytku.md) | Стратегічний роудмап розвитку: аудит результатів, 5 фаз еволюції (cost-aware відбір, Келлі, funding, Калман, L2/таймфрейми, ансамблі), матриця пріоритетів та критерії валідації |
+| [22-plan-realizatsii-roadmap.md](22-plan-realizatsii-roadmap.md) | План реалізації Фази 1, звірений із кодом: які пункти роудмапу вже виконані, який запропонований код був би регресією (подвійний облік комісій), 6 спринтів із критеріями та чесний статус виконаного |
 
 ## Що вміє проєкт (коротко)
 

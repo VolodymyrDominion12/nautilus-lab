@@ -63,6 +63,10 @@ class BacktestReport:
     notes: str
     metrics: BacktestMetrics | None = None
     tearsheet_path: str | None = None
+    # (reason, count) per circuit breaker that refused at least one entry, in the
+    # order each first fired. Empty means no entry was ever blocked — which is
+    # itself information, and different from "we did not look".
+    risk_breaches: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

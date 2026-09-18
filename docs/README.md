@@ -24,6 +24,7 @@
 | Хочу зрозуміти, як LLM/LRM-модель реально допомагає в торгівлі (і де їй не місце) | [14-llm-model-u-torhivli.md](14-llm-model-u-torhivli.md) |
 | Хочу працювати через веб-дашборд та генерувати гіпотези в Alpha Proposer | [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md) |
 | Хочу знати, які помилки знайшли в коді та чи їх виправлено | [15-audit-vypravlennya.md](15-audit-vypravlennya.md) |
+| Шукаю стратегічний роудмап розвитку та покращення результатів | [21-roadmap-rozvytku.md](21-roadmap-rozvytku.md) |
 | Хочу використати MFT-модулі (VPIN, Хоукс, Келлі, GLFT...) у своєму коді | [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md) |
 | Шукаю точний синтаксис команд | [10-cli-dovidnyk.md](10-cli-dovidnyk.md) |
 | Щось упало з помилкою | [11-troubleshooting-faq.md](11-troubleshooting-faq.md) |
@@ -53,6 +54,7 @@
 | [18-transformery-ssm-vidpovidnist.md](18-transformery-ssm-vidpovidnist.md) | Мапа огляду «Трансформери проти SSM» → код: чому жодна з архітектур не береться, що переноситься дешево (breakeven-cost, відбір ознак, адаптивне згладжування) і вимір геометрії свічки з Kronos |
 | [19-ml-steking-vidpovidnist.md](19-ml-steking-vidpovidnist.md) | Мапа огляду «ML стекінг»: мета-маркування ≠ стекінг; три дірки в навчанні моделей (purging, повний каталог, accuracy vs precision); TabPFN/ONNX/HMM свідомо не беруться |
 | [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md) | Веб-дашборд лабораторії (React + FastAPI) та посібник з генератора гіпотез Alpha Proposer (offline LLM) |
+| [21-roadmap-rozvytku.md](21-roadmap-rozvytku.md) | Стратегічний роудмап розвитку: аудит результатів, 5 фаз еволюції (cost-aware відбір, Келлі, funding, Калман, L2/таймфрейми, ансамблі), матриця пріоритетів та критерії валідації |
 
 ## Що вміє проєкт (коротко)
 

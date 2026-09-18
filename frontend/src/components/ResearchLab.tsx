@@ -90,7 +90,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   initialRobot = 'regime',
   selectedCatalogPath,
 }) => {
-  const persisted = useMemo(loadPersistedForm, []);
+  const persisted = useMemo(() => loadPersistedForm(), []);
 
   const [robot, setRobot] = useState(persisted.robot ?? initialRobot);
   const [source, setSource] = useState<'catalog' | 'synthetic'>(persisted.source ?? 'catalog');
@@ -139,7 +139,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   // Wall-clock marker of the launch, used to tell this run's result from a previous one.
   const launchRef = useRef<{ startedAtMs: number; sawRunning: boolean; polls: number } | null>(null);
 
-  const catalogInstruments = catalog?.instruments ?? [];
+  const catalogInstruments = useMemo(() => catalog?.instruments ?? [], [catalog?.instruments]);
   const selectedInstrument =
     catalogInstruments.find((item) => item.instrument_id === instrumentId) ??
     catalogInstruments[0] ??

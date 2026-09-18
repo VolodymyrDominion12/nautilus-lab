@@ -65,12 +65,7 @@ invariants_enforced:
       `FeeSchedule` з `Settings`, тому комісія не може розійтися між тим, що лежить
       у каталозі, і тим, що застосовує рушій.
     enforced_by: src/nautilus_lab/interfaces/composition.py
-    test_missing_reason: >
-      Тест мав би зібрати `catalog(cfg)` і `research_request(cfg)` з одним і тим
-      самим `Settings` і стверджувати, що `instrument.maker_fee` / `taker_fee`
-      дорівнюють `request.fee_schedule`. Зараз перевірено лише значення двох
-      розкладів (tests/unit/test_mft_modules.py::test_fee_schedule_binance_defaults),
-      а не їхнє узгодження між каталогом і рушієм.
+    verified_by: tests/unit/test_component_invariants.py::test_backtest_engine_fee_schedule_agreement
     note: >
       Розходження тут дало б тихо оптимістичний бектест: каталог писався б за одним
       розкладом, а симуляція торгувала б за іншим. Ризик не теоретичний —

@@ -125,7 +125,7 @@
 | `nautilus/parquet_catalog.py` | `NautilusParquetCatalog` | `write()`, `load()`; валідація кожного бару; `write()` спершу **видаляє перекритий діапазон** (`delete_data_range`) — повторний ingest замінює вікно, а не додає другий файл; `load()` дедуплікує за `ts_utc` (останнє входження) і сортує за часом, тому старі каталоги лишаються читабельними |
 | `nautilus/bar_feed.py` | `ResearchBarFeed` | Каталог або синтетика; `load()`, `load_multi()`; стрес-вікна; inner-join |
 | `nautilus/bar_convert.py` | `to_engine_bars()`, `to_domain_bar()`, `datetime_to_nanos()`, `nanos_to_datetime()` | Доменний бар ↔ нативний `Bar` |
-| `nautilus/instrument.py` | `resolve_instrument()`, `binance_symbol_to_instrument_id()`, `eth_usdt_sim()`, `btc_usdt_sim()`, `eth_usdt_perp_sim()` | Описи інструментів симуляції |
+| `nautilus/instrument.py` | `resolve_instrument()`, `supported_instrument_ids()`, `binance_symbol_to_instrument_id()`, `eth_usdt_sim()`, `btc_usdt_sim()`, `eth_usdt_perp_sim()` | Описи інструментів симуляції |
 | `nautilus/synthetic_bars.py` | `synthetic_ohlcv()`, `synthetic_regime_ohlcv()` | Детерміновані синтетичні бари (random walk; тренд-флет-тренд) |
 | `nautilus/synthetic_pairs.py` | `synthetic_cointegrated_pair()` | Синтетична коінтегрована пара для тестів |
 | `nautilus/backtest_runner.py` | `NautilusResearchBacktest` | Налаштування `BacktestEngine` (венʼю SIM, комісії, затримка, проковзування); `run()`, `run_spread()` |

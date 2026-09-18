@@ -61,13 +61,7 @@ invariants_enforced:
       Вікно ingest — напіввідкрите `[start, end)`: бар із міткою, рівною `end`,
       до каталогу не потрапляє.
     enforced_by: src/nautilus_lab/infrastructure/binance_klines.py
-    test_missing_reason: >
-      Тест мав би віддати з фейкового HTTP сторінку, у якій є бар із міткою >= `end`,
-      і стверджувати, що його відкинуто. Сьогодні ця гілка не покрита: у
-      tests/unit/test_binance_klines.py::test_binance_feed_paginates_and_stops_before_end
-      усі бари лежать усередині вікна, а запит іде з `endTime = end − 1 мс`, тож
-      бар на самій межі від біржі просто не приходить — і різницю між `[start, end)`
-      та `[start, end]` цей тест побачити не може.
+    verified_by: tests/unit/test_component_invariants.py::test_data_catalog_half_open_window_end_discard
     note: >
       Помилка тут не косметична: `[start, end]` і `[start, end)` дають різні
       набори даних на стику вікон IS/OOS — один бар потрапив би і в підбір
@@ -96,6 +90,29 @@ invariants_enforced:
       більше барів за той самий період, тобто інший ринок, ніж той, який
       досліджували. Поруч закрито й невідомий інтервал:
       tests/unit/test_audit_fixes.py::test_unknown_spec_is_rejected_instead_of_defaulting_to_one_hour.
+
+  - statement: >
+      Опис інструмента — явний список, а не «будь-який тікер на USDT»: інгестити
+      можна рівно ті id, що оголошені в `instrument.py`, і кожен із них має
+      узгоджену пару «крок ціни → точність».
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/instrument.py
+    verified_by: tests/unit/test_component_invariants.py::test_instrument_specs_match_declared_increments
+    note: >
+      Другий бік того ж інваріанта закриває
+      tests/unit/test_component_invariants.py::test_every_ingestable_usdt_symbol_has_an_instrument_spec,
+      а третій — test_unknown_instrument_id_fails_closed_and_names_the_open_doors.
+      Причина в тому, що `binance_symbol_to_instrument_id` приймає будь-який тікер
+      на USDT, а `resolve_instrument` знає лише явний список: коли набори
+      розходяться, `lab ingest --symbols A,B,C` падає на середині
+      (`unsupported instrument_id: C/USDT.SIM`), залишивши A і B уже записаними
+      в каталог. Точність тут не косметика: `to_engine_bars` будує кожне OHLC як
+      `Price(value, precision=price_precision)`, тож крок, грубіший за справжній
+      тік, тихо переписує серію, яку читає бектест (DOGE 0.12345 із точністю 2
+      стає 0.12). Чого тести не перевіряють: чи збігається оголошений крок із
+      реальним фільтром біржі — це вимагало б мережі в тесті, тому збіг лишається
+      твердженням у коментарі до таблиці (значення взяті з `api/v3/exchangeInfo`),
+      а ETH/BTC свідомо зберігають давні кроки цієї лабораторії, щоб не змінювати
+      вже записані серії.
 
 notes: >
   Механізм працює й стоїть на тестах; єдина прогалина компонента записана вголос —

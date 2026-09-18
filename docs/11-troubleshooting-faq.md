@@ -139,20 +139,38 @@ Walk-forward з явними вікнами вимагає **всі чотири
 
 ### `unsupported instrument_id: XXX`
 
-Список інструментів симуляції жорстко заданий у `infrastructure/nautilus/instrument.py`:
+Список інструментів симуляції заданий у `infrastructure/nautilus/instrument.py`
+(`_SPOT_SPECS` / `_PERP_SPECS`) — він же список того, що взагалі можна інгестити:
 
 | `instrument_id` | Тип | Крок ціни | Крок кількості |
 |------------------|-----|-----------|----------------|
 | `ETH/USDT.SIM` | спот | 0.01 | 0.001 |
 | `BTC/USDT.SIM` | спот | 0.01 | 0.00001 |
+| `SOL/USDT.SIM` | спот | 0.01 | 0.001 |
+| `BNB/USDT.SIM` | спот | 0.01 | 0.001 |
+| `XRP/USDT.SIM` | спот | 0.0001 | 0.1 |
+| `ADA/USDT.SIM` | спот | 0.0001 | 0.1 |
+| `DOGE/USDT.SIM` | спот | 0.00001 | 1 |
 | `ETHUSDT-PERP.SIM` | перпетуал | 0.01 | 0.001 |
 
-Щоб додати свій, треба:
-1. `infrastructure/nautilus/instrument.py` — запис у `_SPOT_SPECS` (або `_PERP_SPECS`);
-2. `.env` — `INSTRUMENT_ID` і `BINANCE_SYMBOL`;
-3. `lab ingest` (новий каталог).
+Кроки `SOL`…`DOGE` — це реальні фільтри Binance (`api/v3/exchangeInfo`:
+`PRICE_FILTER.tickSize`, `LOT_SIZE.stepSize`), бо `to_engine_bars` будує кожен OHLC
+як `Price(value, precision=price_precision)`: тік, грубіший за біржовий, тихо
+переписує серію, яку читає бектест. `ETH`/`BTC` зберігають старі кроки цієї
+лабораторії (у `ETH` крок кількості грубіший за біржовий — це консервативно), щоб
+не змінювати вже записані серії.
 
-Підтримуються лише символи, що закінчуються на `USDT` (`binance_symbol_to_instrument_id`).
+Зверніть увагу: `binance_symbol_to_instrument_id` приймає **будь-який** тікер на
+`USDT`, а описаний інструмент має бути в таблиці вище. Якщо списки розійшлися,
+`lab ingest --symbols A,B,C` упаде на середині (`unsupported instrument_id: C/USDT.SIM`),
+залишивши `A` і `B` уже в каталозі — тому помилка тепер перелічує підтримувані id.
+
+Щоб додати свій, треба:
+1. `infrastructure/nautilus/instrument.py` — запис у `_SPOT_SPECS` (або `_PERP_SPECS`)
+   з реальними `tickSize`/`stepSize` цього символу;
+2. `.env` — `INSTRUMENT_ID` і `BINANCE_SYMBOL` (щоб цей інструмент став основним
+   для `lab research`);
+3. `lab ingest` (новий каталог).
 
 ---
 
@@ -515,13 +533,25 @@ catalog/data/currency_pair/<INSTRUMENT>/<...>.parquet                      # о�
 а повторний запис у той самий каталог із перекриттям тепер безпечний: `write()` замінює свій
 діапазон, а `load()` дедуплікує (див. першу помилку вище).
 
-### Як додати новий інструмент (наприклад SOLUSDT)?
+### Як додати новий інструмент (наприклад PEPEUSDT)?
 
-1. `infrastructure/nautilus/instrument.py` → додати `"SOL/USDT.SIM": ("SOL", "USDT", 2, "0.01", "0.001")` у `_SPOT_SPECS`.
-2. `.env` → `BINANCE_SYMBOLS=["SOLUSDT"]` або `--symbols SOLUSDT` у команді.
-3. `INSTRUMENT_ID=SOL/USDT.SIM` (якщо хочете зробити його основним).
-4. `uv run lab ingest --start 2025-01-01 --symbols SOLUSDT --catalog catalog_sol`.
-5. `uv run lab research --catalog catalog_sol`.
+`SOL`, `BNB`, `XRP`, `ADA` і `DOGE` уже описані (див. таблицю вище), тож для них
+достатньо кроків 2–5. Для символу, якого в таблиці немає:
+
+1. `infrastructure/nautilus/instrument.py` → рядок у `_SPOT_SPECS` вигляду
+   `"PEPE/USDT.SIM": ("PEPE", "USDT", 5, "0.00001", "0.001")`, де 4-те й 5-те
+   значення — реальні `PRICE_FILTER.tickSize` і `LOT_SIZE.stepSize` цього символу
+   з `https://api.binance.com/api/v3/exchangeInfo`, а 3-тє — кількість знаків
+   після коми в `tickSize` (її перевіряє
+   `tests/unit/test_component_invariants.py::test_instrument_specs_match_declared_increments`).
+2. `.env` → `BINANCE_SYMBOLS=["PEPEUSDT"]` або `--symbols PEPEUSDT` у команді.
+3. `INSTRUMENT_ID=PEPE/USDT.SIM` (якщо хочете зробити його основним).
+4. `uv run lab ingest --start 2025-01-01 --symbols PEPEUSDT --catalog catalog_pepe`.
+5. `uv run lab research --catalog catalog_pepe`.
+
+Крок ціни тут не формальність: замалий (точніший за тік) дасть у бектесті ціни,
+яких біржа не котирує, завеликий — округлить саму серію (DOGE 0.12345 із точністю
+2 стає 0.12), і обидва випадки зіпсують результат непомітно.
 
 ### Чому в звіті немає `max_dd`, `fees_paid` і `sharpe_like`?
 

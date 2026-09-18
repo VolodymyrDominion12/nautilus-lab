@@ -35,13 +35,7 @@ invariants_enforced:
       Стратегія не вирішує розмір позиції: домен повертає лише напрямок (і
       відносну вагу ніг у спреді), а кількість рахує `application/risk.py`.
     enforced_by: src/nautilus_lab/domain/signals.py
-    test_missing_reason: >
-      Тест мав би стверджувати, що намір стратегії справді не несе розміру —
-      наприклад, що в `Signal`, `SpreadSignal` і `QuoteIntent` немає поля
-      кількості (є лише `side` і відносний `qty_weight`), і що жоден модуль
-      `domain/` не імпортує `size_position`. Сьогодні це тримається лише на тому,
-      що `size_position()` живе в `application/risk.py`, а `qty_weight` — вага
-      відносно іншої ноги, а не сума в USDT.
+    verified_by: tests/unit/test_component_invariants.py::test_domain_strategies_do_not_size_positions
     note: >
       Порушення цього інваріанта — найдорожче в лабораторії: стратегія, яка сама
       собі вибирає розмір, підганяє його під минулі бари, і перевага зникає на

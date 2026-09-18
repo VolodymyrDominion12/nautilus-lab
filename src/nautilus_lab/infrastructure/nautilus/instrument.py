@@ -8,14 +8,43 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from nautilus_lab.domain.fees import FeeSchedule
 
+# (base, quote, price_precision, price_increment, size_increment).
+#
+# `price_precision` is not cosmetic: `to_engine_bars` builds every OHLC value as
+# `Price(value, precision=instrument.price_precision)`, so a tick coarser than the
+# venue's silently rewrites the series the backtest reads (DOGE at precision 2
+# turns 0.12345 into 0.12). The five entries below ETH/BTC therefore carry the real
+# Binance spot filters (`api/v3/exchangeInfo`: PRICE_FILTER.tickSize and
+# LOT_SIZE.stepSize), not a house default.
+#
+# ETH/BTC keep the increments this lab has always simulated with. ETH's 0.001 is
+# coarser than Binance's real 0.0001, i.e. conservative, but making it "accurate"
+# would change `size_precision` and with it the stored volume of every already
+# ingested ETH/BTC bar — a different series for results that were already reported.
+# That is a deliberate trade, not an oversight: change it only together with a
+# re-ingest and a re-run.
 _SPOT_SPECS: dict[str, tuple[str, str, int, str, str]] = {
     "ETH/USDT.SIM": ("ETH", "USDT", 2, "0.01", "0.001"),
     "BTC/USDT.SIM": ("BTC", "USDT", 2, "0.01", "0.00001"),
+    "SOL/USDT.SIM": ("SOL", "USDT", 2, "0.01", "0.001"),
+    "BNB/USDT.SIM": ("BNB", "USDT", 2, "0.01", "0.001"),
+    "XRP/USDT.SIM": ("XRP", "USDT", 4, "0.0001", "0.1"),
+    "ADA/USDT.SIM": ("ADA", "USDT", 4, "0.0001", "0.1"),
+    "DOGE/USDT.SIM": ("DOGE", "USDT", 5, "0.00001", "1"),
 }
 
 _PERP_SPECS: dict[str, tuple[str, str, int, str, str]] = {
     "ETHUSDT-PERP.SIM": ("ETH", "USDT", 2, "0.01", "0.001"),
 }
+
+
+def supported_instrument_ids() -> tuple[str, ...]:
+    """Every instrument id `resolve_instrument` accepts, sorted.
+
+    Public on purpose: the error message and the invariant test both need the list,
+    and a second copy of it would be the thing that goes stale.
+    """
+    return tuple(sorted((*_SPOT_SPECS, *_PERP_SPECS)))
 
 
 def resolve_instrument(
@@ -26,7 +55,13 @@ def resolve_instrument(
         return _crypto_perpetual(instrument_id, fees=schedule)
     if instrument_id in _SPOT_SPECS:
         return _currency_pair(instrument_id, fees=schedule)
-    raise ValueError(f"unsupported instrument_id: {instrument_id}")
+    # Fail closed, but name the open doors: the symbol->instrument_id step accepts
+    # any `*USDT` ticker, so without this list the message arrives one layer away
+    # from the cause ("unsupported instrument_id: SOL/USDT.SIM" while the user asked
+    # for SOLUSDT). Supported ids are spelled out for the same reason docs/11 keeps
+    # the table: adding one is a code change, never a silent default.
+    supported = ", ".join(supported_instrument_ids())
+    raise ValueError(f"unsupported instrument_id: {instrument_id}; supported: {supported}")
 
 
 def eth_usdt_sim(*, fees: FeeSchedule | None = None) -> CurrencyPair:

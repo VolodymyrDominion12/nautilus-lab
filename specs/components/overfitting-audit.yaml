@@ -8,7 +8,7 @@
 kind: component
 name: overfitting-audit
 version: "1.0"
-status: partial
+status: active
 title: "PBO/CSCV: чи переживає вибір параметрів дані, яких вона не бачила"
 
 hypothesis: >
@@ -63,10 +63,7 @@ invariants_enforced:
       прогону не існує: --pbo разом із --tearsheet відхиляється, а не малює
       тиршит того прогону, який випадково завершився останнім.
     enforced_by: src/nautilus_lab/interfaces/cli.py
-    test_missing_reason: >
-      Немає тесту, який викликає main(["research", "--pbo", "--tearsheet", ...])
-      і перевіряє код виходу 1: такий тест мусив би зафіксувати, що комбінація
-      падає fail closed, бо зараз цю заборону тримає лише рядок у _run_pbo.
+    verified_by: tests/unit/test_component_invariants.py::test_pbo_tearsheet_conflict_fails_closed
 
   - statement: >
       Матриця описує послідовні, неперетинні блоки історії: історія ріжеться на
@@ -74,10 +71,7 @@ invariants_enforced:
       симулюється окремим прогоном з нуля — інакше сусідні рядки матриці
       описували б ті самі бари, і PBO втратив би сенс.
     enforced_by: src/nautilus_lab/application/run_overfitting_audit.py
-    test_missing_reason: >
-      Розбиття на блоки (_block_ranges) не покрито жодним тестом: тест мусив би
-      перевірити, що блоки не перетинаються, покривають усю історію і що
-      залишок ділення дістається останньому блоку, а не губиться.
+    verified_by: tests/unit/test_component_invariants.py::test_pbo_block_ranges_partition_and_remainder
 
 notes: >
   Чому status partial, а не active. Доменний оцінювач PBO

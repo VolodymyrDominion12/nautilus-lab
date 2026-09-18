@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle,
@@ -34,7 +34,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
   const [errorMsg, setErrorMsg] = useState('');
   const [chartInstrument, setChartInstrument] = useState<string | undefined>(undefined);
 
-  const loadCatalog = async () => {
+  const loadCatalog = useCallback(async () => {
     setLoading(true);
     try {
       const [data, catalogs] = await Promise.all([
@@ -57,11 +57,11 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedCatalogPath, onCatalogChange]);
 
   useEffect(() => {
     loadCatalog();
-  }, [selectedCatalogPath]);
+  }, [loadCatalog]);
 
   useEffect(() => {
     if (!ingestRunning) return;
@@ -86,9 +86,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
       cancelled = true;
       clearInterval(interval);
     };
-    // loadCatalog is declared above and never changes identity — safe to omit from deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ingestRunning]);
+  }, [ingestRunning, loadCatalog]);
 
   const startIngest = async (incremental: boolean) => {
     setErrorMsg('');

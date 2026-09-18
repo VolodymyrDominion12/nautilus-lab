@@ -141,3 +141,9 @@ def test_spec_declares_known_status(kind: str, name: str, spec: dict[str, Any]) 
     """status must come from the schema, or its per-status checks never apply."""
     allowed = SCHEMA[kind]["statuses"]
     assert spec.get("status") in allowed, f"status={spec.get('status')!r} not in {sorted(allowed)}"
+
+
+def test_docs_agree_with_backtest_wired_robots() -> None:
+    """docs/05-roboty.md table must agree with BACKTEST_WIRED_ROBOTS and RobotName (Sprint S6)."""
+    errors = validator.check_docs_alignment(FACTS)
+    assert not errors, "\n".join(f"  • {e}" for e in errors)

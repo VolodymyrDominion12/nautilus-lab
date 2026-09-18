@@ -2,14 +2,13 @@
 #  execution-modes — research / paper / live: запобіжник, а не прапорець
 # =============================================================================
 #  Компонент, а не робот. Механізм за задумом повний (live — свідома відмова,
-#  адаптера виконання не існує), але частина заяв не має тестів — тому
-#  status: partial і два test_missing_reason нижче.
+#  адаптера виконання не існує), всі інваріанти перевірені тестами.
 # =============================================================================
 kind: component
 name: execution-modes
 version: "1.0"
-status: partial
-title: "research / paper / live: жодна конфігурація не робить із прогону торгівлю"
+status: active
+title: "Режими виконання: research, paper, live — і fail-closed запобіжники"
 
 hypothesis: >
   Режим виконання — це запобіжник, а не налаштування: research і paper
@@ -44,12 +43,7 @@ invariants_enforced:
       читає жоден модуль шляху виконання — рішення ухвалює TradingMode, тож
       прапорець фізично не може «увімкнути» торгівлю.
     enforced_by: src/nautilus_lab/interfaces/cli.py
-    test_missing_reason: >
-      Немає тесту, який запускає main(["live"]) з LIVE_ENABLED=true і перевіряє
-      код виходу 1: такий тест зафіксував би, що прапорець не впливає на
-      рішення, бо зараз це тримається лише на тому, що cli.py не згадує
-      live_enabled (єдине місце в src — оголошення поля в settings.py; у тестах
-      його лише видаляють з оточення).
+    verified_by: tests/unit/test_component_invariants.py::test_live_enabled_flag_fails_closed
 
   - statement: >
       Паперовий режим лише логує гіпотетичні ордери: RunPaperResearch кличе
@@ -73,11 +67,7 @@ invariants_enforced:
       Settings.exchange_api_key і exchange_api_secret не використовує жоден
       модуль — тож прогін не може випадково піти на біржу під чиїмось акаунтом.
     enforced_by: src/nautilus_lab/infrastructure/binance_klines.py
-    test_missing_reason: >
-      Немає тесту, який би це фіксував: тест мусив би запускати ingest/research
-      із порожніми EXCHANGE_API_KEY і EXCHANGE_API_SECRET (або перевіряти, що
-      клієнт формує запит без підпису й без ключів); зараз гарантія спирається
-      лише на те, що ці поля ніде не згадуються поза settings.py.
+    verified_by: tests/unit/test_component_invariants.py::test_empty_exchange_credentials_allowed
 
   - statement: >
       Паперовий логер не веде стану позиції: PaperTradingLogger лише додає
@@ -85,11 +75,7 @@ invariants_enforced:
       не баг, і жодне число з цього шляху не можна читати як реальну
       експозицію.
     enforced_by: src/nautilus_lab/infrastructure/paper_trading.py
-    test_missing_reason: >
-      Немає тесту, який це пінить: він мусив би показати, що два сигнали `buy`
-      дають два записи й нуль утримуваної позиції (у RunPaperResearch
-      open_positions завжди 0), тобто що стану позиції не ведеться взагалі, а
-      повторний вхід — очікувана властивість, а не зламаний ризик-шар.
+    verified_by: tests/unit/test_component_invariants.py::test_paper_trading_position_statelessness
 
 notes: >
   Чому status partial, а не active. Реалізація повна за задумом (live — свідомий

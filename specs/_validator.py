@@ -49,6 +49,7 @@ PARAM_GRID_PY = ROOT / "src/nautilus_lab/application/param_grid.py"
 SETTINGS_PY = ROOT / "src/nautilus_lab/infrastructure/settings.py"
 RESEARCH_PY = ROOT / "src/nautilus_lab/application/run_research_backtest.py"
 WALK_FORWARD_PY = ROOT / "src/nautilus_lab/application/run_walk_forward.py"
+DOCS_05_MD = ROOT / "docs/05-roboty.md"
 
 # Адаптер, який рушій реально інстанціює. Клас стратегії може жити або в
 # доменному модулі, або в самому адаптері (так зроблено для pairs/спредів) —
@@ -565,6 +566,52 @@ def check_component(spec: dict, name: str, report: Report, schema: dict, facts: 
                         report.error(f"{label}: у {path_part} немає тесту '{func_name}'")
 
 
+def check_docs_alignment(facts: CodeFacts) -> list[str]:
+    """Звірка таблиці docs/05-roboty.md із BACKTEST_WIRED_ROBOTS та RobotName."""
+    errors: list[str] = []
+    if not DOCS_05_MD.is_file():
+        errors.append(f"{DOCS_05_MD.relative_to(ROOT)} не існує")
+        return errors
+
+    content = DOCS_05_MD.read_text(encoding="utf-8")
+    table_wired: set[str] = set()
+    table_unwired: set[str] = set()
+
+    for line in content.splitlines():
+        line = line.strip()
+        if not (line.startswith("|") and line.endswith("|")):
+            continue
+        parts = [p.strip() for p in line.split("|")[1:-1]]
+        if len(parts) < 3:
+            continue
+        col_robot = parts[0].strip("` ")
+        col_wired = parts[2]
+        if col_robot in facts.robot_names:
+            if "так" in col_wired or "✅" in col_wired:
+                table_wired.add(col_robot)
+            elif "ні" in col_wired or "❌" in col_wired:
+                table_unwired.add(col_robot)
+
+    missing_from_docs = facts.robot_names - (table_wired | table_unwired)
+    if missing_from_docs:
+        names_str = ", ".join(sorted(missing_from_docs))
+        errors.append(f"у {DOCS_05_MD.relative_to(ROOT)} відсутні роботи: {names_str}")
+
+    if facts.wired and table_wired != facts.wired:
+        diff_wired = facts.wired - table_wired
+        diff_unwired = table_wired - facts.wired
+        if diff_wired:
+            wired_str = ", ".join(sorted(diff_wired))
+            errors.append(f"{DOCS_05_MD.relative_to(ROOT)} не позначає як підключені: {wired_str}")
+        if diff_unwired:
+            unwired_str = ", ".join(sorted(diff_unwired))
+            errors.append(
+                f"{DOCS_05_MD.relative_to(ROOT)} помилково позначає як підключені: {unwired_str}"
+            )
+
+    return errors
+
+
 # ── Основний прогін ──────────────────────────────────────────────────────────
 
 
@@ -628,6 +675,17 @@ def main(argv: list[str]) -> int:
         total_errors += len(missing)
         print(f"\n✗ Немає специфікацій для роботів: {', '.join(missing)}")
         print("  Додав робота в RobotName — додай і спеку в specs/strategies/.")
+
+    # ── перевірка узгодженості docs/05 з BACKTEST_WIRED_ROBOTS (Sprint S6) ──
+    if not only:
+        docs_errors = check_docs_alignment(facts)
+        if docs_errors:
+            total_errors += len(docs_errors)
+            print(f"\n✗ {DOCS_05_MD.relative_to(ROOT)}")
+            for err in docs_errors:
+                print(f"    • {err}")
+        elif not quiet:
+            print(f"✓ {DOCS_05_MD.relative_to(ROOT)} узгоджено з BACKTEST_WIRED_ROBOTS")
 
     print()
     if total_errors:

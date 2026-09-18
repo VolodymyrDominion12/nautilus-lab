@@ -501,6 +501,10 @@ export interface CommandCenterResponse {
   safety: { live_enabled: boolean; mode: string };
   robots: { total: number; wired: string[] };
   catalog_path: string;
+  /** ISO date string of the most recent bar across all catalog instruments (for staleness check). */
+  catalog_last_date?: string | null;
+  /** Total bar count across all instruments in the current catalog. */
+  catalog_total_bars?: number | null;
   recent_experiments: HistoryEntry[];
   models: MlModelInfo[];
   journal: Record<string, number>;

@@ -31,8 +31,8 @@ export const SettingsPanel: React.FC = () => {
       setMessage('Settings saved successfully.');
       const refreshed = await fetchSettings();
       setSettings(refreshed.settings || {});
-    } catch (err: any) {
-      setMessage(err.message || 'Error saving settings.');
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : 'Error saving settings.');
     }
     setSaving(false);
   };

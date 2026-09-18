@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  ClipboardCopy,
   ExternalLink,
   FileText,
   Layers,
@@ -11,7 +12,6 @@ import {
   RotateCcw,
   Settings2,
   Square,
-  Terminal,
 } from 'lucide-react';
 import { staticReportUrl } from '../config';
 import {
@@ -35,6 +35,7 @@ import { RunsCompare } from './RunsCompare';
 import { VerdictPanel } from './VerdictPanel';
 import { FoldBreakdown } from './FoldBreakdown';
 import { PboPanel } from './PboPanel';
+import { LogPanel } from './LogPanel';
 import { formatDateTime } from '../lib/format';
 import { preflight, preflightBlocking } from '../lib/research';
 import type { PreflightIssue } from '../lib/research';
@@ -133,6 +134,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   const [staleNotice, setStaleNotice] = useState<string | null>(null);
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [selectedTearsheetUrl, setSelectedTearsheetUrl] = useState<string | null>(null);
+  const [copiedCli, setCopiedCli] = useState(false);
 
   // Wall-clock marker of the launch, used to tell this run's result from a previous one.
   const launchRef = useRef<{ startedAtMs: number; sawRunning: boolean; polls: number } | null>(null);
@@ -441,7 +443,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
     if (typeof config.journal === 'boolean') setJournal(config.journal);
     if (typeof config.notify === 'boolean') setNotify(config.notify);
     if (typeof config.full_sample === 'boolean') setFullSample(config.full_sample);
-    if (config.catalog_path) setInstrumentId(config.instrument_id ?? '');
+    if (config.instrument_id) setInstrumentId(config.instrument_id);
     if (config.is_start) {
       setWindowMode('custom');
       setIsStart(config.is_start);
@@ -703,16 +705,21 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           </div>
         )}
 
-        <div className="flex flex-col md:flex-row gap-3 md:items-center">
+        <div className="flex flex-col md:flex-row gap-3 md:items-center flex-wrap">
           <button
             type="button"
             onClick={handleRun}
             disabled={running || blocked}
-            title={blocked ? 'Fix the blocking issues above first' : 'Run research'}
+            title={blocked ? 'Fix the blocking issues above first' : 'Run research (⌘/Ctrl + Enter)'}
             className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-500 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
           >
             {running ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
             {running ? 'Simulating…' : blocked ? 'Run blocked' : 'Run research'}
+            {!running && !blocked && (
+              <kbd className="ml-1 text-[10px] font-mono bg-blue-800/70 px-1.5 py-0.5 rounded border border-blue-700/60 leading-tight">
+                ⌘↵
+              </kbd>
+            )}
           </button>
 
           {running && (
@@ -733,6 +740,38 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           >
             <RotateCcw className="w-3.5 h-3.5" />
             Reset form
+          </button>
+
+          {/* Copy CLI command — lets the user reproduce the run from the terminal */}
+          <button
+            type="button"
+            onClick={() => {
+              const parts = ['uv run lab research', `--robot ${robot}`];
+              if (source === 'synthetic') {
+                parts.push(`--synthetic --bars ${bars}`);
+              } else {
+                if (instrumentId) parts.push(`--instrument ${instrumentId}`);
+              }
+              if (folds > 1) parts.push(`--folds ${folds}`);
+              if (isFraction !== 0.7) parts.push(`--is-fraction ${isFraction}`);
+              if (embargoBars !== 10) parts.push(`--embargo-bars ${embargoBars}`);
+              if (useOptuna) parts.push(`--optuna --trials ${optunaTrials}`);
+              if (usePbo) parts.push('--pbo');
+              if (barVpin) parts.push('--bar-vpin');
+              if (stressSlice) parts.push(`--stress-slice ${stressSlice}`);
+              if (generateTearsheet) parts.push('--tearsheet reports/tearsheet.html');
+              if (journal) parts.push('--journal');
+              if (fullSample) parts.push('--full-sample');
+              navigator.clipboard.writeText(parts.join(' ')).then(() => {
+                setCopiedCli(true);
+                setTimeout(() => setCopiedCli(false), 2000);
+              });
+            }}
+            className="px-3 py-2.5 text-xs text-gray-400 hover:text-gray-200 border border-gray-800 rounded-xl flex items-center gap-1.5 transition-colors"
+            title="Copy equivalent CLI command to clipboard"
+          >
+            <ClipboardCopy className="w-3.5 h-3.5" />
+            {copiedCli ? 'Copied!' : 'Copy CLI'}
           </button>
 
           {running && launchedAtIso && (
@@ -1018,20 +1057,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
       <RunsCompare refreshKey={historyKey} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-[#0a0f18] border border-gray-800 rounded-2xl flex flex-col overflow-hidden h-[460px]">
-          <div className="bg-gray-900/80 px-4 py-2.5 border-b border-gray-800 flex justify-between items-center">
-            <span className="text-xs font-mono text-gray-400 flex items-center gap-2">
-              <Terminal className="w-3.5 h-3.5 text-gray-400" />
-              Live console output
-            </span>
-            <span className="text-[11px] font-mono text-gray-500">
-              {running ? 'streaming…' : 'idle'}
-            </span>
-          </div>
-          <div className="p-4 flex-1 overflow-y-auto font-mono text-xs text-emerald-400 whitespace-pre-wrap">
-            {log || 'Press "Run research" to start a backtest.\n'}
-          </div>
-        </div>
+        <LogPanel log={log} running={running} heightClass="h-[460px]" />
 
         <div className="bg-gray-900 border border-gray-800 rounded-2xl flex flex-col overflow-hidden h-[460px]">
           <div className="bg-gray-900 px-5 py-3 border-b border-gray-800 flex justify-between items-center">

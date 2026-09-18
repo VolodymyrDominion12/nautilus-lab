@@ -17,7 +17,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from nautilus_lab.api.app import strategy_spec_payload
-from nautilus_lab.api.catalog_service import describe_catalog_cached, invalidate_catalog_cache
+from nautilus_lab.api.catalog_service import (
+    describe_catalog_cached,
+    invalidate_catalog_cache,
+    repo_root,
+    resolve_catalog_path,
+)
 from nautilus_lab.api.paper_runner import PaperRunConfig, execute_paper
 from nautilus_lab.api.research_runner import (
     ResearchJobConfig,
@@ -355,6 +360,24 @@ def test_catalog_description_cache_returns_and_drops_payload(tmp_path: Path) -> 
     invalidate_catalog_cache(str(missing))
     assert describe_catalog_cached(str(missing)) == first
     invalidate_catalog_cache()
+
+
+def test_relative_catalog_path_does_not_depend_on_the_launch_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Starting the server from `frontend/` must not describe `frontend/catalog`.
+
+    `CATALOG_PATH=catalog` is relative, so resolving it against the cwd turned a full catalog
+    at the repo root into an empty one: the chart asked the API for bars and got
+    "no bars in catalog /.../frontend/catalog for ETH/USDT.SIM-1-HOUR-LAST-EXTERNAL. Run
+    `lab ingest` first." — with `lab ingest` already done.
+    """
+    from_root = resolve_catalog_path("catalog")
+    assert from_root == (repo_root() / "catalog").resolve()
+    monkeypatch.chdir(tmp_path)
+    assert resolve_catalog_path("catalog") == from_root
+    # an absolute path is still taken at its word
+    assert resolve_catalog_path(str(tmp_path / "other")) == (tmp_path / "other").resolve()
 
 
 def test_strategy_payload_reads_the_nested_implementation_block() -> None:

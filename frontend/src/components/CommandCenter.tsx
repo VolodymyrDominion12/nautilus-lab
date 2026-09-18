@@ -96,18 +96,26 @@ export const CommandCenter: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {Object.entries(jobs).map(([key, job]) => (
-          <div key={key} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+          <div
+            key={key}
+            className={`bg-gray-900 border rounded-2xl p-4 transition-colors ${
+              job.running ? 'border-amber-800/50 bg-amber-950/10' : 'border-gray-800'
+            }`}
+          >
             <div className="flex items-center justify-between mb-2 gap-2">
               <span className="text-xs text-gray-400 uppercase tracking-wide">
                 {key.replace('_', ' ')}
               </span>
               <span
-                className={`text-[10px] px-2 py-0.5 rounded-full font-mono shrink-0 ${
+                className={`text-[10px] px-2 py-0.5 rounded-full font-mono shrink-0 flex items-center gap-1.5 ${
                   job.running
                     ? 'bg-amber-950/50 text-amber-300 border border-amber-800/40'
                     : 'bg-gray-950 text-gray-500 border border-gray-800'
                 }`}
               >
+                {job.running && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                )}
                 {job.running ? 'RUNNING' : 'IDLE'}
               </span>
             </div>
@@ -251,7 +259,15 @@ export const CommandCenter: React.FC = () => {
             )}
           </div>
           {experimentRows.length === 0 ? (
-            <p className="text-sm text-gray-500">No archived experiments yet.</p>
+            <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
+              <FlaskConical className="w-10 h-10 text-gray-700" />
+              <p className="text-sm text-gray-500">No archived experiments yet.</p>
+              <p className="text-xs text-gray-600">
+                Run a backtest from the{' '}
+                <span className="font-mono text-gray-400">Research &amp; Backtest</span> tab
+                to populate this table.
+              </p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-[11px] font-mono">
@@ -371,6 +387,20 @@ export const CommandCenter: React.FC = () => {
               <dt className="text-gray-500">Live trading</dt>
               <dd className="text-emerald-400">disabled by design</dd>
             </div>
+            {data?.catalog_last_date && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">Data last date</dt>
+                <dd className="text-gray-300 font-mono text-xs">{data.catalog_last_date}</dd>
+              </div>
+            )}
+            {data?.catalog_total_bars != null && data.catalog_total_bars > 0 && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">Total bars stored</dt>
+                <dd className="text-gray-300 font-mono text-xs">
+                  {data.catalog_total_bars.toLocaleString()}
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
       </div>

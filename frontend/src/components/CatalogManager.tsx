@@ -65,19 +65,29 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
 
   useEffect(() => {
     if (!ingestRunning) return;
+    let cancelled = false;
     const interval = setInterval(async () => {
       try {
         const res = await fetchIngestLog();
+        if (cancelled) return;
         setIngestLog(res.log);
-        if (!res.is_running && res.log.includes('Process finished')) {
+        // BUG-1 fix: stop as soon as the server reports idle, regardless of
+        // log content. The old guard `res.log.includes('Process finished')`
+        // left the button stuck forever if the process crashed or was cancelled.
+        if (!res.is_running) {
           setIngestRunning(false);
           loadCatalog();
         }
       } catch (err) {
-        console.error(err);
+        if (!cancelled) console.error(err);
       }
     }, 1500);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // loadCatalog is declared above and never changes identity — safe to omit from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ingestRunning]);
 
   const startIngest = async (incremental: boolean) => {

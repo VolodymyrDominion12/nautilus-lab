@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, TextIO, cast
 
+from nautilus_lab.api.catalog_service import resolve_catalog_path
 from nautilus_lab.application.train_classifier import (
     describe_train_window,
     parse_optional_utc,
@@ -74,7 +75,7 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
     sys.stdout = _Tee(original, buffer)
     cfg = settings()
     try:
-        catalog_path = Path(job.catalog_path or cfg.catalog_path)
+        catalog_path = resolve_catalog_path(job.catalog_path)
         instrument = job.instrument_id or cfg.instrument_id
         interval = job.bar_interval or cfg.bar_interval
         store = NautilusParquetCatalog(catalog_path, fees=FeeSchedule.binance_spot_vip0())

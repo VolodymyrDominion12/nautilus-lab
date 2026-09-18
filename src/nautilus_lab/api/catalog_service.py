@@ -23,9 +23,37 @@ def _parse_utc(value: str | None) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+#: The dashboard reads one catalog for the whole process, but the process is launched from
+#: whatever directory the terminal happens to be in. `CATALOG_PATH=catalog` is relative, so
+#: resolving it against the current working directory made `uvicorn` started from `frontend/`
+#: describe an empty `frontend/catalog`: the chart then reported
+#: "no bars in catalog ... Run `lab ingest` first." while `catalog/` sat full at the repo root.
+#: `parents[3]` is that root for both an editable install and a source checkout
+#: (`<root>/src/nautilus_lab/api/catalog_service.py`); when the package is installed elsewhere
+#: that path carries no repo markers, and `repo_root()` falls back to the caller's cwd.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_MARKERS = ("pyproject.toml", ".env.example")
+
+
+def repo_root() -> Path:
+    """The project root when this package lives inside the repository, else the cwd."""
+    if any((_REPO_ROOT / marker).exists() for marker in _REPO_MARKERS):
+        return _REPO_ROOT
+    return Path.cwd()
+
+
 def resolve_catalog_path(catalog_path: str | None) -> Path:
+    """Absolute catalog path. Relative paths mean "relative to the project root".
+
+    Not the cwd: the server may be started from anywhere, and a cwd-relative `catalog` is
+    how the dashboard ends up describing an empty directory while the data exists.
+    """
     cfg = settings()
-    return Path(catalog_path or cfg.catalog_path).expanduser().resolve()
+    raw = catalog_path or cfg.catalog_path
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = repo_root() / candidate
+    return candidate.resolve()
 
 
 def describe_catalog(catalog_path: str | None = None) -> dict[str, Any]:
@@ -110,11 +138,16 @@ _CATALOG_CACHE_TTL_SECONDS = 10.0
 
 
 def invalidate_catalog_cache(catalog_path: str | None = None) -> None:
-    """Drop cached catalog descriptions, for one path or all of them."""
+    """Drop cached catalog descriptions, for one path or all of them.
+
+    The key must be built the way `describe_catalog_cached` builds it — resolving one of them
+    against the cwd and the other against the project root would leave an ingest's cache entry
+    in place, and the dashboard would keep reporting the pre-ingest bar counts.
+    """
     if catalog_path is None:
         _CATALOG_CACHE.clear()
         return
-    _CATALOG_CACHE.pop(str(Path(catalog_path).expanduser().resolve()), None)
+    _CATALOG_CACHE.pop(str(resolve_catalog_path(catalog_path)), None)
 
 
 def describe_catalog_cached(

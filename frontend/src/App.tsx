@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
+  ArrowLeftRight,
   BookOpen,
   Brain,
   Cpu,
@@ -10,6 +11,7 @@ import {
   LayoutDashboard,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   WifiOff,
 } from 'lucide-react';
 import { getSelectedCatalogPath, setSelectedCatalogPath } from './catalogSelection';
@@ -23,6 +25,8 @@ import { CommandCenter } from './components/CommandCenter';
 import { MLPipeline } from './components/MLPipeline';
 import { JournalKanban } from './components/JournalKanban';
 import { PaperSimulator } from './components/PaperSimulator';
+import { ScanTab } from './components/ScanTab';
+import { AlphaIdeasTab } from './components/AlphaIdeasTab';
 import { formatElapsed } from './lib/format';
 
 type TabId =
@@ -33,6 +37,8 @@ type TabId =
   | 'ml'
   | 'journal'
   | 'paper'
+  | 'scan'
+  | 'alpha'
   | 'settings';
 
 const SettingsTab = () => <SettingsPanel />;
@@ -177,6 +183,14 @@ export function App() {
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
             ) : undefined,
           )}
+
+          <div className="my-0.5 border-t border-gray-800/60" />
+
+          {navButton('scan', 'Arb Scanner', <ArrowLeftRight className="w-4 h-4" />)}
+          {navButton('alpha', 'Alpha Ideas', <Sparkles className="w-4 h-4" />)}
+
+          <div className="my-0.5 border-t border-gray-800/60" />
+
           {navButton('settings', 'Settings', <ShieldAlert className="w-4 h-4" />)}
         </nav>
 
@@ -268,6 +282,8 @@ export function App() {
         {activeTab === 'ml' && <MLPipeline selectedCatalogPath={selectedCatalogPath} />}
         {activeTab === 'journal' && <JournalKanban />}
         {activeTab === 'paper' && <PaperSimulator strategies={strategies} status={status} />}
+        {activeTab === 'scan' && <ScanTab />}
+        {activeTab === 'alpha' && <AlphaIdeasTab />}
         {activeTab === 'settings' && <SettingsTab />}
       </main>
     </div>

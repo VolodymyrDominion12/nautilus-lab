@@ -98,6 +98,7 @@
 | `score.py` | `in_sample_score()` | Оцінка кандидата = `ending_balance` (відсутній → −1) |
 | `risk.py` | `size_position()`, `stop_distance()`, `evaluate_entry()`, `effective_risk_fraction()`, `require_simulated_mode()` | Розмір позиції, стоп, запобіжники, Келлі-обмеження, заборона live |
 | `ingest_historical_bars.py` | `IngestHistoricalBars` | Fetch → write у каталог; перевірки й звіт |
+| `ingest_funding_history.py` | `IngestFundingHistory` | Fetch ставок фандингу → `ParquetFundingCatalog`; звіт містить `missing_index_price` (скільки розрахунків лишилось без індексу) |
 | `run_paper.py` | `RunPaperResearch` | Лог гіпотетичних ордерів (без рушія) |
 | `train_classifier.py` | `PurgedFold`, `purged_k_fold()`, `label_direction()` | Purged K-fold із embargo і розмітка напрямку |
 | `scan_triangular.py` | `scan_triangular_opportunities()` | Обгортка над пошуком циклів (fee на кожне ребро) |
@@ -115,7 +116,9 @@
 | `settings.py` | `Settings` | Pydantic-конфіг із `.env`; `risk_limits()`, `fee_schedule()`, `regime_params()`, `pairs_params()` |
 | `timeframe.py` | `NAUTILUS_BAR_SPEC`, `nautilus_bar_type()`, `interval_from_bar_type()` | `1h` → `1-HOUR`, побудова `bar_type`; `interval_from_bar_type()` — обернена функція, шукає специфікацію як **цілий сегмент** `-SPEC-` (підрядковий пошук читав `15-MINUTE` як `5-MINUTE`) |
 | `binance_klines.py` | `BinancePublicKlines`, `UrllibJsonClient`, `parse_binance_kline()` | Публічний REST klines із пагінацією |
-| `binance_funding.py` | `BinancePublicFunding` | Історія ставок фінансування (fapi) |
+| `http_resilience.py` | `ResilientJsonClient`, `UrllibJsonTransport`, `RateLimitPolicy`, `parse_used_weight()`, `parse_retry_after()` | Керування лімітами: читає `X-MBX-USED-WEIGHT-1M` і вичікує вікно при ≥90% ліміту, поважає `Retry-After` на 429, повторює 418/5xx з backoff, кидає `RateLimitedError` замість обрізаної серії; неретрайний статус → `MarketDataError` |
+| `binance_funding.py` | `BinancePublicFunding` | Історія ставок фінансування (fapi) з пагінацією понад стелю 1000 розрахунків; `index_price` джойниться з `indexPriceKlines` за годиною розрахунку і лишається `None`, якщо не зійшовся |
+| `funding_catalog.py` | `ParquetFundingCatalog` | Parquet-серія фандингу в `<catalog>/data/funding/<SYMBOL>/`; злиття за часом розрахунку (ідемпотентно), `Decimal` зберігається рядком, запис через `os.replace` |
 | `lightgbm_classifier.py` | `HeuristicDirectionClassifier`, `LightGBMDirectionClassifier` | Rule-based fallback і опційний LightGBM |
 | `egarch_forecast.py` | `egarch_forecast_volatility()` | EGARCH(1,1) через `arch`; `None`, якщо недоступно |
 | `alerts.py` | `AlertNotifier`, `NullAlertNotifier`, `TelegramAlertNotifier`, `WebhookAlertNotifier`, `CompositeAlertNotifier`, `build_notifier()` | Сповіщення про завершення прогону; `httpx`, fail-safe |
@@ -150,6 +153,9 @@
 | `conftest.py` | Фікстура `default_limits` (RiskLimits) і хелпер `make_bars(count, start, step_minutes)` |
 | `unit/test_bars.py` | Валідація OHLCV, UTC, монотонність, майбутні бари |
 | `unit/test_binance_klines.py` | Парсинг kline, пагінація, помилкові відповіді |
+| `unit/test_http_resilience.py` | Парсинг ваги й `Retry-After` (відсутній заголовок не читається як нуль), експоненційний backoff із стелею, повтор 429/418/5xx і обриву сокета, негайна відмова на 400, `RateLimitedError` замість обрізаної серії, проактивна пауза при ≥90% ваги |
+| `unit/test_binance_funding.py` | Пагінація понад стелю 1000, джойн `index_price` за годиною розрахунку, `None` замість підстановки mark price, відкидання позавіконних і зламаних рядків, типовий клієнт — стійкий |
+| `unit/test_funding_ingest.py` | Parquet-серія фандингу: точний round-trip `Decimal`, `None` лишається `None`, повторний запис вікна не дублює, фільтр за вікном; use case: звіт, `missing_index_price`, порожня відповідь → помилка, live → fail closed |
 | `unit/test_cli.py` | `live` fail-closed, `paper` працює, часткові дати → код 1, `parse_utc`, роботи без адаптера (`funding`/`ml_obi`/`glft`/`tri_scan`) → код 1 |
 | `unit/test_cointegration.py` | ADF-ворота `pairs`: коінтегрована пара проходить, два незалежні random walk — ні; статистика є **t-відношенням**, а не сирим коефіцієнтом; критичні значення збігаються з МакКінноном; p-value рівно 0.05 у 5%-точці й монотонна за статистикою; білий шум обирає 0 лагів; детермінізм; валідація входу |
 | `unit/test_donchian.py` | Пробої вгору/вниз, вихід за EMA, відсутність підглядання |

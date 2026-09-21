@@ -9,11 +9,27 @@ from nautilus_lab.domain.signals import LegIntent, SignalSide, SpreadSignal
 
 @dataclass(frozen=True, slots=True)
 class FundingSnapshot:
+    """One funding settlement.
+
+    `index_price` is optional on purpose. Binance's `fapi/v1/fundingRate` response
+    carries `markPrice` but **no** `indexPrice` (verified against the live endpoint),
+    so an adapter that defaults index to mark silently makes the basis
+    `(mark - index) / index` identically zero — a gate that can never fire and never
+    complains. `None` here means "index unknown", which callers must treat as
+    *no information*, never as "no divergence".
+    """
+
     instrument: str
     funding_rate: Decimal
     mark_price: Decimal
-    index_price: Decimal
+    index_price: Decimal | None
     ts_utc: datetime
+
+    def basis(self) -> Decimal | None:
+        """`(mark - index) / index`, or None when it cannot be computed honestly."""
+        if self.index_price is None or self.index_price <= 0:
+            return None
+        return (self.mark_price - self.index_price) / self.index_price
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,11 +72,11 @@ class FundingCashAndCarry:
 
     def on_funding(self, snapshot: FundingSnapshot) -> SpreadSignal | None:
         ts = snapshot.ts_utc
-        if snapshot.index_price <= 0:
+        basis = snapshot.basis()
+        if basis is None:
             # An unusable snapshot must not crash the run, and must not be read as a
             # flat basis (0/0 is not "no divergence", it is "we do not know").
             return self._flat(ts, "missing index price") if self._open else None
-        basis = (snapshot.mark_price - snapshot.index_price) / snapshot.index_price
         net = snapshot.funding_rate - self._round_trip_fee_per_interval()
         annualized = net * Decimal("3") * Decimal("365")
 

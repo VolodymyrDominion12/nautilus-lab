@@ -25,6 +25,7 @@ uv run lab <команда> [прапорці]
 
 ```
 usage: lab ingest [-h] [--start START] [--end END] [--catalog CATALOG] [--symbols SYMBOLS]
+                  [--incremental] [--funding]
 ```
 
 | Прапорець | Типово | Опис |
@@ -33,9 +34,16 @@ usage: lab ingest [-h] [--start START] [--end END] [--catalog CATALOG] [--symbol
 | `--end` | зараз | Кінець вікна (**виключно**, UTC) |
 | `--catalog` | `CATALOG_PATH` з `.env` (`catalog`) | Тека каталогу |
 | `--symbols` | `BINANCE_SYMBOLS` з `.env` (`ETHUSDT,BTCUSDT`) | Символи через кому |
+| `--incremental` | вимкнено | Дозавантажити лише те, що після останнього збереженого бару |
+| `--funding` | вимкнено | Вантажити **ставки фандингу** замість klines (див. нижче) |
 
 Що робить: публічний REST `https://api.binance.com/api/v3/klines`, пагінація по 1000 свічок,
 без API-ключів. Інтервал беруть із `BAR_INTERVAL` (типово `1h`). Записує бари й опис інструмента в каталог.
+
+Запити йдуть через стійкий клієнт (`infrastructure/http_resilience.py`): він читає
+`X-MBX-USED-WEIGHT-1M` і вичікує вікно при ≥90% ліміту, поважає `Retry-After` на HTTP 429,
+повторює 418 (бан IP) і 5xx з експоненційним backoff. Коли спроби вичерпано — кидає помилку,
+а не пише обрізану серію.
 
 Приклади:
 
@@ -43,6 +51,7 @@ usage: lab ingest [-h] [--start START] [--end END] [--catalog CATALOG] [--symbol
 uv run lab ingest --start 2025-01-01
 uv run lab ingest --start 2025-01-01 --end 2025-08-01 --symbols ETHUSDT
 uv run lab ingest --start 2019-01-01 --end 2025-01-01 --symbols ETHUSDT,BTCUSDT --catalog catalog_long
+uv run lab ingest --funding --start 2024-01-01 --symbols ETHUSDT,BTCUSDT
 ```
 
 Вивід:
@@ -51,10 +60,38 @@ uv run lab ingest --start 2019-01-01 --end 2025-01-01 --symbols ETHUSDT,BTCUSDT 
 symbol=ETHUSDT wrote=5088 first=2025-01-01T00:59:59.999000+00:00 last=2025-07-31T23:59:59.999000+00:00 catalog=/.../catalog
 ```
 
+### `lab ingest --funding`
+
+Вантажить **ставки фандингу** USD-M (`https://fapi.binance.com/fapi/v1/fundingRate`, теж без
+ключів) у `<catalog>/data/funding/<SYMBOL>/funding.parquet`. Це не OHLCV, а подієва серія, тому
+вона живе окремим піддеревом і не змішується з барами. Інтервал і `BAR_INTERVAL` тут не діють:
+фандинг розраховується за розкладом біржі.
+
+Пагінація обов'язкова: сторінка вміщає 1000 розрахунків, тобто ~333 дні за типового розкладу
+(три розрахунки на добу по 8 год).
+
+`index_price` береться з окремого ендпоінта `fapi/v1/indexPriceKlines` і джойниться за годиною
+розрахунку. Якщо індекс не зійшовся, він лишається **невідомим** (`None`), а не підміняється
+mark price: у відповіді `fundingRate` поля `indexPrice` не існує, і саме така підміна робила
+базис `(mark − index)/index` тотожним нулем.
+
+Вивід (реальний прогін):
+
+```
+symbol=ETHUSDT funding=1878 missing_index_price=0 first=2025-01-01T00:00:00.015000+00:00 last=2026-09-18T16:00:00+00:00 catalog=/.../catalog
+```
+
+Повторний ingest вікна, що перекривається, **не** створює дублікатів: серія зливається за часом
+розрахунку, найновіший запис перемагає.
+
 Помилки:
 - `binance klines error: {...}` — біржа повернула помилку (невідомий символ, обмеження).
 - `unsupported binance symbol: XXX` — символ не закінчується на `USDT` (підтримуються лише `*USDT`).
 - `no public klines for SYMBOL ... in [start, end)` — у вікні немає даних.
+- `no public funding settlements for SYMBOL ... in [start, end)` — те саме для `--funding`.
+- `... answered HTTP 400; not retryable` — вікно, якого біржа не обслуговує (напр.
+  `openInterestHist` не віддає історію глибше ~30 днів), або невідомий символ.
+- `gave up after N attempts` — вичерпано бюджет повторів на 429/418/5xx.
 
 > ⚠️ **Один каталог — один ingest.** Повторний запуск із вікном, що перекривається, створить
 > дублікати барів і зламає всі наступні `lab research`. Деталі: [04](04-tsykl-doslidzhennya.md#крок-1-ingest--завантаження-історії).

@@ -118,6 +118,14 @@ pretty = true
 module = ["nautilus_trader.*"]
 ignore_missing_imports = true
 
+# PyArrow постачається без type stubs, але є жорсткою залежністю nautilus_trader
+# (`pyarrow>=25.0.0`), тож він присутній завжди — на відміну від polars, який живе
+# лише в extra `research`. Тому сховище серії фандингу пише Parquet через pyarrow:
+# це єдиний колонковий рушій, доступний базовій інсталяції без extras.
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
+
 # PyYAML постачається без type stubs, а тягнути types-PyYAML як залежність
 # заради одного імпорту в тестах специфікацій не варто — тим самим способом,
 # яким тут уже вирішено для nautilus_trader.

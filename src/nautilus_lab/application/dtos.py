@@ -91,6 +91,34 @@ class IngestReport:
 
 
 @dataclass(frozen=True, slots=True)
+class FundingIngestRequest:
+    """Ingest request for the funding series.
+
+    No interval and no bar_type: funding settles on the exchange's own schedule, not
+    on a chart interval.
+    """
+
+    mode: TradingMode
+    symbol: str
+    start: datetime
+    end: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class FundingIngestReport:
+    snapshots_written: int
+    first_ts: datetime
+    last_ts: datetime
+    catalog_path: str
+    source: str
+    symbol: str
+    #: Settlements whose index price could not be joined. Non-zero is not an error,
+    #: but the basis gate cannot be evaluated on those rows, so the count is reported
+    #: instead of hidden behind a fabricated index price.
+    missing_index_price: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class WalkForwardRequest:
     backtest: BacktestRequest
     window: WalkForwardWindow | None = None

@@ -181,6 +181,24 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
             SettingField(key="JOURNAL_JSONL_PATH", label="Journal JSONL path", field_type="string"),
         ],
     ),
+    SettingGroup(
+        id="llm",
+        title="Alpha Ideas / LLM",
+        description="Offline hypothesis generation (lab propose). Never used in backtests.",
+        fields=[
+            SettingField(key="LLM_API_KEY", label="LLM API key", field_type="secret"),
+            SettingField(key="LLM_BASE_URL", label="LLM base URL", field_type="string"),
+            SettingField(key="LLM_MODEL", label="LLM model", field_type="string"),
+            SettingField(key="LLM_TEMPERATURE", label="LLM temperature", field_type="number"),
+            SettingField(
+                key="LLM_TIMEOUT_SECONDS", label="LLM timeout (seconds)", field_type="number"
+            ),
+            SettingField(key="LLM_PROMPTS_DIR", label="Prompts directory", field_type="string"),
+            SettingField(
+                key="LLM_HYPOTHESES_DIR", label="Hypotheses directory", field_type="string"
+            ),
+        ],
+    ),
 )
 
 

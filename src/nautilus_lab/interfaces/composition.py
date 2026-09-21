@@ -6,10 +6,12 @@ from pathlib import Path
 
 from nautilus_lab.application.dtos import (
     BacktestRequest,
+    FundingIngestRequest,
     IngestRequest,
     OverfitAuditRequest,
     WalkForwardRequest,
 )
+from nautilus_lab.application.ingest_funding_history import IngestFundingHistory
 from nautilus_lab.application.ingest_historical_bars import IngestHistoricalBars
 from nautilus_lab.application.propose_alphas import AlphaProposalRequest, resolve_prompt_path
 from nautilus_lab.application.risk import require_simulated_mode
@@ -21,7 +23,10 @@ from nautilus_lab.domain.ports import ChatCompleter
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.alerts import AlertNotifier, build_notifier
+from nautilus_lab.infrastructure.binance_funding import BinancePublicFunding
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
+from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
+from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
 from nautilus_lab.infrastructure.llm_client import OpenAICompatibleChatClient
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
 from nautilus_lab.infrastructure.nautilus.bar_feed import ResearchBarFeed
@@ -131,7 +136,10 @@ def ingest_use_case(cfg: Settings | None = None) -> IngestHistoricalBars:
     resolved = cfg or settings()
     store = catalog(resolved)
     return IngestHistoricalBars(
-        BinancePublicKlines(),
+        # The resilient client is the only HTTP path used for ingest: a long
+        # multi-symbol run is exactly where a bare 429/418 would otherwise kill
+        # the process mid-series and leave a truncated catalog behind.
+        BinancePublicKlines(ResilientJsonClient()),
         store,
         catalog_path=str(store.path),
     )
@@ -214,6 +222,32 @@ def ingest_request(
         bar_type=nautilus_bar_type(instrument_id, cfg.bar_interval),
         start=start,
         end=end,
+    )
+
+
+def funding_ingest_request(
+    cfg: Settings,
+    *,
+    start: datetime,
+    end: datetime,
+    symbol: str | None = None,
+) -> FundingIngestRequest:
+    require_simulated_mode(cfg.trading_mode)
+    return FundingIngestRequest(
+        mode=cfg.trading_mode,
+        symbol=symbol or cfg.binance_symbol,
+        start=start,
+        end=end,
+    )
+
+
+def ingest_funding_use_case(cfg: Settings | None = None) -> IngestFundingHistory:
+    resolved = cfg or settings()
+    store = ParquetFundingCatalog(Path(resolved.catalog_path))
+    return IngestFundingHistory(
+        BinancePublicFunding(ResilientJsonClient()),
+        store,
+        catalog_path=str(store.path),
     )
 
 

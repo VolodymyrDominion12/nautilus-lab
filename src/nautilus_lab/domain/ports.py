@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -43,6 +44,25 @@ class JsonHttpClient(Protocol):
     def get_json(self, url: str, params: Mapping[str, str]) -> object: ...
 
 
+@dataclass(frozen=True, slots=True)
+class JsonResponse:
+    """A raw HTTP outcome, including the headers a rate-limit policy needs.
+
+    Status is carried as data rather than raised, so a retry policy can decide what
+    to do with 429/418 instead of the transport deciding for it.
+    """
+
+    status: int
+    headers: Mapping[str, str]
+    payload: object
+
+
+class JsonTransport(Protocol):
+    """One HTTP GET, no retries. The layer that owns the socket, nothing more."""
+
+    def get(self, url: str, params: Mapping[str, str]) -> JsonResponse: ...
+
+
 class FundingRateFeed(Protocol):
     def fetch_history(
         self,
@@ -50,6 +70,24 @@ class FundingRateFeed(Protocol):
         symbol: str,
         start: datetime,
         end: datetime,
+    ) -> list[FundingSnapshot]: ...
+
+
+class FundingCatalog(Protocol):
+    """Time series of funding settlements, stored beside the bar series.
+
+    Not a `BarCatalog`: funding is an event series, not OHLCV, so it gets its own
+    storage contract keyed by settlement timestamp.
+    """
+
+    def write(self, snapshots: Sequence[FundingSnapshot], *, symbol: str) -> int: ...
+
+    def load(
+        self,
+        *,
+        symbol: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
     ) -> list[FundingSnapshot]: ...
 
 

@@ -8,10 +8,14 @@
 #      .venv/bin/lab research --robot funding --synthetic --bars 200
 #      → код 1, "robot 'funding' has no backtest adapter yet; use one of:
 #        ema, formulaic_lgbm, pairs, regime, vpin_momentum. ..."
+#
+#  ЗМІНА v1.1 (дані): розрив «даних» закрито — історія ставок фандингу тепер
+#  реально вантажиться в каталог (`lab ingest --funding`), а `index_price` більше
+#  не підміняється mark price. Див. blocked_reason і notes нижче.
 # =============================================================================
 kind: strategy
 name: funding
-version: "1.0"
+version: "1.1"
 status: blocked
 title: "Funding cash-and-carry: спот лонг + перпетуал шорт, вхід за нетто-APY"
 
@@ -28,7 +32,7 @@ hypothesis: >
   лишається вузьким. Перевірно це лише на історії ставок фандингу — не на барах.
 
 blocked_reason: >
-  Бракує всіх трьох складових одночасно: адаптера, даних і нарахування фандингу.
+  Бракує двох складових із трьох — розрив «даних» закрито у v1.1.
   (1) Адаптер. Домен повертає `SpreadSignal` із двох ніг за подією фандингу
   (`FundingCashAndCarry.on_funding(snapshot)`), а не за баром. У
   `infrastructure/nautilus/signal_strategy.py::_build_robot()` є гілки лише для
@@ -37,16 +41,16 @@ blocked_reason: >
   створює `PairsTrading` і викликає `self._robot.on_bars(bar_a, bar_b)`, тобто
   це баровий робот, а не споживач `FundingSnapshot`. Потрібна нова гілка
   адаптера й драйвер подій фандингу (подієвий, а не баровий).
-  (2) Дані. `infrastructure/binance_funding.py::BinancePublicFunding.fetch_history()`
-  існує, але його не викликає жоден модуль у `src/` — єдине посилання на цей
-  контракт поза самим файлом це протокол `FundingRateFeed` у `domain/ports.py`;
-  окремого тесту на фід теж немає (`grep -rn BinancePublicFunding tests/` →
-  порожньо). `lab ingest` вантажить лише klines (`BinancePublicKlines`), тож у
-  каталозі немає жодної серії ставок фандингу, і вхід за нетто-APY нема на чому
-  порахувати. Додатково: у клієнті поля снапшота читаються з ланцюгом фолбеків
-  `markPrice → fundingRate → "0"` та `indexPrice → markPrice → "1"`, тож базис
-  (`(mark − index)/index`) може рахуватися не проти справжнього індексу — це
-  треба перевірити на реальній відповіді API, а не припускати.
+  (2) Дані. ЗАКРИТО. `lab ingest --funding` вантажить історію ставок у
+  Parquet-каталог (`<catalog>/data/funding/<SYMBOL>/funding.parquet`,
+  `infrastructure/funding_catalog.py`), фід пагінується понад стелю 1000
+  розрахунків на сторінку, а `index_price` береться з окремого ендпоінта
+  `fapi/v1/indexPriceKlines` і джойниться за годиною розрахунку. Раніше
+  `binance_funding.py` підставляв у `index_price` значення `markPrice` (поля
+  `indexPrice` у відповіді `fapi/v1/fundingRate` не існує — перевірено на
+  живому API), через що базис `(mark − index)/index` був тотожним нулем і гейт
+  `basis_max` не міг спрацювати ніколи. Тепер `index_price` — `Decimal | None`:
+  невідомий індекс лишається невідомим, і робот каже "missing index price".
   (3) Нарахування в рушії. `infrastructure/nautilus/backtest_runner.py::_execute()`
   додає в `BacktestEngine` самі лише бари й виконує їх із `bar_execution=True`;
   жодного механізму, який нараховує фандинг на утримувану перпетуал-позицію, у
@@ -69,7 +73,23 @@ edge_conditions:
       `(funding_rate − 2·taker_fee/holding_periods) · 3 · 365 ≥ min_net_apy`
       (типово 0.10). Досяжність порогу прямо залежить від `holding_periods`
       (типово 30) — це видно з коду `FundingCashAndCarry._round_trip_fee_per_interval()`.
-      Перевіряється тільки на історії ставок, якої в каталозі немає.
+      ПЕРЕВІРЕНО НА ДАНИХ (`lab ingest --funding`; ETHUSDT, BTCUSDT, SOLUSDT,
+      BNBUSDT, XRPUSDT, ADAUSDT, DOGEUSDT; 2024-01-01…2026-09-18; 2973 розрахунки
+      на символ, 20811 разом):
+        • за типових параметрів поріг 0.10 проходять 1545/20811 (7.4%) — гейт
+          ДОСЯЖНИЙ, але вкрай нерівномірно в часі:
+              2024: 1496/7686 (19.5%)
+              2025:   26/7665 ( 0.3%)
+              2026:   23/5460 ( 0.4%)
+        • на ETHUSDT у 2025-2026 поріг не проходить ЖОДЕН розрахунок (0 з 1878).
+      Медіанна нетто-дохідність по символу — від −3.7% (BNBUSDT) до +6.6%
+      (ADAUSDT) річних. Тобто гіпотеза не мертва, але її вікно — 2024 рік: у
+      2025-2026 ставка фандингу майже ніколи не покриває амортизовану комісію із
+      запасом 10% річних. Це вимір досяжності гейта, а не прогону робота (адаптера
+      немає), і параметри під нього підбирати заборонено дисципліною проєкту
+      (IS лише для вибору, OOS — один раз). Для довідки, чутливість зафіксована:
+      за `taker_fee=0.0002, holding_periods=90` поріг 0.10 проходять 269/1878 на
+      вікні 2025-01-01…2026-09-18, за порогу 0.05 і типових решті — 386/1878.
   - name: basis_stays_inside_the_gate_while_held
     description: >
       Робот тримає позицію, лише поки `|mark − index| / index ≤ basis_max`
@@ -110,7 +130,8 @@ notes: >
   `tests/unit/test_audit_fixes.py`).
   Публічні гейти робота (усе з коду): вхід — `annualized ≥ min_net_apy` і
   `|basis| ≤ basis_max`, вихід — від'ємний фандинг (`close_on_negative`), розходження
-  базису або `index_price <= 0` (сигнал "missing index price", а не ділення на нуль).
+  базису або невідомий індекс (`index_price is None` → сигнал "missing index price",
+  а не ділення на нуль).
   `minimum_bars` у спеці не вказано свідомо: гілки в `minimum_bars()` для цього
   робота немає, тож код поверне типове 50 — але робот не споживає бари взагалі,
   і це число нічого не означає (вигадувати його в спеку не варто).

@@ -28,6 +28,8 @@ from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.composition import (
+    funding_ingest_request,
+    ingest_funding_use_case,
     ingest_request,
     ingest_use_case,
     journal_paths,
@@ -64,6 +66,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--incremental",
         action="store_true",
         help="Append only bars after the last stored bar per symbol (skip if up to date)",
+    )
+    ingest.add_argument(
+        "--funding",
+        action="store_true",
+        help=(
+            "Ingest USD-M funding settlements instead of klines "
+            "(event series, stored under catalog/data/funding/)"
+        ),
     )
 
     research = sub.add_parser("research", help="Run a simulated backtest (default path)")
@@ -260,6 +270,8 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
         if args.symbols
         else cfg.binance_symbols
     )
+    if getattr(args, "funding", False):
+        return _run_ingest_funding(cfg, symbols=symbols, start=default_start, end=end)
     use_case = ingest_use_case(cfg)
     incremental = bool(getattr(args, "incremental", False))
     for symbol in symbols:
@@ -279,6 +291,30 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
         report = use_case.execute(ingest_request(cfg, start=start, end=end, symbol=symbol))
         print(
             f"symbol={symbol} wrote={report.bars_written} "
+            f"first={report.first_ts.isoformat()} last={report.last_ts.isoformat()} "
+            f"catalog={report.catalog_path}"
+        )
+    return 0
+
+
+def _run_ingest_funding(
+    cfg: Settings,
+    *,
+    symbols: list[str],
+    start: datetime,
+    end: datetime,
+) -> int:
+    """Ingest the funding series. Symbol universe is shared with the kline ingest.
+
+    Binance serves funding history on USD-M futures, so the same `*USDT` symbols the
+    lab already ingests work unchanged; there is no separate perp symbol mapping.
+    """
+    use_case = ingest_funding_use_case(cfg)
+    for symbol in symbols:
+        report = use_case.execute(funding_ingest_request(cfg, start=start, end=end, symbol=symbol))
+        print(
+            f"symbol={symbol} funding={report.snapshots_written} "
+            f"missing_index_price={report.missing_index_price} "
             f"first={report.first_ts.isoformat()} last={report.last_ts.isoformat()} "
             f"catalog={report.catalog_path}"
         )

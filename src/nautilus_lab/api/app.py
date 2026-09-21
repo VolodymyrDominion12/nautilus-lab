@@ -50,11 +50,14 @@ app = FastAPI(title="Nautilus Lab API")
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 REPORTS_DIR = os.path.join(ROOT_DIR, "reports")
+HYPOTHESES_DIR = os.path.join(ROOT_DIR, "research", "hypotheses")
 SPECS_DIR = os.path.join(ROOT_DIR, "specs", "strategies")
 VENV_PYTHON = os.path.join(ROOT_DIR, ".venv", "bin", "python")
 
 os.makedirs(REPORTS_DIR, exist_ok=True)
+os.makedirs(HYPOTHESES_DIR, exist_ok=True)
 app.mount("/static_reports", StaticFiles(directory=REPORTS_DIR), name="static_reports")
+app.mount("/static_hypotheses", StaticFiles(directory=HYPOTHESES_DIR), name="static_hypotheses")
 
 app.add_middleware(
     CORSMiddleware,
@@ -1020,3 +1023,55 @@ def run_propose(req: ProposeRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LlmRequestError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/hypotheses")
+def get_hypotheses() -> dict[str, Any]:
+    if not os.path.exists(HYPOTHESES_DIR):
+        return {"hypotheses": []}
+
+    files = glob.glob(os.path.join(HYPOTHESES_DIR, "*.json"))
+    items: list[dict[str, Any]] = []
+    for f in sorted(files, key=os.path.getmtime, reverse=True):
+        mtime = os.path.getmtime(f)
+        size = os.path.getsize(f)
+        basename = os.path.basename(f)
+        iso_mtime = datetime.datetime.fromtimestamp(mtime, tz=UTC).isoformat()
+        item: dict[str, Any] = {
+            "file": basename,
+            "modified": iso_mtime,
+            "size_kb": round(size / 1024, 1),
+            "url": f"/static_hypotheses/{basename}",
+        }
+        try:
+            with open(f, encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                item["model"] = data.get("model", "unknown")
+                item["as_of"] = data.get("as_of", "")
+                item["count_parsed"] = data.get("count_parsed", 0)
+                item["count_flagged"] = data.get("count_flagged", 0)
+                review = data.get("review")
+                if isinstance(review, dict):
+                    item["review_status"] = review.get("status", "pending")
+        except Exception:
+            pass
+        items.append(item)
+    return {"hypotheses": items}
+
+
+@app.get("/api/hypotheses/{filename}")
+def get_hypothesis_detail(filename: str) -> dict[str, Any]:
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="invalid filename")
+    target = os.path.join(HYPOTHESES_DIR, filename)
+    if not os.path.isfile(target):
+        raise HTTPException(status_code=404, detail="hypothesis file not found")
+    try:
+        with open(target, encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=500, detail="invalid hypothesis file format")
+        return data
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="corrupt hypothesis JSON") from exc

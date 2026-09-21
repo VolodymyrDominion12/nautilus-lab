@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "created_at": "2026-09-18T16:49:44.467606+00:00",
+  "model": "deepseek-v4-pro",
+  "endpoint_host": "api.deepseek.com",
+  "as_of": "2026-09-18",
+  "prompt_file": "research/prompts/01-generate-alphas.md",
+  "prompt_sha256": "9db1291e33c9e3e0169c82a47fa65f8af6b1598c9a86c8a7443b7e45840d91e6",
+  "feature_contract": [
+    "ret",
+    "ret_5",
+    "vol_10",
+    "volume_ratio",
+    "close_loc",
+    "momentum_10",
+    "reversal_3",
+    "vol_of_vol",
+    "trend_er",
+    "range_pct",
+    "high_low_spread",
+    "vol_20"
+  ],
+  "count_requested": 6,
+  "count_parsed": 6,
+  "count_flagged": 0,
+  "hypotheses": [
+    {
+      "name": "crowded_impulse_fade",
+      "formula": "zscore(ret_5) * (1 - clip(trend_er, 0, 1))",
+      "mechanism": "Коли 5-барний рух великий, а ефективність тренду низька, імпульс переважно шумовий. Пізні тейкери й брейкаут-покупці платять за перестріл, а пасивні ліквідатори фейдять шум.",
+      "horizon_bars": 12,
+      "expected_sign": -1,
+      "kill_condition": "OOS IC на горизонті 12 барів < 0 два послідовні місяці при стабільному знаку звʼязку in-sample.",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "wide_bar_top_fade",
+      "formula": "zscore(close_loc) * clip(zscore(high_low_spread), 0, 2)",
+      "mechanism": "Широкий бар із закриттям біля максимуму або мінімуму створює враження сильного пробою. Пізні ордери знімають ліквідність на екстремумі, тоді як пасивні ліквідатори займають протилежний бік і отримують відкат.",
+      "horizon_bars": 6,
+      "expected_sign": -1,
+      "kill_condition": "OOS IC на горизонті 6 барів < 0 у двох з трьох послідовних місяців.",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "volume_confirmed_momentum",
+      "formula": "zscore(momentum_10) * clip(zscore(volume_ratio), 0, 2) * clip(zscore(trend_er), 0, 2)",
+      "mechanism": "Підтверджений обсягом 10-барний імпульс із високою ефективністю тренду вказує на стійкий потік. Контртрендові трейдери, які фейдять рух, постачають ліквідність і систематично недооцінюють інерцію криптовалютних потоків.",
+      "horizon_bars": 24,
+      "expected_sign": 1,
+      "kill_condition": "OOS IC < 0 двічі поспіль при стабільному знаку кореляції in-sample.",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "high_volume_exhaustion_fade",
+      "formula": "-1 * sign(ret_5) * clip(zscore(volume_ratio), 0, 2) * clip(zscore(abs(ret_5)), 0, 2)",
+      "mechanism": "Різкий 5-барний рух на високому обсязі часто вичерпує пул тейкерів і стоп-ордерів. Після сплеску вгору пізні покупці переплачують, після сплеску вниз панічні продавці віддають ліквідність за низькими цінами.",
+      "horizon_bars": 8,
+      "expected_sign": 1,
+      "kill_condition": "OOS IC < 0 двічі поспіль після високообʼємних сплесків.",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "vol_squeeze_momentum",
+      "formula": "clip(-1 * zscore(range_pct), 0, 2) * zscore(momentum_10)",
+      "mechanism": "Після стиснення діапазону позиції й стопи накопичуються біля меж консолідації. Пробій у бік 10-барного імпульсу змушує скальперів і продавців волатильності закриватися, що підживлює рух.",
+      "horizon_bars": 16,
+      "expected_sign": 1,
+      "kill_condition": "OOS IC на горизонті 16 барів < 0 двічі поспіль.",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "vol_of_vol_instability_fade",
+      "formula": "-1 * clip(zscore(vol_of_vol), 0, 2) * zscore(ret_5)",
+      "mechanism": "Зростання волатильності волатильності сигналізує про нестабільний режим. Трейдери, які екстраполюють попередній різкий рух у такому середовищі, систематично помиляються, а ліквідатори фейдять нестабільність.",
+      "horizon_bars": 10,
+      "expected_sign": 1,
+      "kill_condition": "OOS IC < 0 двічі поспіль при стабільному знаку звʼязку in-sample.",
+      "unknown_identifiers": []
+    }
+  ],
+  "raw_response": "[\n  {\n    \"name\": \"crowded_impulse_fade\",\n    \"formula\": \"zscore(ret_5) * (1 - clip(trend_er, 0, 1))\",\n    \"mechanism\": \"Коли 5-барний рух великий, а ефективність тренду низька, імпульс переважно шумовий. Пізні тейкери й брейкаут-покупці платять за перестріл, а пасивні ліквідатори фейдять шум.\",\n    \"horizon_bars\": 12,\n    \"expected_sign\": -1,\n    \"kill_condition\": \"OOS IC на горизонті 12 барів < 0 два послідовні місяці при стабільному знаку звʼязку in-sample.\"\n  },\n  {\n    \"name\": \"wide_bar_top_fade\",\n    \"formula\": \"zscore(close_loc) * clip(zscore(high_low_spread), 0, 2)\",\n    \"mechanism\": \"Широкий бар із закриттям біля максимуму або мінімуму створює враження сильного пробою. Пізні ордери знімають ліквідність на екстремумі, тоді як пасивні ліквідатори займають протилежний бік і отримують відкат.\",\n    \"horizon_bars\": 6,\n    \"expected_sign\": -1,\n    \"kill_condition\": \"OOS IC на горизонті 6 барів < 0 у двох з трьох послідовних місяців.\"\n  },\n  {\n    \"name\": \"volume_confirmed_momentum\",\n    \"formula\": \"zscore(momentum_10) * clip(zscore(volume_ratio), 0, 2) * clip(zscore(trend_er), 0, 2)\",\n    \"mechanism\": \"Підтверджений обсягом 10-барний імпульс із високою ефективністю тренду вказує на стійкий потік. Контртрендові трейдери, які фейдять рух, постачають ліквідність і систематично недооцінюють інерцію криптовалютних потоків.\",\n    \"horizon_bars\": 24,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"OOS IC < 0 двічі поспіль при стабільному знаку кореляції in-sample.\"\n  },\n  {\n    \"name\": \"high_volume_exhaustion_fade\",\n    \"formula\": \"-1 * sign(ret_5) * clip(zscore(volume_ratio), 0, 2) * clip(zscore(abs(ret_5)), 0, 2)\",\n    \"mechanism\": \"Різкий 5-барний рух на високому обсязі часто вичерпує пул тейкерів і стоп-ордерів. Після сплеску вгору пізні покупці переплачують, після сплеску вниз панічні продавці віддають ліквідність за низькими цінами.\",\n    \"horizon_bars\": 8,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"OOS IC < 0 двічі поспіль після високообʼємних сплесків.\"\n  },\n  {\n    \"name\": \"vol_squeeze_momentum\",\n    \"formula\": \"clip(-1 * zscore(range_pct), 0, 2) * zscore(momentum_10)\",\n    \"mechanism\": \"Після стиснення діапазону позиції й стопи накопичуються біля меж консолідації. Пробій у бік 10-барного імпульсу змушує скальперів і продавців волатильності закриватися, що підживлює рух.\",\n    \"horizon_bars\": 16,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"OOS IC на горизонті 16 барів < 0 двічі поспіль.\"\n  },\n  {\n    \"name\": \"vol_of_vol_instability_fade\",\n    \"formula\": \"-1 * clip(zscore(vol_of_vol), 0, 2) * zscore(ret_5)\",\n    \"mechanism\": \"Зростання волатильності волатильності сигналізує про нестабільний режим. Трейдери, які екстраполюють попередній різкий рух у такому середовищі, систематично помиляються, а ліквідатори фейдять нестабільність.\",\n    \"horizon_bars\": 10,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"OOS IC < 0 двічі поспіль при стабільному знаку звʼязку in-sample.\"\n  }\n]",
+  "review": {
+    "status": "pending",
+    "note": "",
+    "gates": {
+      "purged_cv": null,
+      "walk_forward_oos": null,
+      "buy_and_hold_oos": null
+    }
+  }
+}

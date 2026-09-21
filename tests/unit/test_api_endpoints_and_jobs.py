@@ -133,3 +133,22 @@ def test_run_ml_job_cli(tmp_path: Path) -> None:
     assert code == 1
     assert (tmp_path / "ml_train.log").exists()
     assert (tmp_path / "ml_train.json").exists()
+
+
+def test_api_hypotheses_endpoints(client: TestClient) -> None:
+    res = client.get("/api/hypotheses")
+    assert res.status_code == 200
+    data = res.json()
+    assert "hypotheses" in data
+    assert isinstance(data["hypotheses"], list)
+    if data["hypotheses"]:
+        first = data["hypotheses"][0]
+        assert "file" in first
+        assert "url" in first
+        detail_res = client.get(f"/api/hypotheses/{first['file']}")
+        assert detail_res.status_code == 200
+        assert "hypotheses" in detail_res.json()
+
+    # Bad paths
+    assert client.get("/api/hypotheses/nonexistent_file_xyz.json").status_code == 404
+    assert client.get("/api/hypotheses/..evil").status_code == 400

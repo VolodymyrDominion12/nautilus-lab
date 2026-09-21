@@ -707,3 +707,58 @@ export async function fetchHistoryEntry(
 ): Promise<{ entry: HistoryEntry }> {
   return parseJson(await fetch(apiUrl(`/api/research/history/${encodeURIComponent(historyId)}`)));
 }
+
+export interface HypothesisItem {
+  name: string;
+  formula: string;
+  mechanism: string;
+  horizon_bars: number;
+  expected_sign: number;
+  kill_condition: string;
+  unknown_identifiers?: string[];
+}
+
+export interface HypothesisEntry {
+  file: string;
+  modified: string;
+  size_kb: number;
+  url: string;
+  model?: string;
+  as_of?: string;
+  count_parsed?: number;
+  count_flagged?: number;
+  review_status?: string;
+}
+
+export interface HypothesisRunDetail {
+  version: number;
+  created_at: string;
+  model: string;
+  endpoint_host: string;
+  as_of: string;
+  prompt_file: string;
+  prompt_sha256: string;
+  feature_contract: string[];
+  count_requested: number;
+  count_parsed: number;
+  count_flagged: number;
+  hypotheses: HypothesisItem[];
+  raw_response: string;
+  review?: {
+    status: string;
+    note: string;
+    gates: {
+      purged_cv: boolean | null;
+      walk_forward_oos: boolean | null;
+      buy_and_hold_oos: boolean | null;
+    };
+  };
+}
+
+export async function fetchHypotheses(): Promise<{ hypotheses: HypothesisEntry[] }> {
+  return parseJson(await fetch(apiUrl('/api/hypotheses')));
+}
+
+export async function fetchHypothesisDetail(file: string): Promise<HypothesisRunDetail> {
+  return parseJson(await fetch(apiUrl(`/api/hypotheses/${encodeURIComponent(file)}`)));
+}

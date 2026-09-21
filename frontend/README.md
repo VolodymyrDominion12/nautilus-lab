@@ -40,9 +40,9 @@ runner, so these run as assertions in a script.
 
 | Tab | What it does |
 |-----|--------------|
-| **Command Center** | Live job states with elapsed time, the last measured result with its verdict, recent experiments, journal counts, trained models. |
-| **Research & Backtest** | The core flow: pick a robot and instrument, choose the walk-forward window on a chart, run, then read the result panels. |
-| **Parquet Catalog** | Per-instrument coverage and fees, price preview, Binance ingest with a stop button. |
+| **Command Center** | Live job states with elapsed time, the last measured result with its verdict, data coverage per instrument (bars, taker flow, ticks, depth, funding), recent experiments, journal counts, trained models. |
+| **Research & Backtest** | The core flow: pick a robot and instrument, choose the walk-forward window on a chart, run, then read the result panels. The advanced gates include the bar-level VPIN, tick-level VPIN and Hawkes filters. |
+| **Parquet Catalog** | Per-instrument coverage and fees, a per-series table, price preview, and four Binance ingest kinds (klines, aggregated trades, funding, live L2 depth) with a stop button. |
 | **Strategy Specs** | `specs/strategies/*.yaml` as validated: wiring, warm-up bars, `grid_source`. |
 | **ML Pipeline** | LightGBM training with purged CV, model inventory. |
 | **Experiment Journal** | `research/journal.jsonl` as a board; each row shows the gates it was run under. |
@@ -67,6 +67,13 @@ customisable, because a dashboard that lets you skip them is how a lab starts ly
 - **Fail-closed runs are blocked before they start.** `preflight()` refuses robots with no
   backtest adapter, full-sample combined with Optuna, multi-window runs with explicit dates, and
   splits whose legs are shorter than the robot's warm-up.
+- **A tick-level filter is never accepted without ticks.** The tick VPIN and Hawkes filters are
+  refused (blocked error, and HTTP 400 from the API) on a robot that ignores them, on synthetic
+  bars, and on a catalog whose aggregated-trade series is missing — the engine reads a missing
+  series as an empty one, so the filter would run on its defaults while the run carried its name.
+- **A missing optional series is reported, not hidden.** The catalog and command-center tables
+  show taker flow / ticks / depth / funding as present or `missing` for every instrument, because
+  "the run finished" is not evidence that the data behind a filter existed.
 - **Live trading is unreachable.** There is no execution adapter; `lab live` exits 1 by design.
 - **Paper mode offers only the robots it can build** (`regime`, `ema`). Anything else would
   silently run the regime robot while the artifact recorded a different name.
@@ -86,4 +93,7 @@ customisable, because a dashboard that lets you skip them is how a lab starts ly
 - **The window chart is the real split.** The amber band is the parameter-selection leg, the
   green band is the reported forecast, and the boundary is derived from the bar count
   (`floor(total * is_fraction)`), the same rule the engine uses.
+- **"Copy CLI" only emits real flags.** The command is built by `cliCommand()` from the flags in
+  `interfaces/cli.py`; the instrument travels as `INSTRUMENT_ID` because there is no
+  `--instrument` flag to pass it through.
 - **Tearsheets are ~4 MB each**; the viewer lists the newest few with their size.

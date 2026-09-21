@@ -30,6 +30,7 @@ import type {
   ResearchRunConfig,
   ResearchSummary,
   StrategySpec,
+  StressSliceInfo,
 } from '../services/api';
 import { WalkForwardBuilder } from './WalkForwardBuilder';
 import { ExperimentHistory } from './ExperimentHistory';
@@ -39,7 +40,7 @@ import { FoldBreakdown } from './FoldBreakdown';
 import { PboPanel } from './PboPanel';
 import { LogPanel } from './LogPanel';
 import { formatDateTime } from '../lib/format';
-import { cliCommand, preflight, preflightBlocking } from '../lib/research';
+import { cliCommand, preflight, preflightBlocking, sliceOverlapsCatalog } from '../lib/research';
 import type { PreflightIssue } from '../lib/research';
 
 interface ResearchLabProps {
@@ -49,6 +50,8 @@ interface ResearchLabProps {
   /** Which robots can read the tick series, as reported by the backend. */
   tickVpinRobots?: string[];
   hawkesRobots?: string[];
+  /** Named stress windows with their real dates, from the backend. */
+  stressSlices?: StressSliceInfo[];
 }
 
 interface PersistedForm {
@@ -98,6 +101,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   selectedCatalogPath,
   tickVpinRobots = [],
   hawkesRobots = [],
+  stressSlices = [],
 }) => {
   const persisted = useMemo(() => loadPersistedForm(), []);
 
@@ -285,6 +289,13 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
     });
   }, [robot, strategies]);
 
+  const selectedSliceWindow = useMemo(() => {
+    if (!stressSlice) return null;
+    const slice = stressSlices.find((item) => item.name === stressSlice);
+    if (!slice) return null;
+    return { name: slice.name, start: slice.start, end: slice.end };
+  }, [stressSlice, stressSlices]);
+
   // Coverage of the tick series for the instrument this run would use. null means the
   // health endpoint has not answered (yet): unknown is reported as unknown, not as absent.
   const tickDataAvailable = useMemo(() => {
@@ -322,6 +333,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
         tickVpinRobots,
         hawkesRobots,
         tickDataAvailable,
+        stressSliceWindow: selectedSliceWindow,
       }),
     [
       robot,
@@ -346,6 +358,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
       tickVpinRobots,
       hawkesRobots,
       tickDataAvailable,
+      selectedSliceWindow,
     ],
   );
   const blocked = preflightBlocking(issues);
@@ -1085,15 +1098,30 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
                 <select
                   value={stressSlice}
                   onChange={(e) => setStressSlice(e.target.value)}
-                  className="bg-gray-950 border border-gray-800 text-xs text-gray-300 rounded-lg p-1.5"
+                  disabled={stressSlices.length === 0}
+                  className="bg-gray-950 border border-gray-800 text-xs text-gray-300 rounded-lg p-1.5 disabled:opacity-50"
                 >
                   <option value="">Full range (no slice)</option>
-                  <option value="covid2020">covid2020 (March 2020 crash)</option>
-                  <option value="ftx2022">ftx2022 (Nov 2022 liquidity crisis)</option>
-                  <option value="etf2024">etf2024 (Jan 2024 ETF launch)</option>
+                  {/* The list and its dates come from the backend (`domain/stress_slices.py`),
+                      so a slice renamed or moved in code cannot linger here as a stale label.
+                      A value restored from an archived run is kept visible but flagged. */}
+                  {stressSlice && !stressSlices.some((slice) => slice.name === stressSlice) && (
+                    <option value={stressSlice}>{stressSlice} (unknown to this backend)</option>
+                  )}
+                  {stressSlices.map((slice) => {
+                    const covers = sliceOverlapsCatalog(slice, selectedInstrument);
+                    return (
+                      <option key={slice.name} value={slice.name}>
+                        {slice.name} ({slice.start.slice(0, 10)} → {slice.end.slice(0, 10)})
+                        {covers ? '' : ' — outside this catalog'}
+                      </option>
+                    );
+                  })}
                 </select>
                 <span className="text-[10px] text-gray-600">
-                  Slices only exist inside the catalog&apos;s own date range.
+                  {stressSlices.length === 0
+                    ? 'The backend did not report any stress slices, so none can be selected.'
+                    : 'A slice replaces the load window, so it must lie inside the catalog\u2019s own range; the dates above are the ones the backend will use.'}
                 </span>
               </div>
             </div>

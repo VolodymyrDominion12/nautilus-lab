@@ -3,12 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from nautilus_trader.model.data import Bar, BarType, TradeTick
-from nautilus_trader.model.enums import AggressorSide
+from nautilus_trader.model.data import Bar, BarType, BookOrder, OrderBookDepth10, TradeTick
+from nautilus_trader.model.enums import AggressorSide, OrderSide
 from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.objects import Price, Quantity
 
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.order_book import BookLevel, OrderBookSnapshot
 from nautilus_lab.domain.ticks import AggTrade
 
 
@@ -78,3 +79,53 @@ def to_engine_ticks(
         )
         for trade in trades
     ]
+
+
+def to_engine_books(
+    snapshots: list[OrderBookSnapshot],
+    *,
+    instrument: CurrencyPair,
+) -> list[OrderBookDepth10]:
+    return [
+        OrderBookDepth10(
+            instrument_id=instrument.id,
+            bids=[
+                BookOrder(
+                    side=OrderSide.BUY,
+                    price=Price(level.price, precision=instrument.price_precision),
+                    size=Quantity(level.volume, precision=instrument.size_precision),
+                    order_id=0,
+                )
+                for level in snapshot.bids
+            ],
+            asks=[
+                BookOrder(
+                    side=OrderSide.SELL,
+                    price=Price(level.price, precision=instrument.price_precision),
+                    size=Quantity(level.volume, precision=instrument.size_precision),
+                    order_id=0,
+                )
+                for level in snapshot.asks
+            ],
+            bid_counts=[1] * len(snapshot.bids),
+            ask_counts=[1] * len(snapshot.asks),
+            flags=0,
+            sequence=0,
+            ts_event=datetime_to_nanos(snapshot.ts_utc),
+            ts_init=datetime_to_nanos(snapshot.ts_utc),
+        )
+        for snapshot in snapshots
+    ]
+
+
+def to_domain_snapshot(depth: OrderBookDepth10, instrument_id: str) -> OrderBookSnapshot:
+    return OrderBookSnapshot(
+        instrument_id=instrument_id,
+        ts_utc=nanos_to_datetime(depth.ts_event),
+        bids=[
+            BookLevel(price=_as_decimal(b.price), volume=_as_decimal(b.size)) for b in depth.bids
+        ],
+        asks=[
+            BookLevel(price=_as_decimal(a.price), volume=_as_decimal(a.size)) for a in depth.asks
+        ],
+    )

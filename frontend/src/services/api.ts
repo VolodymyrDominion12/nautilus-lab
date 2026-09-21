@@ -9,6 +9,15 @@ export interface JobState {
 
 export type JobKey = 'research' | 'ingest' | 'ml_train' | 'paper';
 
+export interface StressSliceInfo {
+  name: string;
+  description: string;
+  /** ISO-8601 UTC window the slice replaces the load window with. A slice outside the
+   * catalog's own range loads zero bars, which fails the run rather than stressing it. */
+  start: string;
+  end: string;
+}
+
 export interface StatusResponse {
   active_bots: number;
   research_running: boolean;
@@ -22,6 +31,8 @@ export interface StatusResponse {
   tick_vpin_robots: string[];
   /** Robots whose regime filter can read Hawkes intensity (`--hawkes`). */
   hawkes_robots: string[];
+  /** Named stress windows, with the dates they actually cover. */
+  stress_slices: StressSliceInfo[];
   /** Robots `lab paper` can actually build. Others are refused, never substituted. */
   paper_robots: string[];
   catalog_exists: boolean;

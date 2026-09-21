@@ -1,0 +1,127 @@
+# =============================================================================
+#  dashboard-api — контракт між FastAPI-шаром і веб-дашбордом
+# =============================================================================
+#  Компонентна спека: механізм наскрізний, не робот. Дашборд — це пульт, який
+#  показує числа й запускає прогони; його небезпека не в тому, що він зламається,
+#  а в тому, що він тихо покаже або дозволить щось інше, ніж зробив рушій.
+#  Тому кожен інваріант тут — про розбіжність між тим, що UI обіцяє, і тим, що
+#  код робить, і кожен має пару (enforced_by — модуль, verified_by — тест).
+# =============================================================================
+kind: component
+name: dashboard-api
+version: "1.0"
+status: active
+title: "Веб-дашборд ↔ FastAPI: повага до fail-closed і до відсутніх даних"
+
+hypothesis: >
+  Дашборд не має власних даних: він читає те, що повертає FastAPI, і запускає ті
+  самі use cases, що й CLI. Отже, будь-яка його обіцянка — це обіцянка API. Якщо
+  кожна нова можливість CLI потрапляє в API разом із воротами fail closed, а UI
+  показує відсутню серію як відсутню, то «прогін завершився» не почне виглядати
+  як «дані під фільтром існували» — і кнопка не запустить те, що бекенд однаково
+  відхилить.
+
+invariants:
+  fail_closed_before_launch: true
+  missing_series_is_reported_not_read_as_empty: true
+  ui_flags_exist_in_cli: true
+
+invariants_enforced:
+  - statement: >
+      Фільтри рівня тіків (`--tick-vpin`, `--hawkes`) відхиляються до запуску
+      процесу, якщо робот їх не читає: вони є аргументами конструктора
+      RegimeRouter, тож на роботі без нього прапорець приймається й ігнорується —
+      прогін був би підписаний «tick VPIN», а кожне рішення ухвалювалося б на
+      барному проксі.
+    enforced_by: src/nautilus_lab/api/app.py
+    verified_by: tests/unit/test_api_data_series.py::test_tick_filter_is_refused_for_a_robot_that_never_reads_ticks
+    note: >
+      Другий бік того ж інваріанта закриває
+      tests/unit/test_api_data_series.py::test_hawkes_filter_is_refused_for_a_robot_without_a_regime_router,
+      а перелік здатних роботів — не локальна константа UI, а domain-множини
+      TICK_VPIN_ROBOTS / HAWKES_ROBOTS, які `/api/status` віддає фронтенду
+      (test_status_reports_which_robots_read_ticks). Спільне джерело правди тут
+      принципове: список, продубльований у TypeScript, розійшовся б із кодом
+      рівно тоді, коли з'явився б новий робот із RegimeRouter.
+
+  - statement: >
+      Прогін із tick-фільтром відхиляється, коли в каталозі немає серії
+      aggTrades: рушій читає відсутню серію тіків як порожню, тож фільтр
+      працював би на значеннях за замовчуванням і не впав би.
+    enforced_by: src/nautilus_lab/api/app.py
+    verified_by: tests/unit/test_api_data_series.py::test_tick_filter_is_refused_when_the_catalog_has_no_tick_series
+    note: >
+      Той самий корінь має `_TickFeedAdapter.load` у composition.py, який повертає
+      `[]` і для символу без серії, і для інструмента, з якого символ не
+      виводиться. Тест стверджує, що відмова називає символ і команду
+      `lab ingest --trades`, тобто що користувач бачить шлях до виправлення, а не
+      лише «заборонено». На синтетичних барах тіків немає взагалі —
+      test_tick_filter_is_refused_on_synthetic_bars.
+
+  - statement: >
+      `/api/data` повертає наявність КОЖНОЇ серії (бари, taker-flow, тіки,
+      L2-глибина, фандинг) окремим полем, а не мовчанням: порожня опційна серія
+      не приховується.
+    enforced_by: src/nautilus_lab/api/data_health.py
+    verified_by: tests/unit/test_api_data_series.py::test_data_health_lists_every_series_tree
+    note: >
+      Сенс у тому, що «прогін завершився» не є доказом існування даних під
+      фільтром. Панель Command Center і таблиця каталогу показують `missing`
+      явно, і саме тому форма дослідження може блокувати tick-фільтр. Чого тест
+      не перевіряє: свіжість серії (що останній тік не на пів року старіший за
+      бари) — покриття дає лише добову межу, і жоден інваріант не змушує
+      дослідника на неї дивитися.
+
+  - statement: >
+      Кожен вид ingest з дашборда відповідає реальному прапорцю CLI, а
+      несумісні комбінації (інкрементальність не для бар-серії, кілька символів
+      або вікно `start/end` для живої L2-зйомки) відхиляються з поясненням.
+    enforced_by: src/nautilus_lab/api/app.py
+    verified_by: tests/unit/test_api_data_series.py::test_every_ingest_kind_maps_to_a_real_cli_flag
+    note: >
+      Друга половина — test_ingest_rejects_incremental_outside_the_bar_series і
+      test_depth_ingest_takes_one_symbol_and_no_window. `--depth` тут окремий
+      випадок: це блокуюча зйомка через WebSocket, а не бекфіл обмеженого вікна,
+      тому `start/end` для неї не мають сенсу, а CLI мовчки взяв би лише перший
+      символ — тобто зйомка виглядала б двосимвольною, записавши один.
+
+  - statement: >
+      Кнопка «Copy CLI» збирає команду лише з прапорців, які існують у
+      `interfaces/cli.py`, а інструмент передає змінною `INSTRUMENT_ID`.
+    enforced_by: frontend/src/lib/research.ts
+    verified_by: frontend/scripts/check-research-logic.ts
+    note: >
+      Попередня версія складала рядок вручну й писала `--instrument` та
+      `--stress-slice` — обидва прапорці не існують (`--slice` замість другого,
+      окремого прапорця для інструмента немає взагалі), тож «відтвори це в
+      терміналі» давало помилку використання замість прогону. Перевірка живе в
+      `npm run check:logic`, бо фронтенд у проєкті без тест-раннера.
+
+  - statement: >
+      Панель, яка показує свіжість даних, отримує ці поля з бекенда: UI малює
+      `catalog_last_date` і `catalog_total_bars` лише тоді, коли вони є, тож
+      відсутнє поле = тихо порожня панель, а не помилка.
+    enforced_by: src/nautilus_lab/api/command_center.py
+    verified_by: tests/unit/test_api_data_series.py::test_command_center_reports_catalog_freshness
+    note: >
+      Це не гіпотетичний ризик: тип `CommandCenterResponse` у
+      frontend/src/services/api.ts оголошував обидва поля, а `build_command_center`
+      їх не повертав — рядки «Data last date» і «Total bars stored» не
+      відображалися жодного разу. Тест фіксує контракт, а не факт наявності
+      даних у каталозі.
+
+notes: >
+  Компонент покриває лише ті інваріанти, які сьогодні мають тест. Свідомо не
+  записано: (1) що `--folds N>=2` з явними датами відхиляється — це вже
+  закрито test_research_route_rejects_impossible_combinations_before_spawning у
+  tests/unit/test_api_dashboard_results.py; (2) що зміна серії ingest
+  інвалідовує кеш покриття — перевіряється лише побічно, через
+  test_data_health_endpoint_reports_the_selected_catalog. Розходження з docs/:
+  `docs/20-veb-dashbord-ta-alpha-proposer.md` §3.1-3.3 описано за кодом на
+  момент правки; якщо панель зникне з UI, документ цього не помітить — жодного
+  машинного зв'язку між цим документом і компонентами React немає.
+
+references:
+  - docs/20-veb-dashbord-ta-alpha-proposer.md
+  - docs/10-cli-dovidnyk.md
+  - frontend/README.md

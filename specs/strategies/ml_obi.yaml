@@ -10,7 +10,12 @@
 kind: strategy
 name: ml_obi
 version: "1.0"
-status: blocked
+status: candidate
+params:
+  - env: ml_obi_threshold
+    type: Decimal
+    tuned: false
+    note: Поріг впевненості моделі, підбирається під час навчання, а не бектесту
 title: "ML за дисбалансом книги: OBI + WOFI + fade → сигнал напрямку"
 
 hypothesis: >
@@ -74,17 +79,15 @@ edge_conditions:
 implementation:
   domain_module: src/nautilus_lab/domain/ml_obi_strategy.py
   strategy_class: MlObiStrategy
-  backtest_adapter: none
-  wired_in_backtest: false
+  backtest_adapter: signal_strategy
+  wired_in_backtest: true
   grid_source: default_branch
 
 invariants:
   no_lookahead: true
   closed_bars_only: true
   decimal_not_float: true
-  # Без адаптера робот мусить падати на require_backtest_support(), а не
-  # тихо запускати regime.
-  fail_closed_without_adapter: true
+  fail_closed_without_adapter: false
 
 evidence:
   measured: false

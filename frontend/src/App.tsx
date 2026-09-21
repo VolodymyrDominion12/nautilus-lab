@@ -270,6 +270,7 @@ export function App() {
             selectedCatalogPath={selectedCatalogPath}
             tickVpinRobots={status?.tick_vpin_robots}
             hawkesRobots={status?.hawkes_robots}
+            stressSlices={status?.stress_slices}
           />
         )}
         {activeTab === 'catalog' && (

@@ -151,6 +151,8 @@ export interface PreflightInput {
   hawkesRobots?: string[];
   /** Coverage of the tick series in the selected catalog: null = not known yet. */
   tickDataAvailable?: boolean | null;
+  /** The window of the selected stress slice, as reported by the backend. */
+  stressSliceWindow?: { name: string; start: string; end: string } | null;
 }
 
 /**
@@ -264,10 +266,35 @@ export const preflight = (input: PreflightInput): PreflightIssue[] => {
         message: `This catalog holds ${input.catalogInstruments} instruments; the run uses "${input.instrument.raw_symbol}".`,
       });
     }
+
+    // A stress slice REPLACES the load window rather than narrowing it, so a slice the
+    // catalog does not cover loads zero bars: the run fails with "no bars in catalog"
+    // after a full process launch instead of stressing anything.
+    const slice = input.stressSliceWindow;
+    const firstDate = input.instrument?.first_date ?? null;
+    const lastDate = input.instrument?.last_date ?? null;
+    if (slice && firstDate && lastDate) {
+      const sliceStart = dateToUnixSeconds(slice.start);
+      const sliceEnd = dateToUnixSeconds(slice.end);
+      const firstBar = dateToUnixSeconds(firstDate);
+      const lastBar = dateToUnixSeconds(lastDate);
+      if (sliceStart != null && sliceEnd != null && firstBar != null && lastBar != null) {
+        if (sliceEnd <= firstBar || sliceStart > lastBar) {
+          issues.push({
+            level: 'error',
+            message: `Stress slice "${slice.name}" covers ${slice.start.slice(0, 10)} → ${slice.end.slice(0, 10)}, which this catalog does not hold (${firstDate.slice(0, 10)} → ${lastDate.slice(0, 10)}). Ingest that window into its own catalog first.`,
+          });
+        } else if (sliceStart < firstBar) {
+          issues.push({
+            level: 'warning',
+            message: `Stress slice "${slice.name}" starts before the catalog does, so the run reads only the part inside ${firstDate.slice(0, 10)} onwards.`,
+          });
+        }
+      }
+    }
   }
 
-  const total = input.source === 'synthetic' ? input.syntheticBars : input.totalBars;
-  if (total != null && total > 0 && !input.pbo) {
+  const total = input.source === 'synthetic' ? input.syntheticBars : input.totalBars;  if (total != null && total > 0 && !input.pbo) {
     if (total < 3) {
       issues.push({
         level: 'error',
@@ -314,6 +341,27 @@ export const preflight = (input: PreflightInput): PreflightIssue[] => {
 
 export const preflightBlocking = (issues: PreflightIssue[]): boolean =>
   issues.some((issue) => issue.level === 'error');
+
+/**
+ * Whether a named stress window overlaps what the catalog holds at all.
+ *
+ * A slice replaces the load window instead of narrowing it, so a slice outside the
+ * catalog's range loads zero bars and the run dies with "no bars in catalog" after a full
+ * process launch. `null` (unknown dates) is treated as overlapping: the panel then relies
+ * on the preflight error, which needs dates, rather than pretending to know.
+ */
+export const sliceOverlapsCatalog = (
+  slice: { start: string; end: string },
+  instrument: Pick<CatalogInstrument, 'first_date' | 'last_date'> | null | undefined,
+): boolean => {
+  if (!instrument) return true;
+  const start = dateToUnixSeconds(slice.start);
+  const end = dateToUnixSeconds(slice.end);
+  const first = dateToUnixSeconds(instrument.first_date);
+  const last = dateToUnixSeconds(instrument.last_date);
+  if (start == null || end == null || first == null || last == null) return true;
+  return !(end <= first || start > last);
+};
 
 export interface CliCommandInput {
   robot: string;

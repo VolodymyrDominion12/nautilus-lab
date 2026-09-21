@@ -53,6 +53,7 @@ from nautilus_lab.domain.regime import (
     RobotName,
     tick_filters_supported,
 )
+from nautilus_lab.domain.stress_slices import STRESS_SLICES
 from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
@@ -255,6 +256,15 @@ def get_status(catalog_path: str | None = None) -> dict[str, Any]:
         "wired_robots": sorted(item.value for item in BACKTEST_WIRED_ROBOTS),
         "tick_vpin_robots": sorted(item.value for item in TICK_VPIN_ROBOTS),
         "hawkes_robots": sorted(item.value for item in HAWKES_ROBOTS),
+        "stress_slices": [
+            {
+                "name": item.name.value,
+                "description": item.description,
+                "start": item.start.isoformat(),
+                "end": item.end.isoformat(),
+            }
+            for item in STRESS_SLICES.values()
+        ],
         "catalog_exists": bool(summary.get("exists", False)),
         "catalog_instruments": int(summary.get("total_instruments", 0) or 0),
         "catalog_path": resolved_catalog,

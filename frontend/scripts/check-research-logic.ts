@@ -8,7 +8,14 @@
  */
 
 import { formatBps, formatPct, toneOf } from '../src/lib/format';
-import { foldLayout, fractionBoundaries, preflight, verdictFor } from '../src/lib/research';
+import {
+  cliCommand,
+  foldLayout,
+  fractionBoundaries,
+  preflight,
+  sliceOverlapsCatalog,
+  verdictFor,
+} from '../src/lib/research';
 import type { ResearchSummary, StrategySpec } from '../src/services/api';
 
 let failures = 0;
@@ -154,6 +161,218 @@ console.log('preflight — warns without blocking');
     'warnings never block the run',
     errorsOf({ ...baseInput, source: 'synthetic', pbo: true }).length === 0,
   );
+}
+
+console.log('preflight — tick-level filters are never accepted without the data behind them');
+{
+  const tickReady = {
+    ...baseInput,
+    tickVpin: true,
+    tickVpinRobots: ['regime', 'meta_label', 'vpin_momentum'],
+    hawkesRobots: ['regime', 'meta_label'],
+    tickDataAvailable: true,
+  };
+  check('tick VPIN on a wired robot with ticks passes', errorsOf(tickReady).length === 0, errorsOf(tickReady).join(' | '));
+  check(
+    'Hawkes on regime with ticks passes',
+    errorsOf({ ...tickReady, tickVpin: false, hawkes: true }).length === 0,
+  );
+
+  check(
+    'tick VPIN on a robot that ignores it is blocked',
+    errorsOf({ ...tickReady, robot: 'ema' }).some((m) => m.includes('not wired into')),
+  );
+  check(
+    'Hawkes on a robot without a regime router is blocked',
+    errorsOf({
+      ...baseInput,
+      robot: 'vpin_momentum',
+      hawkes: true,
+      hawkesRobots: ['regime'],
+      tickDataAvailable: true,
+    }).some((m) => m.includes('Hawkes filter is not wired')),
+  );
+  check(
+    'tick VPIN on synthetic bars is blocked',
+    errorsOf({ ...tickReady, source: 'synthetic' }).some((m) => m.includes('no ticks')),
+  );
+  check(
+    'tick VPIN without a tick series is blocked',
+    errorsOf({ ...tickReady, tickDataAvailable: false }).some((m) =>
+      m.includes('No aggregated-trade series'),
+    ),
+  );
+  const unknownCoverage = preflight({ ...tickReady, tickDataAvailable: null })
+    .filter((issue) => issue.level === 'warning')
+    .map((issue) => issue.message);
+  check(
+    'unknown coverage is a warning, not a silent pass',
+    unknownCoverage.some((m) => m.includes('coverage could not be read')),
+  );
+  check(
+    'unknown coverage still allows the run',
+    errorsOf({ ...tickReady, tickDataAvailable: null }).length === 0,
+  );
+}
+
+console.log('preflight — a stress slice must lie inside the catalog it runs on');
+{
+  // The catalog in baseInput covers 2024-01-01..2026-04-01: covid2020 and ftx2022 are
+  // wholly outside it, and a slice replaces the load window, so those runs would load
+  // zero bars and die after a full process launch.
+  const outside = {
+    ...baseInput,
+    stressSliceWindow: {
+      name: 'covid2020',
+      start: '2020-02-01T00:00:00+00:00',
+      end: '2020-05-01T00:00:00+00:00',
+    },
+  };
+  check(
+    'a slice outside the catalog is blocked',
+    errorsOf(outside).some((m) => m.includes('which this catalog does not hold')),
+  );
+  check(
+    'the blocking message names the slice and the command that fixes it',
+    errorsOf(outside).some((m) => m.includes('covid2020') && m.includes('Ingest that window')),
+  );
+
+  const inside = {
+    ...baseInput,
+    stressSliceWindow: {
+      name: 'etf2024',
+      start: '2024-01-01T00:00:00+00:00',
+      end: '2024-06-01T00:00:00+00:00',
+    },
+  };
+  check('a slice inside the catalog is allowed', errorsOf(inside).length === 0, errorsOf(inside).join(' | '));
+
+  const partial = {
+    ...baseInput,
+    stressSliceWindow: {
+      name: 'ftx2022',
+      start: '2022-05-01T00:00:00+00:00',
+      end: '2024-03-01T00:00:00+00:00',
+    },
+  };
+  check('a slice starting before the catalog warns without blocking', errorsOf(partial).length === 0);
+  check(
+    'the partial-overlap warning explains the truncation',
+    preflight(partial)
+      .filter((issue) => issue.level === 'warning')
+      .some((issue) => issue.message.includes('starts before the catalog does')),
+  );
+
+  check(
+    'sliceOverlapsCatalog agrees with the preflight verdict',
+    sliceOverlapsCatalog(
+      { start: '2024-01-01T00:00:00+00:00', end: '2024-06-01T00:00:00+00:00' },
+      baseInput.instrument,
+    ) && !sliceOverlapsCatalog(outside.stressSliceWindow, baseInput.instrument),
+  );
+  check(
+    'an unknown catalog range is treated as covering, not as absent',
+    sliceOverlapsCatalog(outside.stressSliceWindow, null),
+  );
+}
+
+console.log('cliCommand — only flags that exist in interfaces/cli.py');
+{
+  const command = cliCommand({
+    robot: 'regime',
+    source: 'catalog',
+    bars: 3000,
+    folds: 4,
+    isFraction: 0.7,
+    embargoBars: 10,
+    useOptuna: false,
+    optunaTrials: 20,
+    pbo: false,
+    pboBlocks: 8,
+    barVpin: false,
+    tickVpin: true,
+    hawkes: true,
+    stressSlice: 'ftx2022',
+    generateTearsheet: true,
+    journal: true,
+    notify: false,
+    fullSample: false,
+    catalogPath: 'catalog',
+    instrumentId: 'ETH/USDT.SIM',
+    windowMode: 'fraction',
+    isStart: '',
+    isEnd: '',
+    oosStart: '',
+    oosEnd: '',
+  });
+  // `--instrument` and `--stress-slice` are not CLI flags: the button used to emit both,
+  // so "reproduce it in the terminal" produced a usage error instead of the run.
+  check('the CLI command names no --instrument flag', !command.includes('--instrument '));
+  check('the stress slice uses --slice', command.includes('--slice ftx2022'));
+  check('the tick flags are carried through', command.includes('--tick-vpin') && command.includes('--hawkes'));
+  check('folds are carried through', command.includes('--folds 4'));
+  check('the catalog is carried through', command.includes('--catalog catalog'));
+  check('the instrument travels as INSTRUMENT_ID', command.startsWith('INSTRUMENT_ID=ETH/USDT.SIM '));
+
+  const pbo = cliCommand({
+    robot: 'regime',
+    source: 'catalog',
+    bars: 3000,
+    folds: 1,
+    isFraction: 0.7,
+    embargoBars: 10,
+    useOptuna: false,
+    optunaTrials: 20,
+    pbo: true,
+    pboBlocks: 12,
+    barVpin: false,
+    tickVpin: false,
+    hawkes: false,
+    stressSlice: '',
+    generateTearsheet: true,
+    journal: false,
+    notify: false,
+    fullSample: false,
+    catalogPath: 'catalog',
+    instrumentId: 'ETH/USDT.SIM',
+    windowMode: 'fraction',
+    isStart: '',
+    isEnd: '',
+    oosStart: '',
+    oosEnd: '',
+  });
+  // the API refuses --pbo with a tearsheet; the preview must not suggest otherwise
+  check('a PBO audit emits no --tearsheet', !pbo.includes('--tearsheet'));
+  check('a non-default block count is emitted', pbo.includes('--pbo-blocks 12'));
+
+  const fullSample = cliCommand({
+    robot: 'regime',
+    source: 'catalog',
+    bars: 3000,
+    folds: 4,
+    isFraction: 0.5,
+    embargoBars: 0,
+    useOptuna: false,
+    optunaTrials: 20,
+    pbo: false,
+    pboBlocks: 8,
+    barVpin: false,
+    tickVpin: false,
+    hawkes: false,
+    stressSlice: '',
+    generateTearsheet: false,
+    journal: false,
+    notify: false,
+    fullSample: true,
+    catalogPath: 'catalog',
+    instrumentId: 'ETH/USDT.SIM',
+    windowMode: 'fraction',
+    isStart: '',
+    isEnd: '',
+    oosStart: '',
+    oosEnd: '',
+  });
+  check('a full-sample run drops the split flags', fullSample.includes('--full-sample') && !fullSample.includes('--folds'));
 }
 
 console.log('format — an unmeasured number is never rendered as zero');

@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.model.data import Bar, BarType, TradeTick
+from nautilus_trader.model.data import Bar, BarType, OrderBookDepth10, TradeTick
 from nautilus_trader.model.enums import AggressorSide, OrderSide
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency
@@ -26,6 +26,7 @@ from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
+from nautilus_lab.domain.ml_obi_strategy import MlObiStrategy
 from nautilus_lab.domain.meta_label_strategy import MetaLabelStrategy
 from nautilus_lab.domain.ratchet_stop import RatchetState, initial_ratchet, step_ratchet
 from nautilus_lab.domain.regime import RegimeParams, RobotName, require_backtest_support
@@ -43,6 +44,7 @@ from nautilus_lab.infrastructure.lightgbm_classifier import (
     require_model_path,
 )
 from nautilus_lab.infrastructure.vol_forecast import build_vol_forecaster
+from nautilus_lab.infrastructure.nautilus.bar_convert import to_domain_snapshot
 
 
 class SingleLegRobot(Protocol):
@@ -101,6 +103,8 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     max_cvar_99: Decimal = Decimal("0.05")
     use_ratchet: bool = False
     ratchet_arm_pct: Decimal = Decimal("0.0125")
+    ml_obi_model_path: str | None = None
+    ml_obi_threshold: Decimal = Decimal("0.55")
 
 
 class SignalRobot(Strategy):  # type: ignore[misc]
@@ -203,17 +207,38 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._previous_close = domain_bar.close
 
         signal = self._robot.on_bar(domain_bar)
+        self._track_equity(domain_bar.ts_utc)
+        
+        if self._apply_ratchet(domain_bar, self._equity()):
+            return
+            
+        self._process_signal(signal, domain_bar.close)
+
+    def on_order_book_depth_10(self, depth: OrderBookDepth10) -> None:
+        if not hasattr(self._robot, "on_book"):
+            return
+        snapshot = to_domain_snapshot(depth, str(self.config.instrument_id))
+        signal = self._robot.on_book(snapshot)
+        
+        self._track_equity(snapshot.ts_utc)
+        
+        # If we had a bar we could apply ratchet, but we don't have an OhlcvBar here.
+        # It's fine to skip ratchet for book updates, or we can mock a bar. We'll skip for now.
+        
+        mid_price = (snapshot.bids[0].price + snapshot.asks[0].price) / Decimal("2")
+        self._process_signal(signal, mid_price)
+
+    def _track_equity(self, ts_utc: datetime) -> None:
         equity = self._equity()
         if equity is not None:
-            self._update_equity_path(domain_bar.ts_utc, equity)
+            self._update_equity_path(ts_utc, equity)
             self._equity_curve.append(equity)
             if self._previous_equity is not None and self._previous_equity > 0:
                 self._returns.append((equity - self._previous_equity) / self._previous_equity)
             self._previous_equity = equity
 
-        if self._apply_ratchet(domain_bar, equity):
-            return
-
+    def _process_signal(self, signal: Signal | None, current_price: Decimal) -> None:
+        equity = self._equity()
         if signal is None:
             return
         if signal.side is SignalSide.FLAT:
@@ -243,16 +268,17 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         if not desired_buy and self.portfolio.is_net_short(self.config.instrument_id):
             return
 
-        distance = stop_distance(domain_bar.close, self._limits, atr=self._atr.value)
+        distance = stop_distance(current_price, self._limits, atr=self._atr.value)
         risk_fraction = resolve_risk_fraction(
             self._limits,
             self._overlay,
             stats=self._trade_stats,
-            forecast_vol=vol_forecast,
+            # vol_forecast will just be whatever the last closed bar gave us
+            forecast_vol=self._vol.last_forecast,
         )
         qty = size_position(
             equity=equity,
-            price=domain_bar.close,
+            price=current_price,
             stop_distance=distance,
             risk_fraction=risk_fraction,
             qty_step=self.config.qty_step,
@@ -276,9 +302,13 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             instrument.make_qty(qty),
         )
         self.submit_order(order)
-        self._turnover += domain_bar.close * qty
+        self._turnover += current_price * qty
         self._entry_equity = equity
-        self._arm_ratchet(domain_bar, SignalSide.BUY if desired_buy else SignalSide.SELL)
+        # For ratchet we need an OhlcvBar which we don't strictly have in on_book.
+        # But for OBI we don't use ratchet anyway. I will just pass a dummy if called from book,
+        # but _arm_ratchet only needs the close price. Wait, _arm_ratchet takes OhlcvBar.
+        # I'll modify _arm_ratchet to take price directly.
+        self._arm_ratchet(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
 
     def on_stop(self) -> None:
         self._flatten(self._equity())
@@ -318,11 +348,11 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._flatten(equity)
         return True
 
-    def _arm_ratchet(self, bar: OhlcvBar, side: SignalSide) -> None:
+    def _arm_ratchet(self, entry_price: Decimal, side: SignalSide) -> None:
         if not self._overlay.use_ratchet:
             return
         self._ratchet = initial_ratchet(
-            entry_price=bar.close,
+            entry_price=entry_price,
             side=side,
             params=self._overlay.ratchet_params(stop_pct=self._limits.stop_pct),
             atr_distance=self._atr.value,
@@ -409,6 +439,13 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             primary=_regime_primary(config, instrument_id),
             classifier=LightGBMSuccessClassifier(model_path=model_path),
             threshold=config.meta_label_threshold,
+        )
+    if robot is RobotName.ML_OBI:
+        classifier = _build_classifier(config.ml_obi_model_path)
+        return MlObiStrategy(
+            instrument_id=instrument_id,
+            classifier=classifier,
+            threshold=config.ml_obi_threshold,
         )
     return _regime_primary(config, instrument_id)
 

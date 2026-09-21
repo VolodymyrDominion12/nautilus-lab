@@ -256,6 +256,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Append a pending row for this proposal to the research journal",
     )
 
+    ml = sub.add_parser("ml", help="Machine learning pipelines")
+    ml_sub = ml.add_subparsers(dest="ml_command", required=True)
+    train = ml_sub.add_parser("train", help="Train a model")
+    train.add_argument("--model-type", choices=["formulaic", "meta_label", "obi"], required=True)
+    train.add_argument("--catalog", help="Catalog directory (default: settings/catalog)")
+    train.add_argument("--instrument", help="Instrument ID")
+    train.add_argument("--interval", help="Bar interval")
+    train.add_argument("--output", help="Model output path")
+    train.add_argument("--folds", type=int, default=5, help="Purged K-Fold folds (default: 5)")
+    train.add_argument("--embargo", type=int, default=10, help="Embargo bars (default: 10)")
+    train.add_argument("--horizon", type=int, default=5, help="Prediction horizon")
+    train.add_argument("--profit", default="2", help="Triple barrier profit multiple")
+    train.add_argument("--stop", default="1", help="Triple barrier stop multiple")
+    train.add_argument("--vol-window", type=int, default=20, help="Volatility window")
+    train.add_argument("--start", help="UTC start (YYYY-MM-DD)")
+    train.add_argument("--end", help="UTC end (YYYY-MM-DD)")
+    train.add_argument("--threshold", default="0.55", help="Classifier probability threshold")
+
     sub.add_parser("live", help="Live trading (always fail closed)")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -282,6 +300,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_scan(args)
         if args.command == "propose":
             return _run_propose(cfg, args)
+        if args.command == "ml":
+            return _run_ml_train(cfg, args)
         if args.command == "live":
             require_simulated_mode(TradingMode.LIVE)
     except (
@@ -929,3 +949,32 @@ def _print_walk_forward(report: WalkForwardReport) -> None:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+def _run_ml_train(cfg: Settings, args: argparse.Namespace) -> int:
+    from nautilus_lab.api.ml_runner import MLTrainConfig, execute_ml_train
+
+    if args.ml_command != "train":
+        print(f"Unknown ml command: {args.ml_command}", file=sys.stderr)
+        return 1
+
+    job = MLTrainConfig(
+        model_type=args.model_type,
+        catalog_path=args.catalog,
+        instrument_id=args.instrument,
+        bar_interval=args.interval,
+        output_path=args.output,
+        folds=args.folds,
+        embargo=args.embargo,
+        horizon=args.horizon,
+        profit_multiple=args.profit,
+        stop_multiple=args.stop,
+        vol_window=args.vol_window,
+        start=args.start,
+        end=args.end,
+        threshold=args.threshold,
+    )
+    result, _ = execute_ml_train(job)
+    if result.get("is_error", False):
+        print(f"ML train error: {result.get('error_message')}", file=sys.stderr)
+        return 1
+    return 0

@@ -8,6 +8,7 @@ from nautilus_lab.application.dtos import (
     BacktestRequest,
     BarFeed,
     MultiWindowReport,
+    OrderBookFeed,
     ResearchBacktestPort,
     SelectedParams,
     TickFeed,
@@ -37,11 +38,16 @@ class RunWalkForward:
     """Fit parameters on in-sample bars; report only the out-of-sample run."""
 
     def __init__(
-        self, engine: ResearchBacktestPort, feed: BarFeed, tick_feed: TickFeed | None = None
+        self,
+        engine: ResearchBacktestPort,
+        feed: BarFeed,
+        tick_feed: TickFeed | None = None,
+        book_feed: "OrderBookFeed | None" = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
+        self._book_feed = book_feed
 
     def execute(self, request: WalkForwardRequest) -> WalkForwardReport:
         require_simulated_mode(request.backtest.mode)

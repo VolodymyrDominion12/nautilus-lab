@@ -89,26 +89,42 @@ class _TickFeedAdapter:
             return []
         return self._catalog.load(symbol=symbol, start=request.start, end=request.end)
 
+class _BookFeedAdapter:
+    def __init__(self, catalog: ParquetOrderBookCatalog) -> None:
+        self._catalog = catalog
+
+    def load(self, request: BacktestRequest) -> list[OrderBookSnapshot]:
+        symbol = binance_symbol_for_instrument(request.instrument_id)
+        if not symbol:
+            return []
+        return self._catalog.load(symbol=symbol, start=request.start, end=request.end)
+
 
 def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
     resolved = cfg or settings()
-    catalog_impl = ParquetAggTradesCatalog(Path(resolved.catalog_path))
-    tick_feed = _TickFeedAdapter(catalog_impl)
-    return RunResearchBacktest(NautilusResearchBacktest(), research_feed(resolved), tick_feed)
+    tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    book_catalog = orderbook_catalog(resolved)
+    tick_feed = _TickFeedAdapter(tick_catalog)
+    book_feed = _BookFeedAdapter(book_catalog)
+    return RunResearchBacktest(NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed)
 
 
 def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
     resolved = cfg or settings()
-    catalog_impl = ParquetAggTradesCatalog(Path(resolved.catalog_path))
-    tick_feed = _TickFeedAdapter(catalog_impl)
-    return RunWalkForward(NautilusResearchBacktest(), research_feed(resolved), tick_feed)
+    tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    book_catalog = orderbook_catalog(resolved)
+    tick_feed = _TickFeedAdapter(tick_catalog)
+    book_feed = _BookFeedAdapter(book_catalog)
+    return RunWalkForward(NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed)
 
 
 def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
     resolved = cfg or settings()
-    catalog_impl = ParquetAggTradesCatalog(Path(resolved.catalog_path))
-    tick_feed = _TickFeedAdapter(catalog_impl)
-    return RunOverfitAudit(NautilusResearchBacktest(), research_feed(resolved), tick_feed)
+    tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    book_catalog = orderbook_catalog(resolved)
+    tick_feed = _TickFeedAdapter(tick_catalog)
+    book_feed = _BookFeedAdapter(book_catalog)
+    return RunOverfitAudit(NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed)
 
 
 def llm_completer(

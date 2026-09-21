@@ -15,6 +15,7 @@ from nautilus_lab.application.dtos import (
 from nautilus_lab.application.ingest_agg_trades import IngestAggTrades
 from nautilus_lab.application.ingest_funding_history import IngestFundingHistory
 from nautilus_lab.application.ingest_historical_bars import IngestHistoricalBars
+from nautilus_lab.application.ingest_orderbook import IngestOrderBook
 from nautilus_lab.application.propose_alphas import AlphaProposalRequest, resolve_prompt_path
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_overfitting_audit import RunOverfitAudit
@@ -23,6 +24,7 @@ from nautilus_lab.application.run_walk_forward import RunWalkForward
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.ports import ChatCompleter
 from nautilus_lab.domain.regime import RobotName
+from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.alerts import AlertNotifier, build_notifier
@@ -39,6 +41,7 @@ from nautilus_lab.infrastructure.nautilus.instrument import (
     binance_symbol_to_instrument_id,
 )
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
+from nautilus_lab.infrastructure.orderbook_catalog import ParquetOrderBookCatalog
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
@@ -55,6 +58,11 @@ def catalog(cfg: Settings, *, path: str | None = None) -> NautilusParquetCatalog
 def taker_flow_catalog(cfg: Settings, *, path: str | None = None) -> ParquetTakerFlowCatalog:
     """Per-bar taker split, a sibling series of the bar catalog under the same root."""
     return ParquetTakerFlowCatalog(Path(path or cfg.catalog_path))
+
+
+def orderbook_catalog(cfg: Settings, *, path: str | None = None) -> ParquetOrderBookCatalog:
+    """L2 Orderbook snapshots."""
+    return ParquetOrderBookCatalog(Path(path or cfg.catalog_path))
 
 
 def research_feed(cfg: Settings, *, path: str | None = None) -> ResearchBarFeed:
@@ -301,6 +309,11 @@ def ingest_agg_trades_use_case(cfg: Settings | None = None) -> IngestAggTrades:
         store,
         catalog_path=str(store.path),
     )
+
+
+def ingest_orderbook_use_case(cfg: Settings | None = None) -> IngestOrderBook:
+    resolved = cfg or settings()
+    return IngestOrderBook(orderbook_catalog(resolved))
 
 
 def ingest_agg_trades_request(

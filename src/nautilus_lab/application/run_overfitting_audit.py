@@ -41,7 +41,9 @@ class RunOverfitAudit:
     pure noise. CSCV makes that visible as one probability.
     """
 
-    def __init__(self, engine: ResearchBacktestPort, feed: BarFeed, tick_feed: TickFeed | None = None) -> None:
+    def __init__(
+        self, engine: ResearchBacktestPort, feed: BarFeed, tick_feed: TickFeed | None = None
+    ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed

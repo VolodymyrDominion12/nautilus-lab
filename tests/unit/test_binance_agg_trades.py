@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -18,7 +17,6 @@ from nautilus_lab.infrastructure.binance_agg_trades import (
     BinancePublicAggTrades,
     _parse_agg_trade_row,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -170,7 +168,7 @@ def test_fetch_rejects_start_after_end() -> None:
 
 def test_fetch_filters_trades_outside_window() -> None:
     """Trades returned by the API but outside the requested [start, end) are dropped."""
-    inside_ms = 1_704_067_200_000   # 2024-01-01T00:00:00Z — inside
+    inside_ms = 1_704_067_200_000  # 2024-01-01T00:00:00Z — inside
     outside_ms = 1_704_153_600_000  # 2024-01-02T00:00:00Z — equals end → excluded
 
     rows = [

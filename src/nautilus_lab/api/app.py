@@ -46,8 +46,6 @@ from nautilus_lab.api.settings_schema import (
 from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
 from nautilus_lab.application.run_paper import PAPER_SUPPORTED_ROBOTS
 from nautilus_lab.domain.errors import InvalidHypothesisError
-from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
-from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
 from nautilus_lab.domain.regime import (
     BACKTEST_WIRED_ROBOTS,
     HAWKES_ROBOTS,
@@ -55,7 +53,9 @@ from nautilus_lab.domain.regime import (
     RobotName,
     tick_filters_supported,
 )
+from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
+from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
 from nautilus_lab.interfaces.composition import settings
 
 app = FastAPI(title="Nautilus Lab API")
@@ -687,11 +687,22 @@ def run_ingest_subprocess(cmd: list[str], log_path: str) -> None:
 
 
 #: Kinds of ingest the dashboard may launch, mapped to the CLI flag that selects them.
+#: `depth` is the odd one out: it captures live L2 snapshots over a WebSocket and runs
+#: until it is stopped, where the other three backfill a bounded REST window.
 INGEST_SERIES_FLAGS: dict[str, list[str]] = {
     "klines": [],
     "trades": ["--trades"],
     "funding": ["--funding"],
+    "depth": ["--depth"],
 }
+
+#: Series that need exactly one symbol. `--depth` opens one WebSocket per run, and the CLI
+#: silently keeps the first symbol and drops the rest, which would look like a two-symbol
+#: capture while only one was recorded.
+SINGLE_SYMBOL_SERIES = frozenset({"depth"})
+
+#: Series whose window comes from the capture itself rather than from `--start/--end`.
+WINDOWLESS_SERIES = frozenset({"depth"})
 
 
 @app.post("/api/catalog/ingest")
@@ -711,13 +722,30 @@ def run_ingest(background_tasks: BackgroundTasks, req: IngestRunRequest) -> dict
         )
     if req.incremental and req.series != "klines":
         # `--incremental` walks forward from the last stored bar, which only the bar series
-        # has; the CLI ignores it for the other two, so accepting it here would look like a
+        # has; the CLI ignores it for the others, so accepting it here would look like a
         # partial fetch while the full window was pulled anyway.
         raise HTTPException(
             status_code=400,
             detail=(
                 f"incremental only applies to the bar series; a {req.series} ingest always "
                 "walks the requested window."
+            ),
+        )
+    symbols = [item.strip() for item in (req.symbols or "").split(",") if item.strip()]
+    if req.series in SINGLE_SYMBOL_SERIES and len(symbols) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"a {req.series} ingest captures one symbol at a time; got {len(symbols)}. "
+                "Run it once per symbol."
+            ),
+        )
+    if req.series in WINDOWLESS_SERIES and (req.start or req.end):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"a {req.series} ingest has no window to request: it records from the moment "
+                "it starts until it is stopped. Drop start/end."
             ),
         )
 
@@ -728,9 +756,9 @@ def run_ingest(background_tasks: BackgroundTasks, req: IngestRunRequest) -> dict
     cmd.extend(INGEST_SERIES_FLAGS[req.series])
     if req.symbols:
         cmd.extend(["--symbols", req.symbols])
-    if req.start:
+    if req.start and req.series not in WINDOWLESS_SERIES:
         cmd.extend(["--start", req.start])
-    if req.end:
+    if req.end and req.series not in WINDOWLESS_SERIES:
         cmd.extend(["--end", req.end])
     if req.catalog:
         cmd.extend(["--catalog", req.catalog])

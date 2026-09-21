@@ -60,6 +60,7 @@ def _as_decimal(value: object) -> Decimal:
         return converted if isinstance(converted, Decimal) else Decimal(str(converted))
     return Decimal(str(value))
 
+
 def to_engine_ticks(
     trades: list[AggTrade],
     *,

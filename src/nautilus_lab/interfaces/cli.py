@@ -32,6 +32,7 @@ from nautilus_lab.interfaces.composition import (
     ingest_agg_trades_request,
     ingest_agg_trades_use_case,
     ingest_funding_use_case,
+    ingest_orderbook_use_case,
     ingest_request,
     ingest_use_case,
     journal_paths,
@@ -85,6 +86,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Ingest aggregated trades (ticks) instead of klines "
             "(stored under catalog/data/agg_trade/). "
             "Enables real VPIN and Hawkes computation without a bar-volume proxy."
+        ),
+    )
+    ingest.add_argument(
+        "--depth",
+        action="store_true",
+        help=(
+            "Live ingestion of L2 Orderbook depth snapshots via WebSocket "
+            "(stored under catalog/data/orderbook/). Runs indefinitely until interrupted."
         ),
     )
 
@@ -300,6 +309,8 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
         return _run_ingest_funding(cfg, symbols=symbols, start=default_start, end=end)
     if getattr(args, "trades", False):
         return _run_ingest_agg_trades(cfg, symbols=symbols, start=default_start, end=end)
+    if getattr(args, "depth", False):
+        return _run_ingest_depth(cfg, symbols=symbols)
     use_case = ingest_use_case(cfg)
     incremental = bool(getattr(args, "incremental", False))
     for symbol in symbols:
@@ -379,6 +390,25 @@ def _run_ingest_funding(
             f"first={report.first_ts.isoformat()} last={report.last_ts.isoformat()} "
             f"catalog={report.catalog_path}"
         )
+    return 0
+
+
+def _run_ingest_depth(cfg: Settings, *, symbols: list[str]) -> int:
+    """Ingest live L2 orderbook snapshots via WebSocket. Blocks until interrupted."""
+    if not symbols:
+        print("At least one symbol required.", file=sys.stderr)
+        return 1
+    
+    use_case = ingest_orderbook_use_case(cfg)
+    symbol = symbols[0]
+    if len(symbols) > 1:
+        print(f"Warning: Only one symbol supported for --depth currently. Using {symbol}.")
+    
+    print(f"Starting live L2 orderbook ingest for {symbol} to {cfg.catalog_path} ...")
+    try:
+        use_case(symbol)
+    except KeyboardInterrupt:
+        print("\nIngestion interrupted by user.")
     return 0
 
 

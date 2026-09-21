@@ -143,6 +143,14 @@ export interface PreflightInput {
   oosEnd: string;
   instrument?: CatalogInstrument | null;
   catalogInstruments?: number;
+  /** Tick-level regime filters. Both read the aggregated-trade series, not the bars. */
+  tickVpin?: boolean;
+  hawkes?: boolean;
+  /** Robots the backend says can read ticks (`/api/status`), not a local guess. */
+  tickVpinRobots?: string[];
+  hawkesRobots?: string[];
+  /** Coverage of the tick series in the selected catalog: null = not known yet. */
+  tickDataAvailable?: boolean | null;
 }
 
 /**
@@ -205,6 +213,42 @@ export const preflight = (input: PreflightInput): PreflightIssue[] => {
       level: 'warning',
       message: 'A PBO audit on synthetic bars measures the synthetic generator, not the market.',
     });
+  }
+
+  // Tick-level filters. The backend refuses these combinations with HTTP 400, and for the
+  // same reason: a filter that is accepted but ignored produces a run labelled "tick VPIN"
+  // whose every decision came from the bar proxy.
+  if (input.tickVpin || input.hawkes) {
+    if (input.tickVpin && !(input.tickVpinRobots ?? []).includes(input.robot)) {
+      issues.push({
+        level: 'error',
+        message: `Tick-level VPIN is not wired into "${input.robot}"; it is wired for: ${(input.tickVpinRobots ?? []).join(', ') || 'no robot reported'}.`,
+      });
+    }
+    if (input.hawkes && !(input.hawkesRobots ?? []).includes(input.robot)) {
+      issues.push({
+        level: 'error',
+        message: `The Hawkes filter is not wired into "${input.robot}"; it is wired for: ${(input.hawkesRobots ?? []).join(', ') || 'no robot reported'}.`,
+      });
+    }
+    if (input.source === 'synthetic') {
+      issues.push({
+        level: 'error',
+        message:
+          'Tick-level filters need the aggregated-trade series; synthetic bars carry no ticks.',
+      });
+    } else if (input.tickDataAvailable === false) {
+      issues.push({
+        level: 'error',
+        message: `No aggregated-trade series for ${input.instrument?.raw_symbol ?? 'this instrument'} in this catalog. Run "lab ingest --trades" first: the engine reads a missing tick series as an empty one, so the filter would silently stay at its defaults.`,
+      });
+    } else if (input.tickDataAvailable == null) {
+      issues.push({
+        level: 'warning',
+        message:
+          'Tick-series coverage could not be read, so the run may fail closed for lack of aggregated trades.',
+      });
+    }
   }
 
   if (input.source === 'catalog') {
@@ -270,6 +314,82 @@ export const preflight = (input: PreflightInput): PreflightIssue[] => {
 
 export const preflightBlocking = (issues: PreflightIssue[]): boolean =>
   issues.some((issue) => issue.level === 'error');
+
+export interface CliCommandInput {
+  robot: string;
+  source: 'catalog' | 'synthetic';
+  bars: number;
+  folds: number;
+  isFraction: number;
+  embargoBars: number;
+  useOptuna: boolean;
+  optunaTrials: number;
+  pbo: boolean;
+  pboBlocks: number;
+  barVpin: boolean;
+  tickVpin: boolean;
+  hawkes: boolean;
+  stressSlice: string;
+  generateTearsheet: boolean;
+  journal: boolean;
+  notify: boolean;
+  fullSample: boolean;
+  catalogPath?: string;
+  instrumentId?: string;
+  windowMode: 'fraction' | 'custom';
+  isStart: string;
+  isEnd: string;
+  oosStart: string;
+  oosEnd: string;
+}
+
+/**
+ * The `lab research` command that reproduces this form, for the "Copy CLI" button.
+ *
+ * Only flags that exist in `interfaces/cli.py` are emitted: the previous version wrote
+ * `--instrument` and `--stress-slice`, which the CLI rejects outright, so "reproduce it in
+ * the terminal" produced a usage error instead of the run. The instrument travels as the
+ * `INSTRUMENT_ID` environment variable because that is where `Settings` reads it from —
+ * there is no `--instrument` flag to pass it through.
+ */
+export const cliCommand = (input: CliCommandInput): string => {
+  const parts = ['lab research', `--robot ${input.robot}`];
+  if (input.source === 'synthetic') {
+    parts.push(`--synthetic --bars ${input.bars}`);
+  } else {
+    if (input.catalogPath) parts.push(`--catalog ${input.catalogPath}`);
+    if (input.fullSample) parts.push('--full-sample');
+    else if (input.windowMode === 'custom' && input.isStart) {
+      parts.push(`--is-start ${input.isStart}`);
+      if (input.isEnd) parts.push(`--is-end ${input.isEnd}`);
+      if (input.oosStart) parts.push(`--oos-start ${input.oosStart}`);
+      if (input.oosEnd) parts.push(`--oos-end ${input.oosEnd}`);
+    } else {
+      if (input.folds > 1) parts.push(`--folds ${input.folds}`);
+      if (input.isFraction !== 0.7) parts.push(`--is-fraction ${input.isFraction}`);
+      if (input.embargoBars !== 10) parts.push(`--embargo-bars ${input.embargoBars}`);
+    }
+  }
+  if (input.useOptuna) parts.push(`--optuna --trials ${input.optunaTrials}`);
+  if (input.pbo) {
+    parts.push('--pbo');
+    if (input.pboBlocks !== 8) parts.push(`--pbo-blocks ${input.pboBlocks}`);
+  }
+  if (input.barVpin) parts.push('--bar-vpin');
+  if (input.tickVpin) parts.push('--tick-vpin');
+  if (input.hawkes) parts.push('--hawkes');
+  if (input.stressSlice) parts.push(`--slice ${input.stressSlice}`);
+  if (input.generateTearsheet && !input.pbo) parts.push('--tearsheet reports/tearsheet.html');
+  if (input.journal) parts.push('--journal');
+  if (input.notify) parts.push('--notify');
+
+  const command = `uv run ${parts.join(' ')}`;
+  const instrument = input.instrumentId;
+  if (input.source === 'catalog' && instrument) {
+    return `INSTRUMENT_ID=${instrument} ${command}`;
+  }
+  return command;
+};
 
 /** Folds that actually made money out of sample, for the small per-fold strip. */
 export const profitableFoldCount = (folds: FoldSummary[]): number =>

@@ -28,6 +28,7 @@ from nautilus_lab.api.catalog_service import describe_catalog_cached, resolve_ca
 from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
+from nautilus_lab.infrastructure.orderbook_catalog import ParquetOrderBookCatalog
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
 from nautilus_lab.interfaces.composition import settings
 
@@ -57,6 +58,16 @@ def _parquet_rows(path: Path) -> int | None:
     return int(metadata.num_rows)
 
 
+def _iso(value: object) -> str | None:
+    """ISO-8601 for a pyarrow timestamp scalar, None for anything else (including null)."""
+    if value is None:
+        return None
+    to_iso = getattr(value, "isoformat", None)
+    if not callable(to_iso):
+        return None
+    return str(to_iso())
+
+
 def _parquet_span(path: Path, column: str) -> tuple[str | None, str | None]:
     """First and last value of one timestamp column, read alone. (None, None) on failure."""
     try:
@@ -68,12 +79,7 @@ def _parquet_span(path: Path, column: str) -> tuple[str | None, str | None]:
     stats = pc.min_max(table.column(column)).as_py()
     if not isinstance(stats, dict):
         return None, None
-    first = stats.get("min")
-    last = stats.get("max")
-    return (
-        first.isoformat() if hasattr(first, "isoformat") else None,
-        last.isoformat() if hasattr(last, "isoformat") else None,
-    )
+    return _iso(stats.get("min")), _iso(stats.get("max"))
 
 
 def _taker_flow_health(root: Path, symbol: str) -> dict[str, Any]:
@@ -102,28 +108,21 @@ def _funding_health(root: Path, symbol: str) -> dict[str, Any]:
     }
 
 
-def _ticks_health(root: Path, symbol: str) -> dict[str, Any]:
-    """Aggregated trades, summarised from the day shards without reading tick columns."""
-    directory = ParquetAggTradesCatalog(root).series_dir(symbol)
+def _sharded_health(directory: Path) -> dict[str, Any]:
+    """Coverage of a day-sharded series: `data/<name>/<SYMBOL>/<YYYY-MM-DD>.parquet`."""
+    missing: dict[str, Any] = {
+        "present": False,
+        "files": 0,
+        "rows": None,
+        "first": None,
+        "last": None,
+        "bytes": 0,
+    }
     if not directory.exists():
-        return {
-            "present": False,
-            "files": 0,
-            "rows": None,
-            "first": None,
-            "last": None,
-            "bytes": 0,
-        }
+        return missing
     shards = sorted(directory.glob("*.parquet"))
     if not shards:
-        return {
-            "present": False,
-            "files": 0,
-            "rows": None,
-            "first": None,
-            "last": None,
-            "bytes": 0,
-        }
+        return missing
     rows = 0
     rows_known = True
     size = 0
@@ -138,8 +137,8 @@ def _ticks_health(root: Path, symbol: str) -> dict[str, Any]:
     return {
         "present": True,
         "files": len(shards),
-        # Day filenames are UTC days, so the span is a day-resolution bound, not a tick
-        # timestamp: the panel labels it as such rather than implying tick precision.
+        # Day filenames are UTC days, so the span is a day-resolution bound, not a tick or
+        # snapshot timestamp: the panel labels it as such rather than implying precision.
         "first": f"{days[0]}T00:00:00+00:00",
         "last": f"{days[-1]}T23:59:59.999999+00:00",
         "rows": rows if rows_known else None,
@@ -147,11 +146,29 @@ def _ticks_health(root: Path, symbol: str) -> dict[str, Any]:
     }
 
 
+def _ticks_health(root: Path, symbol: str) -> dict[str, Any]:
+    """Aggregated trades, summarised from the day shards without reading tick columns."""
+    return _sharded_health(ParquetAggTradesCatalog(root).series_dir(symbol))
+
+
+def _orderbook_health(root: Path, symbol: str) -> dict[str, Any]:
+    """L2 depth snapshots. Captured live (WebSocket), so coverage ends at the last capture."""
+    return _sharded_health(ParquetOrderBookCatalog(root).series_dir(symbol))
+
+
 def describe_data_health(catalog_path: str | None = None) -> dict[str, Any]:
-    """Coverage of all four series trees for every instrument in one catalog."""
+    """Coverage of every series tree one catalog holds, for each of its instruments."""
     resolved = resolve_catalog_path(catalog_path)
     payload = describe_catalog_cached(str(resolved))
     instruments = payload.get("instruments") or []
+    empty_shards: dict[str, Any] = {
+        "present": False,
+        "files": 0,
+        "rows": None,
+        "first": None,
+        "last": None,
+        "bytes": 0,
+    }
     rows: list[dict[str, Any]] = []
     for instrument in instruments:
         instrument_id = str(instrument.get("instrument_id", ""))
@@ -166,19 +183,14 @@ def describe_data_health(catalog_path: str | None = None) -> dict[str, Any]:
                 "last": instrument.get("last_date"),
             },
             "taker_flow": {"present": False, "rows": None, "first": None, "last": None},
-            "ticks": {
-                "present": False,
-                "files": 0,
-                "rows": None,
-                "first": None,
-                "last": None,
-                "bytes": 0,
-            },
+            "ticks": dict(empty_shards),
+            "orderbook": dict(empty_shards),
             "funding": {"present": False, "rows": None, "first": None, "last": None},
         }
         if symbol:
             entry["taker_flow"] = _taker_flow_health(resolved, symbol)
             entry["ticks"] = _ticks_health(resolved, symbol)
+            entry["orderbook"] = _orderbook_health(resolved, symbol)
             entry["funding"] = _funding_health(resolved, symbol)
         rows.append(entry)
     return {
@@ -188,6 +200,7 @@ def describe_data_health(catalog_path: str | None = None) -> dict[str, Any]:
         "error": payload.get("error"),
         "instruments": rows,
         "tick_filters_ready": any(bool(row["ticks"]["present"]) for row in rows),
+        "orderbook_ready": any(bool(row["orderbook"]["present"]) for row in rows),
     }
 
 

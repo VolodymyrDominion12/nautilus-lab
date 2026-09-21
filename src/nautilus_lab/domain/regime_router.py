@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.donchian import DowntrendBreakout, UptrendBreakout
+from nautilus_lab.domain.hawkes import ExponentialHawkes, HawkesIntensity
 from nautilus_lab.domain.mean_reversion import RangeMeanReversion
 from nautilus_lab.domain.regime import (
     MarketRegime,
@@ -11,7 +14,6 @@ from nautilus_lab.domain.regime import (
 )
 from nautilus_lab.domain.signals import Signal, SignalSide
 from nautilus_lab.domain.vpin import VpinModel, VpinState
-from nautilus_lab.domain.hawkes import ExponentialHawkes, HawkesIntensity
 
 
 class RegimeRouter:
@@ -50,7 +52,9 @@ class RegimeRouter:
         if self._vpin is not None and hasattr(self._vpin, "update_from_trade"):
             self._vpin.update_from_trade(is_buy=is_buy, volume=volume)
         if self._hawkes is not None:
-            self._hawkes.on_trade(side="buy" if is_buy else "sell", volume=volume, dt_seconds=dt_seconds)
+            self._hawkes.on_trade(
+                side="buy" if is_buy else "sell", volume=volume, dt_seconds=dt_seconds
+            )
 
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
         vpin_state = self._vpin.update(bar) if self._vpin is not None else None
@@ -92,10 +96,10 @@ class RegimeRouter:
             toxic = True
         if hawkes_state is not None and hawkes_state.toxic_flow:
             toxic = True
-            
+
         if not toxic:
             return snapshot.regime
-            
+
         if snapshot.regime is MarketRegime.RANGE:
             if snapshot.slope > 0:
                 return MarketRegime.UPTREND

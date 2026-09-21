@@ -18,6 +18,10 @@ export interface StatusResponse {
   jobs: Record<JobKey, JobState>;
   strategies_available: string[];
   wired_robots: string[];
+  /** Robots whose regime filter can read aggregated trades (`--tick-vpin`). */
+  tick_vpin_robots: string[];
+  /** Robots whose regime filter can read Hawkes intensity (`--hawkes`). */
+  hawkes_robots: string[];
   /** Robots `lab paper` can actually build. Others are refused, never substituted. */
   paper_robots: string[];
   catalog_exists: boolean;
@@ -113,6 +117,10 @@ export interface ResearchRunParams {
   pbo?: boolean;
   pbo_blocks?: number;
   bar_vpin?: boolean;
+  /** Reads the aggregated-trade series; refused when the catalog has none. */
+  tick_vpin?: boolean;
+  /** Hawkes self-exciting intensity from the same tick series. */
+  hawkes?: boolean;
   stress_slice?: string;
   generate_tearsheet?: boolean;
   journal?: boolean;
@@ -305,6 +313,8 @@ export interface ResearchRunConfig {
   pbo?: boolean;
   pbo_blocks?: number;
   bar_vpin?: boolean;
+  tick_vpin?: boolean;
+  hawkes?: boolean;
   stress_slice?: string | null;
   generate_tearsheet?: boolean;
   journal?: boolean;
@@ -409,12 +419,16 @@ export async function fetchCatalogBars(params: {
   return parseJson(await fetch(apiUrl(`/api/catalog/bars?${query.toString()}`)));
 }
 
+/** Which tree an ingest writes into. One catalog holds all four side by side. */
+export type IngestSeries = 'klines' | 'trades' | 'funding' | 'depth';
+
 export async function runIngest(params: {
   symbols: string;
   start?: string;
   end?: string;
   catalog?: string;
   incremental?: boolean;
+  series?: IngestSeries;
 }): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/catalog/ingest'), {
@@ -496,6 +510,63 @@ export interface CommandCenterJob {
   elapsed_seconds?: number | null;
 }
 
+export interface DataSeriesCoverage {
+  present: boolean;
+  /** Bars/taker flow/funding: rows. Ticks: rows across all day shards, null when unreadable. */
+  rows: number | null;
+  first: string | null;
+  last: string | null;
+}
+
+export interface TickCoverage extends DataSeriesCoverage {
+  /** Aggregated trades are stored one Parquet file per UTC day. */
+  files: number;
+  bytes: number;
+}
+
+export interface DataHealthInstrument {
+  instrument_id: string;
+  /** Binance symbol the side series (taker flow, ticks, funding, depth) are keyed by. */
+  symbol: string | null;
+  bars: DataSeriesCoverage;
+  taker_flow: DataSeriesCoverage;
+  ticks: TickCoverage;
+  /** L2 depth snapshots, captured live — day-sharded like the ticks. */
+  orderbook: TickCoverage;
+  funding: DataSeriesCoverage;
+}
+
+export interface DataHealthResponse {
+  catalog_path: string;
+  exists: boolean;
+  bar_interval: string;
+  error?: string | null;
+  instruments: DataHealthInstrument[];
+  /** True when at least one instrument has tick data, i.e. tick filters can run. */
+  tick_filters_ready: boolean;
+  /** True when at least one instrument has L2 snapshots recorded. */
+  orderbook_ready: boolean;
+}
+
+export async function fetchDataHealth(catalogPath?: string): Promise<DataHealthResponse> {
+  const query = catalogPath ? `?catalog_path=${encodeURIComponent(catalogPath)}` : '';
+  return parseJson(await fetch(apiUrl(`/api/data${query}`)));
+}
+
+export interface CommandCenterSeriesRow {
+  instrument_id: string;
+  symbol: string | null;
+  bars: number;
+  bars_last: string | null;
+  taker_flow: boolean;
+  ticks: boolean;
+  tick_rows: number | null;
+  tick_last: string | null;
+  orderbook: boolean;
+  orderbook_rows: number | null;
+  funding: boolean;
+}
+
 export interface CommandCenterResponse {
   jobs: Record<string, CommandCenterJob>;
   safety: { live_enabled: boolean; mode: string };
@@ -505,6 +576,9 @@ export interface CommandCenterResponse {
   catalog_last_date?: string | null;
   /** Total bar count across all instruments in the current catalog. */
   catalog_total_bars?: number | null;
+  catalog_bar_interval?: string | null;
+  /** Which optional series exist beside the bars, one row per instrument. */
+  data_series?: CommandCenterSeriesRow[];
   recent_experiments: HistoryEntry[];
   models: MlModelInfo[];
   journal: Record<string, number>;

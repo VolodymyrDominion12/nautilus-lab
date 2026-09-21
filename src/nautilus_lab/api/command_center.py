@@ -75,6 +75,7 @@ def _series_summary(instruments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for entry in instruments:
         ticks = entry.get("ticks") or {}
         taker_flow = entry.get("taker_flow") or {}
+        orderbook = entry.get("orderbook") or {}
         funding = entry.get("funding") or {}
         bars = entry.get("bars") or {}
         rows.append(
@@ -87,6 +88,8 @@ def _series_summary(instruments: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "ticks": bool(ticks.get("present")),
                 "tick_rows": ticks.get("rows"),
                 "tick_last": ticks.get("last"),
+                "orderbook": bool(orderbook.get("present")),
+                "orderbook_rows": orderbook.get("rows"),
                 "funding": bool(funding.get("present")),
             }
         )

@@ -36,7 +36,9 @@ from nautilus_lab.domain.walk_forward import (
 class RunWalkForward:
     """Fit parameters on in-sample bars; report only the out-of-sample run."""
 
-    def __init__(self, engine: ResearchBacktestPort, feed: BarFeed, tick_feed: TickFeed | None = None) -> None:
+    def __init__(
+        self, engine: ResearchBacktestPort, feed: BarFeed, tick_feed: TickFeed | None = None
+    ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
@@ -64,7 +66,7 @@ class RunWalkForward:
             if self._tick_feed is None:
                 raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
             ticks = self._tick_feed.load(request.backtest)
-            
+
         return self._select_and_evaluate(
             request,
             window,
@@ -155,7 +157,7 @@ class RunWalkForward:
             if self._tick_feed is None:
                 raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
             ticks = self._tick_feed.load(request.backtest)
-            
+
         return self._run_fold(
             request,
             index,

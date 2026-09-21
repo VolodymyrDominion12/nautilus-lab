@@ -25,7 +25,7 @@ class VpinModel(Protocol):
 
 class TickVpin:
     """Volume-bucket VPIN, filled strictly tick-by-tick from AggTrades.
-    
+
     This provides true order-flow toxicity without the intra-bar approximation.
     Buckets emit exactly when filled by a sequence of aggressive orders.
     """

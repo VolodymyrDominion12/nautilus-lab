@@ -7,8 +7,8 @@ from decimal import Decimal
 from typing import Protocol
 
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide
+from nautilus_trader.model.data import Bar, BarType, TradeTick
+from nautilus_trader.model.enums import AggressorSide, OrderSide
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.strategy import Strategy
@@ -34,7 +34,7 @@ from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.signals import Signal, SignalSide
 from nautilus_lab.domain.volatility import VolModel
-from nautilus_lab.domain.vpin import BarVpin
+from nautilus_lab.domain.vpin import BarVpin, VpinModel
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
 from nautilus_lab.infrastructure.lightgbm_classifier import (
     HeuristicDirectionClassifier,
@@ -172,7 +172,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     def on_trade_tick(self, tick: TradeTick) -> None:
         if not hasattr(self._robot, "on_trade_tick"):
             return
-            
+
         ts_utc = datetime.fromtimestamp(tick.ts_event / 1_000_000_000, tz=UTC)
         if self._last_tick_ts is None:
             dt_seconds = Decimal("0")
@@ -180,11 +180,11 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             dt = (ts_utc - self._last_tick_ts).total_seconds()
             dt_seconds = Decimal(str(dt))
         self._last_tick_ts = ts_utc
-        
+
         is_buy = tick.aggressor_side == AggressorSide.BUYER
         volume = _as_decimal(tick.size)
-        
-        # We rely on structural subtyping (duck typing) since SingleLegRobot 
+
+        # We rely on structural subtyping (duck typing) since SingleLegRobot
         # doesn't enforce on_trade_tick
         self._robot.on_trade_tick(is_buy=is_buy, volume=volume, dt_seconds=dt_seconds)
 
@@ -361,9 +361,10 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             slow_period=config.slow_period,
         )
     if robot is RobotName.VPIN_MOMENTUM:
-        vpin = None
+        vpin: VpinModel | None = None
         if config.use_tick_vpin:
             from nautilus_lab.domain.vpin import TickVpin
+
             vpin = TickVpin(
                 bucket_volume=config.vpin_bucket_volume,
                 toxic_threshold=config.vpin_toxic_threshold,
@@ -413,9 +414,10 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
 
 
 def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRouter:
-    vpin = None
+    vpin: VpinModel | None = None
     if config.use_tick_vpin:
         from nautilus_lab.domain.vpin import TickVpin
+
         vpin = TickVpin(
             bucket_volume=config.vpin_bucket_volume,
             toxic_threshold=config.vpin_toxic_threshold,
@@ -425,10 +427,11 @@ def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRout
             bucket_volume=config.vpin_bucket_volume,
             toxic_threshold=config.vpin_toxic_threshold,
         )
-        
+
     hawkes = None
     if config.use_hawkes:
         from nautilus_lab.domain.hawkes import ExponentialHawkes
+
         hawkes = ExponentialHawkes(
             baseline=config.hawkes_baseline,
             alpha=config.hawkes_alpha,

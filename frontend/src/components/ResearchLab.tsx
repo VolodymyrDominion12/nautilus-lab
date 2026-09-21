@@ -17,12 +17,14 @@ import { staticReportUrl } from '../config';
 import {
   cancelResearch,
   fetchCatalog,
+  fetchDataHealth,
   fetchResearchLog,
   fetchReports,
   runResearch,
 } from '../services/api';
 import type {
   CatalogResponse,
+  DataHealthInstrument,
   HistoryEntry,
   ReportItem,
   ResearchRunConfig,
@@ -37,13 +39,16 @@ import { FoldBreakdown } from './FoldBreakdown';
 import { PboPanel } from './PboPanel';
 import { LogPanel } from './LogPanel';
 import { formatDateTime } from '../lib/format';
-import { preflight, preflightBlocking } from '../lib/research';
+import { cliCommand, preflight, preflightBlocking } from '../lib/research';
 import type { PreflightIssue } from '../lib/research';
 
 interface ResearchLabProps {
   strategies: StrategySpec[];
   initialRobot?: string;
   selectedCatalogPath?: string;
+  /** Which robots can read the tick series, as reported by the backend. */
+  tickVpinRobots?: string[];
+  hawkesRobots?: string[];
 }
 
 interface PersistedForm {
@@ -58,6 +63,8 @@ interface PersistedForm {
   usePbo?: boolean;
   pboBlocks?: number;
   barVpin?: boolean;
+  tickVpin?: boolean;
+  hawkes?: boolean;
   stressSlice?: string;
   generateTearsheet?: boolean;
   journal?: boolean;
@@ -89,6 +96,8 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   strategies,
   initialRobot = 'regime',
   selectedCatalogPath,
+  tickVpinRobots = [],
+  hawkesRobots = [],
 }) => {
   const persisted = useMemo(() => loadPersistedForm(), []);
 
@@ -103,6 +112,8 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   const [usePbo, setUsePbo] = useState(persisted.usePbo ?? false);
   const [pboBlocks, setPboBlocks] = useState(persisted.pboBlocks ?? 8);
   const [barVpin, setBarVpin] = useState(persisted.barVpin ?? false);
+  const [tickVpin, setTickVpin] = useState(persisted.tickVpin ?? false);
+  const [hawkes, setHawkes] = useState(persisted.hawkes ?? false);
   const [stressSlice, setStressSlice] = useState(persisted.stressSlice ?? '');
   const [generateTearsheet, setGenerateTearsheet] = useState(persisted.generateTearsheet ?? true);
   const [journal, setJournal] = useState(persisted.journal ?? false);
@@ -123,6 +134,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
 
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [dataHealth, setDataHealth] = useState<DataHealthInstrument[] | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
 
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -159,6 +171,8 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
       usePbo,
       pboBlocks,
       barVpin,
+      tickVpin,
+      hawkes,
       stressSlice,
       generateTearsheet,
       journal,
@@ -190,6 +204,8 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
     usePbo,
     pboBlocks,
     barVpin,
+    tickVpin,
+    hawkes,
     stressSlice,
     generateTearsheet,
     journal,
@@ -234,6 +250,15 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
       );
   }, [selectedCatalogPath]);
 
+  // Which optional series (ticks, taker flow, funding) sit beside the bars. The engine
+  // reads a missing tick series as an empty one, so the tick filters have to be checked
+  // against this before a run is launched rather than discovered in the log afterwards.
+  useEffect(() => {
+    fetchDataHealth(selectedCatalogPath)
+      .then((data) => setDataHealth(data.instruments))
+      .catch(() => setDataHealth(null));
+  }, [selectedCatalogPath]);
+
   // Keep the instrument selection valid when the catalog changes.
   useEffect(() => {
     if (catalogInstruments.length === 0) return;
@@ -260,6 +285,17 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
     });
   }, [robot, strategies]);
 
+  // Coverage of the tick series for the instrument this run would use. null means the
+  // health endpoint has not answered (yet): unknown is reported as unknown, not as absent.
+  const tickDataAvailable = useMemo(() => {
+    if (dataHealth == null) return null;
+    const entry = dataHealth.find(
+      (item) => item.instrument_id === (selectedInstrument?.instrument_id ?? ''),
+    );
+    if (!entry) return null;
+    return entry.ticks.present;
+  }, [dataHealth, selectedInstrument]);
+
   const issues: PreflightIssue[] = useMemo(
     () =>
       preflight({
@@ -281,6 +317,11 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
         oosEnd,
         instrument: selectedInstrument,
         catalogInstruments: catalogInstruments.length,
+        tickVpin,
+        hawkes,
+        tickVpinRobots,
+        hawkesRobots,
+        tickDataAvailable,
       }),
     [
       robot,
@@ -300,6 +341,11 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
       oosStart,
       oosEnd,
       catalogInstruments.length,
+      tickVpin,
+      hawkes,
+      tickVpinRobots,
+      hawkesRobots,
+      tickDataAvailable,
     ],
   );
   const blocked = preflightBlocking(issues);
@@ -377,6 +423,8 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
         pbo: usePbo,
         pbo_blocks: usePbo ? pboBlocks : undefined,
         bar_vpin: barVpin,
+        tick_vpin: tickVpin,
+        hawkes,
         stress_slice: stressSlice || undefined,
         generate_tearsheet: generateTearsheet,
         journal,
@@ -438,6 +486,8 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
     if (typeof config.pbo === 'boolean') setUsePbo(config.pbo);
     if (typeof config.pbo_blocks === 'number') setPboBlocks(config.pbo_blocks);
     if (typeof config.bar_vpin === 'boolean') setBarVpin(config.bar_vpin);
+    if (typeof config.tick_vpin === 'boolean') setTickVpin(config.tick_vpin);
+    if (typeof config.hawkes === 'boolean') setHawkes(config.hawkes);
     if (typeof config.stress_slice === 'string') setStressSlice(config.stress_slice);
     if (typeof config.generate_tearsheet === 'boolean') setGenerateTearsheet(config.generate_tearsheet);
     if (typeof config.journal === 'boolean') setJournal(config.journal);
@@ -746,23 +796,34 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           <button
             type="button"
             onClick={() => {
-              const parts = ['uv run lab research', `--robot ${robot}`];
-              if (source === 'synthetic') {
-                parts.push(`--synthetic --bars ${bars}`);
-              } else {
-                if (instrumentId) parts.push(`--instrument ${instrumentId}`);
-              }
-              if (folds > 1) parts.push(`--folds ${folds}`);
-              if (isFraction !== 0.7) parts.push(`--is-fraction ${isFraction}`);
-              if (embargoBars !== 10) parts.push(`--embargo-bars ${embargoBars}`);
-              if (useOptuna) parts.push(`--optuna --trials ${optunaTrials}`);
-              if (usePbo) parts.push('--pbo');
-              if (barVpin) parts.push('--bar-vpin');
-              if (stressSlice) parts.push(`--stress-slice ${stressSlice}`);
-              if (generateTearsheet) parts.push('--tearsheet reports/tearsheet.html');
-              if (journal) parts.push('--journal');
-              if (fullSample) parts.push('--full-sample');
-              navigator.clipboard.writeText(parts.join(' ')).then(() => {
+              const command = cliCommand({
+                robot,
+                source,
+                bars,
+                folds,
+                isFraction,
+                embargoBars,
+                useOptuna,
+                optunaTrials,
+                pbo: usePbo,
+                pboBlocks,
+                barVpin,
+                tickVpin,
+                hawkes,
+                stressSlice,
+                generateTearsheet,
+                journal,
+                notify,
+                fullSample,
+                catalogPath: selectedCatalogPath,
+                instrumentId: selectedInstrument?.instrument_id,
+                windowMode,
+                isStart,
+                isEnd,
+                oosStart,
+                oosEnd,
+              });
+              navigator.clipboard.writeText(command).then(() => {
                 setCopiedCli(true);
                 setTimeout(() => setCopiedCli(false), 2000);
               });
@@ -850,7 +911,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
             className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium"
           >
             {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            {showAdvanced ? 'Hide advanced gates' : 'Show advanced gates (Optuna, PBO, embargo, VPIN, journal)'}
+            {showAdvanced ? 'Hide advanced gates' : 'Show advanced gates (Optuna, PBO, embargo, VPIN, Hawkes, journal)'}
           </button>
 
           {showAdvanced && (
@@ -928,11 +989,53 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
                 <input
                   type="checkbox"
                   checked={barVpin}
-                  onChange={(e) => setBarVpin(e.target.checked)}
+                  onChange={(e) => {
+                    setBarVpin(e.target.checked);
+                    if (e.target.checked) setTickVpin(false);
+                  }}
                   className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
                 />
-                Bar-level VPIN regime filter
+                Bar-level VPIN regime filter (volume proxy)
               </label>
+
+              <div className="flex flex-col gap-1">
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={tickVpin}
+                    onChange={(e) => {
+                      setTickVpin(e.target.checked);
+                      if (e.target.checked) setBarVpin(false);
+                    }}
+                    className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+                  />
+                  Tick-level VPIN regime filter
+                </label>
+                <span className="text-[10px] text-gray-600 pl-5">
+                  Real aggressor split from aggregated trades
+                  {tickDataAvailable === false
+                    ? ' — no tick series in this catalog'
+                    : tickDataAvailable === true
+                      ? ' — tick series present'
+                      : ' — coverage unknown'}
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={hawkes}
+                    onChange={(e) => setHawkes(e.target.checked)}
+                    className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+                  />
+                  Hawkes intensity filter
+                </label>
+                <span className="text-[10px] text-gray-600 pl-5">
+                  Clustered-flow gate built from the same tick series; runs only for{' '}
+                  {hawkesRobots.join(', ') || 'the regime router'}.
+                </span>
+              </div>
 
               <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
                 <input

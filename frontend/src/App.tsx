@@ -268,6 +268,8 @@ export function App() {
             strategies={strategies}
             initialRobot={selectedRobot}
             selectedCatalogPath={selectedCatalogPath}
+            tickVpinRobots={status?.tick_vpin_robots}
+            hawkesRobots={status?.hawkes_robots}
           />
         )}
         {activeTab === 'catalog' && (

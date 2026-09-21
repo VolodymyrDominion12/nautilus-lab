@@ -331,7 +331,9 @@ class MultiWindowReport:
 
 
 class ResearchBacktestPort(Protocol):
-    def run(self, request: BacktestRequest, bars: list[OhlcvBar], ticks: list[AggTrade] | None = None) -> BacktestReport: ...
+    def run(
+        self, request: BacktestRequest, bars: list[OhlcvBar], ticks: list[AggTrade] | None = None
+    ) -> BacktestReport: ...
 
     def run_spread(
         self,

@@ -30,8 +30,8 @@ class AggTrade:
     instrument_id: str
     ts_utc: datetime
     agg_id: int
-    price: str          # stored as str to preserve Binance's exact decimal representation
-    qty: str            # same: lossy float → Decimal(str(row["q"])) at the call site
+    price: str  # stored as str to preserve Binance's exact decimal representation
+    qty: str  # same: lossy float → Decimal(str(row["q"])) at the call site
     is_buyer_maker: bool
 
     @property

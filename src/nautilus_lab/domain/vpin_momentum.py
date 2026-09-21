@@ -6,7 +6,7 @@ from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.ema import ExponentialMovingAverage
 from nautilus_lab.domain.signals import Signal, SignalSide
-from nautilus_lab.domain.vpin import VpinModel, VpinState
+from nautilus_lab.domain.vpin import VpinModel
 
 
 class VpinMomentum:

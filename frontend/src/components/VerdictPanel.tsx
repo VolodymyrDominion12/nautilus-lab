@@ -1,6 +1,16 @@
-import React from 'react';
-import { AlertTriangle, CheckCircle2, HelpCircle, Info, ShieldQuestion } from 'lucide-react';
+import React, { useState } from 'react';
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  Copy,
+  Download,
+  HelpCircle,
+  Info,
+  ShieldQuestion,
+} from 'lucide-react';
 import { MetricCard } from './MetricCard';
+import { EquityCurveChart } from './EquityCurveChart';
 import { TONE_TEXT, formatBps, formatDateTime, formatPct, toNumber } from '../lib/format';
 import type { Tone } from '../lib/format';
 import type { ResearchSummary } from '../services/api';
@@ -24,6 +34,7 @@ const TONE_ICON = {
  * trading costs. Anything unmeasured is shown as "n/a" rather than as zero.
  */
 export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
+  const [copiedMd, setCopiedMd] = useState(false);
   const verdict = verdictFor(summary);
   if (!summary || !summary.is_finished || summary.is_error) return null;
 
@@ -39,6 +50,56 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
 
   const foldCount = multi?.fold_count ?? (multi?.folds?.length || null);
 
+  const handleCopyMarkdown = () => {
+    const lines: string[] = [
+      `### Nautilus Lab Backtest Report: ${summary.robot || 'Unknown'}`,
+      `- **Run Type**: \`${summary.run_type}\` (${summary.source || 'catalog'})`,
+      `- **Evidence Level**: \`${verdict.badge.label}\``,
+      `- **Verdict**: ${verdict.headline}`,
+      `- **Finished At**: ${summary.finished_at ? formatDateTime(summary.finished_at) : 'n/a'}`,
+      '',
+      '| Metric | Value | Baseline / Target |',
+      '|---|---|---|',
+    ];
+
+    if (multi) {
+      lines.push(
+        `| OOS Mean Return | **${multi.mean_oos}** | Buy&Hold: ${multi.buy_and_hold_mean} |`,
+        `| Excess Return | **${multi.mean_excess_return}** | Beats B&H: ${multi.beats_buy_and_hold ? 'Yes' : 'No'} |`,
+        `| Profitable Folds | **${multi.profitable}** | Spread: ${multi.spread} |`,
+        `| Breakeven Cost | **${formatBps(breakeven)}** | Paid: ${formatBps(paid)} |`,
+        `| Cost Headroom | **${formatBps(headroom)}** | ${headroom != null && headroom > 0 ? 'Survives fees' : 'Fails fees'} |`,
+        `| Total OOS Fills | **${multi.total_oos_fills}** | - |`,
+      );
+    } else if (single) {
+      lines.push(
+        `| Ending Balance | **$${single.ending_balance?.toLocaleString() ?? 'n/a'}** | Starting: $${summary.starting_equity ?? 10000} |`,
+        `| Max Drawdown | **${single.max_dd_pct}** | In-sample only |`,
+        `| Breakeven Cost | **${formatBps(breakeven)}** | Paid: ${formatBps(paid)} |`,
+        `| Total Fills | **${single.fills}** | - |`,
+      );
+    }
+
+    if (verdict.concerns.length > 0) {
+      lines.push('', '**Concerns & Warnings:**');
+      verdict.concerns.forEach((c) => lines.push(`- ⚠️ ${c}`));
+    }
+
+    navigator.clipboard.writeText(lines.join('\n'));
+    setCopiedMd(true);
+    setTimeout(() => setCopiedMd(false), 2500);
+  };
+
+  const handleDownloadJson = () => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(summary, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `nautilus_run_${summary.robot || 'backtest'}_${Date.now()}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 flex flex-col gap-4">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -47,6 +108,24 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
           <h3 className="text-sm font-bold text-gray-100">Verdict</h3>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={handleCopyMarkdown}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-950 hover:bg-gray-800 border border-gray-800 text-gray-300 transition-colors"
+            title="Copy formatted Markdown report to clipboard"
+          >
+            {copiedMd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>{copiedMd ? 'Copied Markdown' : 'Copy Report'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadJson}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-950 hover:bg-gray-800 border border-gray-800 text-gray-300 transition-colors"
+            title="Download full JSON result artifact"
+          >
+            <Download className="w-3.5 h-3.5 text-blue-400" />
+            <span>JSON</span>
+          </button>
           <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${verdict.badge.className}`}>
             {verdict.badge.label}
           </span>
@@ -69,6 +148,15 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
       </div>
 
       <p className="text-[11px] text-gray-500 leading-snug">{verdict.badge.detail}</p>
+
+      {/* Interactive Equity Curve & Drawdown (when multi-window folds exist) */}
+      {multi && multi.folds && multi.folds.length > 1 && (
+        <EquityCurveChart
+          folds={multi.folds}
+          startingEquity={summary.starting_equity}
+          title={`Out-of-Sample Equity Curve: ${summary.robot}`}
+        />
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {multi && (

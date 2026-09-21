@@ -15,6 +15,7 @@ import {
   TrendingDown,
   TrendingUp,
   TriangleAlert,
+  Zap,
 } from 'lucide-react';
 import {
   fetchHypotheses,
@@ -29,7 +30,11 @@ import type {
 } from '../services/api';
 import { formatDateTime } from '../lib/format';
 
-export const AlphaIdeasTab: React.FC = () => {
+export interface AlphaIdeasTabProps {
+  onTestInResearch?: (config: { robot: string; formula?: string; notes?: string }) => void;
+}
+
+export const AlphaIdeasTab: React.FC<AlphaIdeasTabProps> = ({ onTestInResearch }) => {
   const [count, setCount] = useState(5);
   const [dryRun, setDryRun] = useState(true);
   const [journal, setJournal] = useState(false);
@@ -413,14 +418,33 @@ export const AlphaIdeasTab: React.FC = () => {
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center justify-between text-xs text-gray-500">
                             <span className="font-mono">Formula DSL</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyFormula(item.formula, item.name)}
-                              className="flex items-center gap-1 text-amber-400 hover:text-amber-300 transition-colors"
-                            >
-                              {isCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                              {isCopied ? 'Copied!' : 'Copy formula'}
-                            </button>
+                            <div className="flex items-center gap-3">
+                              {onTestInResearch && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onTestInResearch({
+                                      robot: 'formulaic_lgbm',
+                                      formula: item.formula,
+                                      notes: `Hypothesis ${item.name}: ${item.formula}`,
+                                    })
+                                  }
+                                  className="flex items-center gap-1 text-purple-400 hover:text-purple-300 transition-colors font-medium"
+                                  title="Open Research Lab and test this formula with formulaic_lgbm robot"
+                                >
+                                  <Zap className="w-3 h-3 text-yellow-400" />
+                                  <span>Test in Research</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleCopyFormula(item.formula, item.name)}
+                                className="flex items-center gap-1 text-amber-400 hover:text-amber-300 transition-colors"
+                              >
+                                {isCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                                {isCopied ? 'Copied!' : 'Copy formula'}
+                              </button>
+                            </div>
                           </div>
                           <div className="p-3 bg-gray-900 border border-gray-800/90 rounded-xl font-mono text-xs text-amber-200/90 break-all select-all">
                             {item.formula}

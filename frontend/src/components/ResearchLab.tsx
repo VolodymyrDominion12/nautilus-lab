@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Settings2,
   Square,
+  Zap,
 } from 'lucide-react';
 import { staticReportUrl } from '../config';
 import {
@@ -39,6 +40,8 @@ import { VerdictPanel } from './VerdictPanel';
 import { FoldBreakdown } from './FoldBreakdown';
 import { PboPanel } from './PboPanel';
 import { LogPanel } from './LogPanel';
+import { ResearchPresets } from './ResearchPresets';
+import type { ResearchPresetConfig } from './ResearchPresets';
 import { formatDateTime } from '../lib/format';
 import { cliCommand, preflight, preflightBlocking, sliceOverlapsCatalog } from '../lib/research';
 import type { PreflightIssue } from '../lib/research';
@@ -52,6 +55,8 @@ interface ResearchLabProps {
   hawkesRobots?: string[];
   /** Named stress windows with their real dates, from the backend. */
   stressSlices?: StressSliceInfo[];
+  externalConfig?: { robot?: string; formula?: string; notes?: string } | null;
+  onClearExternalConfig?: () => void;
 }
 
 interface PersistedForm {
@@ -102,10 +107,13 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   tickVpinRobots = [],
   hawkesRobots = [],
   stressSlices = [],
+  externalConfig = null,
+  onClearExternalConfig,
 }) => {
   const persisted = useMemo(() => loadPersistedForm(), []);
 
-  const [robot, setRobot] = useState(persisted.robot ?? initialRobot);
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
+  const [robot, setRobot] = useState(externalConfig?.robot ?? persisted.robot ?? initialRobot);
   const [source, setSource] = useState<'catalog' | 'synthetic'>(persisted.source ?? 'catalog');
   const [bars, setBars] = useState(persisted.bars ?? 3000);
   const [folds, setFolds] = useState(persisted.folds ?? 2);
@@ -242,6 +250,41 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   useEffect(() => {
     setRobot(initialRobot);
   }, [initialRobot]);
+
+  useEffect(() => {
+    if (externalConfig) {
+      if (externalConfig.robot) setRobot(externalConfig.robot);
+      if (externalConfig.formula) {
+        setOverrideParams(true);
+        setParamOverrides((prev) => ({
+          ...prev,
+          formula: externalConfig.formula!,
+        }));
+      }
+    }
+  }, [externalConfig]);
+
+  const handleApplyPreset = (preset: ResearchPresetConfig) => {
+    setActivePresetId(preset.id);
+    const c = preset.config;
+    if (c.robot) setRobot(c.robot);
+    if (c.source) setSource(c.source);
+    if (c.bars !== undefined) setBars(c.bars);
+    if (c.folds !== undefined) setFolds(c.folds);
+    if (c.isFraction !== undefined) setIsFraction(c.isFraction);
+    if (c.embargoBars !== undefined) setEmbargoBars(c.embargoBars);
+    if (c.useOptuna !== undefined) setUseOptuna(c.useOptuna);
+    if (c.optunaTrials !== undefined) setOptunaTrials(c.optunaTrials);
+    if (c.usePbo !== undefined) setUsePbo(c.usePbo);
+    if (c.pboBlocks !== undefined) setPboBlocks(c.pboBlocks);
+    if (c.barVpin !== undefined) setBarVpin(c.barVpin);
+    if (c.tickVpin !== undefined) setTickVpin(c.tickVpin);
+    if (c.hawkes !== undefined) setHawkes(c.hawkes);
+    if (c.stressSlice !== undefined) setStressSlice(c.stressSlice);
+    if (c.generateTearsheet !== undefined) setGenerateTearsheet(c.generateTearsheet);
+    if (c.fullSample !== undefined) setFullSample(c.fullSample);
+    if (c.windowMode !== undefined) setWindowMode(c.windowMode);
+  };
 
   useEffect(() => {
     fetchCatalog(selectedCatalogPath)
@@ -658,6 +701,33 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
             </button>
           </div>
         </div>
+
+        {externalConfig && (
+          <div className="p-3 bg-purple-950/40 border border-purple-800/60 rounded-xl flex items-center justify-between gap-3 text-xs text-purple-200">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                Loaded from Alpha Hypothesis: <span className="font-mono font-bold text-white">{externalConfig.notes || externalConfig.formula}</span>
+              </span>
+            </div>
+            {onClearExternalConfig && (
+              <button
+                type="button"
+                onClick={onClearExternalConfig}
+                className="text-[10px] font-mono text-purple-400 hover:text-purple-200 underline"
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
+        )}
+
+        <ResearchPresets
+          onApplyPreset={handleApplyPreset}
+          activePresetId={activePresetId}
+        />
+
+        <div className="border-t border-gray-800/80" />
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 items-end">
           <div className="flex flex-col gap-1.5">

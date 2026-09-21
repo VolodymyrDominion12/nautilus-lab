@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowDownUp, GitCompare, RefreshCw } from 'lucide-react';
+import { ArrowDownUp, Check, Copy, GitCompare, RefreshCw } from 'lucide-react';
 import { fetchResearchHistory } from '../services/api';
 import type { HistoryEntry } from '../services/api';
 import { formatBps, formatDateTime, formatPct, toNumber } from '../lib/format';
@@ -62,6 +62,7 @@ export const RunsCompare: React.FC<RunsCompareProps> = ({ refreshKey = 0 }) => {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [copiedMd, setCopiedMd] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [onlyOutOfSample, setOnlyOutOfSample] = useState(false);
@@ -118,6 +119,30 @@ export const RunsCompare: React.FC<RunsCompareProps> = ({ refreshKey = 0 }) => {
     );
   };
 
+  const handleCopyMarkdown = () => {
+    const targetRows = compared.length > 0 ? compared : rows.slice(0, 8);
+    if (targetRows.length === 0) return;
+
+    const lines: string[] = [
+      '### Nautilus Lab Experiments Comparison',
+      `*Compared ${targetRows.length} runs on ${new Date().toISOString().slice(0, 10)}*`,
+      '',
+      '| Robot | Run Type | Date | Evidence | OOS Return | Buy & Hold | Excess | Folds | Fills | Headroom |',
+      '|---|---|---|---|---|---|---|---|---|---|',
+    ];
+
+    targetRows.forEach((r) => {
+      const e = r.entry;
+      lines.push(
+        `| **${e.robot}** | \`${e.run_type}\` | ${e.finished_at?.slice(0, 16) ?? 'n/a'} | ${r.evidence} | **${formatPct(r.oos)}** | ${formatPct(r.buyHold)} | ${formatPct(r.excess)} | ${r.folds ?? '1'} | ${r.fills ?? 0} | ${formatBps(r.headroom)} |`,
+      );
+    });
+
+    navigator.clipboard.writeText(lines.join('\n'));
+    setCopiedMd(true);
+    setTimeout(() => setCopiedMd(false), 2500);
+  };
+
   const evidenceTag = (evidence: CompareRow['evidence']) => {
     switch (evidence) {
       case 'out-of-sample':
@@ -142,6 +167,15 @@ export const RunsCompare: React.FC<RunsCompareProps> = ({ refreshKey = 0 }) => {
           </span>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleCopyMarkdown}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-950 hover:bg-gray-800 border border-gray-800 text-gray-300 transition-colors"
+            title="Copy comparison table as Markdown"
+          >
+            {copiedMd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>{copiedMd ? 'Copied Table' : 'Copy Table'}</span>
+          </button>
           <label className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer">
             <input
               type="checkbox"

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeftRight,
@@ -9,6 +9,7 @@ import {
   FlaskConical,
   Layers,
   LayoutDashboard,
+  Search,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -27,6 +28,9 @@ import { JournalKanban } from './components/JournalKanban';
 import { PaperSimulator } from './components/PaperSimulator';
 import { ScanTab } from './components/ScanTab';
 import { AlphaIdeasTab } from './components/AlphaIdeasTab';
+import { CommandPalette } from './components/CommandPalette';
+import { ToastProvider } from './components/Toast';
+import { useToast } from './components/toastContext';
 import { formatElapsed } from './lib/format';
 
 type TabId =
@@ -50,16 +54,28 @@ const JOB_TABS: Record<JobKey, TabId> = {
   paper: 'paper',
 };
 
-export function App() {
+function AppContent() {
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<TabId>('home');
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [strategies, setStrategies] = useState<StrategySpec[]>([]);
   const [selectedRobot, setSelectedRobot] = useState('regime');
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [selectedCatalogPath, setSelectedCatalogPathState] = useState(
     () => getSelectedCatalogPath() || 'catalog',
   );
+
+  // Hypotheses passed from AlphaIdeasTab into ResearchLab
+  const [externalHypoConfig, setExternalHypoConfig] = useState<{
+    robot?: string;
+    formula?: string;
+    notes?: string;
+  } | null>(null);
+
+  // Track background jobs transition to notify on completion
+  const prevJobsRef = useRef<Record<string, boolean>>({});
 
   const handleCatalogChange = (path: string) => {
     setSelectedCatalogPathState(path);
@@ -87,6 +103,30 @@ export function App() {
       .catch((err: unknown) => console.error(err));
   }, [selectedCatalogPath]);
 
+  // Keyboard shortcut: Cmd+K / Ctrl+K opens CommandPalette
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Job finish detector -> trigger toast
+  useEffect(() => {
+    if (!status?.jobs) return;
+    Object.entries(status.jobs).forEach(([key, job]) => {
+      const wasRunning = prevJobsRef.current[key];
+      if (wasRunning && !job.running) {
+        toast.success(`Task finished: ${job.label}`, 'Process finished execution');
+      }
+      prevJobsRef.current[key] = Boolean(job.running);
+    });
+  }, [status?.jobs, toast]);
+
   useEffect(() => {
     fetchCatalogs()
       .then((data) => {
@@ -107,6 +147,13 @@ export function App() {
   const handleSelectStrategy = (robotName: string) => {
     setSelectedRobot(robotName);
     setActiveTab('research');
+  };
+
+  const handleTestHypothesis = (cfg: { robot: string; formula?: string; notes?: string }) => {
+    setExternalHypoConfig(cfg);
+    setSelectedRobot(cfg.robot);
+    setActiveTab('research');
+    toast.success('Hypothesis loaded into Research Lab!', cfg.notes || cfg.formula);
   };
 
   const navButton = (tab: TabId, label: string, icon: React.ReactNode, badge?: React.ReactNode) => (
@@ -134,6 +181,14 @@ export function App() {
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-[#080c14] text-gray-100 font-sans">
+      <CommandPalette
+        isOpen={isPaletteOpen}
+        onClose={() => setIsPaletteOpen(false)}
+        onNavigateTab={(tab) => setActiveTab(tab as TabId)}
+        onSelectStrategy={handleSelectStrategy}
+        strategies={strategies}
+      />
+
       <aside className="w-full md:w-64 bg-[#0d131f] border-r border-gray-800/80 p-5 flex flex-col gap-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-blue-600/10 border border-blue-500/20 rounded-xl">
@@ -146,6 +201,21 @@ export function App() {
             </span>
           </div>
         </div>
+
+        {/* Quick Search / Command Palette button */}
+        <button
+          type="button"
+          onClick={() => setIsPaletteOpen(true)}
+          className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-gray-950 border border-gray-800 text-xs text-gray-400 hover:text-gray-200 hover:border-gray-700 transition-colors"
+        >
+          <span className="flex items-center gap-2">
+            <Search className="w-3.5 h-3.5 text-gray-500" />
+            <span>Search / Jump</span>
+          </span>
+          <kbd className="px-1.5 py-0.5 text-[9px] font-mono text-gray-500 bg-gray-900 rounded border border-gray-800">
+            ⌘K
+          </kbd>
+        </button>
 
         <nav className="flex flex-col gap-1.5">
           {navButton('home', 'Command Center', <LayoutDashboard className="w-4 h-4" />)}
@@ -271,6 +341,8 @@ export function App() {
             tickVpinRobots={status?.tick_vpin_robots}
             hawkesRobots={status?.hawkes_robots}
             stressSlices={status?.stress_slices}
+            externalConfig={externalHypoConfig}
+            onClearExternalConfig={() => setExternalHypoConfig(null)}
           />
         )}
         {activeTab === 'catalog' && (
@@ -286,10 +358,18 @@ export function App() {
         {activeTab === 'journal' && <JournalKanban />}
         {activeTab === 'paper' && <PaperSimulator strategies={strategies} status={status} />}
         {activeTab === 'scan' && <ScanTab />}
-        {activeTab === 'alpha' && <AlphaIdeasTab />}
+        {activeTab === 'alpha' && <AlphaIdeasTab onTestInResearch={handleTestHypothesis} />}
         {activeTab === 'settings' && <SettingsTab />}
       </main>
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <ToastProvider>
+      <AppContent />
+    </ToastProvider>
   );
 }
 

@@ -29,6 +29,8 @@ from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.composition import (
     funding_ingest_request,
+    ingest_agg_trades_request,
+    ingest_agg_trades_use_case,
     ingest_funding_use_case,
     ingest_request,
     ingest_use_case,
@@ -39,6 +41,7 @@ from nautilus_lab.interfaces.composition import (
     research_request,
     research_use_case,
     settings,
+    taker_flow_catalog,
     walk_forward_request,
     walk_forward_use_case,
 )
@@ -73,6 +76,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=(
             "Ingest USD-M funding settlements instead of klines "
             "(event series, stored under catalog/data/funding/)"
+        ),
+    )
+    ingest.add_argument(
+        "--trades",
+        action="store_true",
+        help=(
+            "Ingest aggregated trades (ticks) instead of klines "
+            "(stored under catalog/data/agg_trade/). "
+            "Enables real VPIN and Hawkes computation without a bar-volume proxy."
         ),
     )
 
@@ -272,6 +284,8 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
     )
     if getattr(args, "funding", False):
         return _run_ingest_funding(cfg, symbols=symbols, start=default_start, end=end)
+    if getattr(args, "trades", False):
+        return _run_ingest_agg_trades(cfg, symbols=symbols, start=default_start, end=end)
     use_case = ingest_use_case(cfg)
     incremental = bool(getattr(args, "incremental", False))
     for symbol in symbols:
@@ -284,6 +298,13 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
                 default_start=default_start,
                 end=end,
             )
+            # `--incremental` walks forward from the last stored bar, so a catalog that
+            # predates the taker-flow series would stay without it forever: the bars are
+            # "up to date", the order-flow field is not. Backfill the full window once,
+            # out loud, instead of leaving a silently degraded feature behind.
+            if inc_start is None and not taker_flow_catalog(cfg).series_exists(symbol):
+                print(f"symbol={symbol} taker-flow backfill: re-reading the full window")
+                inc_start = default_start
             if inc_start is None:
                 print(f"symbol={symbol} up-to-date (incremental skip)")
                 continue
@@ -291,6 +312,32 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
         report = use_case.execute(ingest_request(cfg, start=start, end=end, symbol=symbol))
         print(
             f"symbol={symbol} wrote={report.bars_written} "
+            f"taker_flow={report.taker_flow_rows} "
+            f"first={report.first_ts.isoformat()} last={report.last_ts.isoformat()} "
+            f"catalog={report.catalog_path}"
+        )
+    return 0
+
+
+def _run_ingest_agg_trades(
+    cfg: Settings,
+    *,
+    symbols: list[str],
+    start: datetime,
+    end: datetime,
+) -> int:
+    """Ingest aggregated trades (ticks) for research-grade VPIN and Hawkes.
+
+    Data is stored under ``catalog/data/agg_trade/<SYMBOL>/``, one Parquet file per
+    UTC day.  No API keys required — this is a public Binance endpoint.
+    """
+    use_case = ingest_agg_trades_use_case(cfg)
+    for symbol in symbols:
+        report = use_case.execute(
+            ingest_agg_trades_request(cfg, start=start, end=end, symbol=symbol)
+        )
+        print(
+            f"symbol={report.symbol} trades={report.trades_written} "
             f"first={report.first_ts.isoformat()} last={report.last_ts.isoformat()} "
             f"catalog={report.catalog_path}"
         )
@@ -533,6 +580,17 @@ def _run_pbo(cfg: Settings, args: argparse.Namespace, robot: RobotName | None) -
     blocks = getattr(args, "pbo_blocks", 8)
     if blocks < 2:
         raise ValueError(f"--pbo-blocks must be >= 2, got {blocks}")
+    if getattr(args, "optuna", False):
+        # PBO/CSCV already iterates over all grid configurations on every block;
+        # adding Optuna on top would fit a separate HPO search inside each block,
+        # which is neither the documented protocol nor what the user likely expects.
+        # Warn explicitly rather than silently ignoring the flag.
+        print(
+            "warning: --optuna is ignored when --pbo is active. "
+            "PBO evaluates every grid configuration on every block; "
+            "Optuna HPO cannot be composed with that protocol.",
+            file=sys.stderr,
+        )
     if getattr(args, "tearsheet", None):
         # There is no single "the" run to draw: the audit simulates blocks x
         # configurations. Failing loudly beats writing a tearsheet of whichever run

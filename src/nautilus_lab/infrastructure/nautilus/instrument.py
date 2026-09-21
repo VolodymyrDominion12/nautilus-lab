@@ -86,6 +86,20 @@ def binance_symbol_to_instrument_id(symbol: str) -> str:
     raise ValueError(f"unsupported binance symbol: {symbol}")
 
 
+def binance_symbol_for_instrument(instrument_id: str) -> str | None:
+    """Inverse of `binance_symbol_to_instrument_id` for the spot ids in the table.
+
+    Returns None when the instrument has no spot symbol to look data up under (the
+    perpetual ids carry no `/`, so they are not derivable this way). None is the honest
+    answer: the caller then has no taker-flow series to join and falls back, instead of
+    inventing a symbol and silently reading the wrong instrument's flow.
+    """
+    base, separator, quote = instrument_id.partition("/")
+    if not separator or not quote.startswith("USDT"):
+        return None
+    return f"{base}USDT"
+
+
 def _currency_pair(instrument_id: str, *, fees: FeeSchedule) -> CurrencyPair:
     base_code, quote_code, price_precision, price_inc, size_inc = _SPOT_SPECS[instrument_id]
     base = Currency.from_str(base_code)

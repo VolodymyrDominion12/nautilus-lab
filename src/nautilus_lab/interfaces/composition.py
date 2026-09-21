@@ -7,10 +7,12 @@ from pathlib import Path
 from nautilus_lab.application.dtos import (
     BacktestRequest,
     FundingIngestRequest,
+    IngestAggTradesRequest,
     IngestRequest,
     OverfitAuditRequest,
     WalkForwardRequest,
 )
+from nautilus_lab.application.ingest_agg_trades import IngestAggTrades
 from nautilus_lab.application.ingest_funding_history import IngestFundingHistory
 from nautilus_lab.application.ingest_historical_bars import IngestHistoricalBars
 from nautilus_lab.application.propose_alphas import AlphaProposalRequest, resolve_prompt_path
@@ -22,7 +24,9 @@ from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.ports import ChatCompleter
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
+from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.alerts import AlertNotifier, build_notifier
+from nautilus_lab.infrastructure.binance_agg_trades import BinancePublicAggTrades
 from nautilus_lab.infrastructure.binance_funding import BinancePublicFunding
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
 from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
@@ -33,6 +37,7 @@ from nautilus_lab.infrastructure.nautilus.bar_feed import ResearchBarFeed
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.settings import Settings
+from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
 
 
@@ -42,6 +47,16 @@ def settings() -> Settings:
 
 def catalog(cfg: Settings, *, path: str | None = None) -> NautilusParquetCatalog:
     return NautilusParquetCatalog(Path(path or cfg.catalog_path), fees=cfg.fee_schedule())
+
+
+def taker_flow_catalog(cfg: Settings, *, path: str | None = None) -> ParquetTakerFlowCatalog:
+    """Per-bar taker split, a sibling series of the bar catalog under the same root."""
+    return ParquetTakerFlowCatalog(Path(path or cfg.catalog_path))
+
+
+def research_feed(cfg: Settings, *, path: str | None = None) -> ResearchBarFeed:
+    """Bars plus the taker-flow join. One place, so no run silently loses the join."""
+    return ResearchBarFeed(catalog(cfg, path=path), taker_flow=taker_flow_catalog(cfg, path=path))
 
 
 def notifier(cfg: Settings | None = None) -> AlertNotifier:
@@ -55,17 +70,17 @@ def notifier(cfg: Settings | None = None) -> AlertNotifier:
 
 def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
     resolved = cfg or settings()
-    return RunResearchBacktest(NautilusResearchBacktest(), ResearchBarFeed(catalog(resolved)))
+    return RunResearchBacktest(NautilusResearchBacktest(), research_feed(resolved))
 
 
 def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
     resolved = cfg or settings()
-    return RunWalkForward(NautilusResearchBacktest(), ResearchBarFeed(catalog(resolved)))
+    return RunWalkForward(NautilusResearchBacktest(), research_feed(resolved))
 
 
 def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
     resolved = cfg or settings()
-    return RunOverfitAudit(NautilusResearchBacktest(), ResearchBarFeed(catalog(resolved)))
+    return RunOverfitAudit(NautilusResearchBacktest(), research_feed(resolved))
 
 
 def llm_completer(
@@ -142,6 +157,7 @@ def ingest_use_case(cfg: Settings | None = None) -> IngestHistoricalBars:
         BinancePublicKlines(ResilientJsonClient()),
         store,
         catalog_path=str(store.path),
+        taker_flow=taker_flow_catalog(resolved),
     )
 
 
@@ -248,6 +264,35 @@ def ingest_funding_use_case(cfg: Settings | None = None) -> IngestFundingHistory
         BinancePublicFunding(ResilientJsonClient()),
         store,
         catalog_path=str(store.path),
+    )
+
+
+def ingest_agg_trades_use_case(cfg: Settings | None = None) -> IngestAggTrades:
+    resolved = cfg or settings()
+    store = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    return IngestAggTrades(
+        BinancePublicAggTrades(ResilientJsonClient()),
+        store,
+        catalog_path=str(store.path),
+    )
+
+
+def ingest_agg_trades_request(
+    cfg: Settings,
+    *,
+    start: datetime,
+    end: datetime,
+    symbol: str | None = None,
+) -> IngestAggTradesRequest:
+    require_simulated_mode(cfg.trading_mode)
+    resolved_symbol = symbol or cfg.binance_symbol
+    instrument_id = binance_symbol_to_instrument_id(resolved_symbol)
+    return IngestAggTradesRequest(
+        mode=cfg.trading_mode,
+        symbol=resolved_symbol,
+        instrument_id=instrument_id,
+        start=start,
+        end=end,
     )
 
 

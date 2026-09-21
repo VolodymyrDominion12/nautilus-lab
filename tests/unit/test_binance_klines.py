@@ -22,6 +22,31 @@ def test_parse_binance_kline_uses_close_time() -> None:
     assert bar.close == Decimal("2205.50")
     assert bar.volume == Decimal("15.5")
     assert bar.ts_utc == datetime(2024, 1, 1, 0, 59, 59, 999000, tzinfo=UTC)
+    # A short row cannot answer "how much did takers buy?", so the field stays unknown
+    # instead of being defaulted to zero (which would read as "no aggressive buying").
+    assert bar.taker_buy_base_volume is None
+
+
+def test_parse_binance_kline_keeps_the_taker_buy_field() -> None:
+    """Field 9 is the only real maker/taker split a kline carries (defect D4)."""
+    row = [
+        1_704_067_200_000,
+        "2200.00",
+        "2210.00",
+        "2190.00",
+        "2205.50",
+        "15.5",
+        1_704_070_799_999,
+        "34185.25",
+        42,
+        "9.75",
+        "21488.625",
+        "0",
+    ]
+    bar = parse_binance_kline(row, instrument_id="ETH/USDT.SIM")
+    assert bar.taker_buy_base_volume == Decimal("9.75")
+    assert bar.taker_sell_base_volume == Decimal("5.75")
+    assert isinstance(bar.taker_buy_base_volume, Decimal)
 
 
 def test_binance_feed_paginates_and_stops_before_end() -> None:

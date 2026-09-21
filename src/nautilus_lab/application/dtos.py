@@ -88,6 +88,36 @@ class IngestReport:
     catalog_path: str
     source: str
     symbol: str = ""
+    # Rows in the taker-flow series written alongside the bars (kline field 9). Zero
+    # means either "the feed does not carry the field" or "no taker-flow store was
+    # wired" — both are visible in the CLI line instead of being a silent absence.
+    taker_flow_rows: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class IngestAggTradesRequest:
+    """Ingest request for the aggregated-trade (tick) series.
+
+    No ``interval`` and no ``bar_type``: tick data is event-driven, not periodic.
+    The ``instrument_id`` is derived from ``symbol`` by the composition root using
+    the same ``binance_symbol_to_instrument_id`` helper as the kline ingest.
+    """
+
+    mode: TradingMode
+    symbol: str
+    instrument_id: str
+    start: datetime
+    end: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class IngestAggTradesReport:
+    trades_written: int
+    first_ts: datetime
+    last_ts: datetime
+    catalog_path: str
+    source: str
+    symbol: str
 
 
 @dataclass(frozen=True, slots=True)

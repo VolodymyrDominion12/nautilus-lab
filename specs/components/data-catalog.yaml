@@ -9,7 +9,7 @@
 # =============================================================================
 kind: component
 name: data-catalog
-version: "1.0"
+version: "1.1"
 status: active
 title: "Parquet-каталог історії: публічний ingest Binance, один каталог — одна серія"
 
@@ -19,6 +19,8 @@ hypothesis: >
   REST, лягають закритими барами зі строго зростаючими мітками часу, а повторний
   ingest замінює своє вікно, то кожен прогін читає рівно одну серію одного
   інструмента й одного інтервалу — і його можна відтворити, а не переповісти.
+  Те саме правило діє для полів klines, яких немає в схемі Nautilus `Bar`: вони не
+  викидаються, а лягають окремою серією, ключованою тим самим часом бару.
 
 # Спільний блок `invariants` обов'язковий для КОЖНОЇ спеки (specs/_schema.yaml,
 # common.required). Тут він повторює дисципліну компонента тим самим словником,
@@ -90,6 +92,34 @@ invariants_enforced:
       більше барів за той самий період, тобто інший ринок, ніж той, який
       досліджували. Поруч закрито й невідомий інтервал:
       tests/unit/test_audit_fixes.py::test_unknown_spec_is_rejected_instead_of_defaulting_to_one_hour.
+
+  - statement: >
+      Поля klines, яких немає в схемі Nautilus `Bar` (поле 9,
+      `takerBuyBaseAssetVolume`), не втрачаються на round-trip: вони лягають
+      окремою серією `<catalog>/data/taker_flow/<SYMBOL>/taker_flow.parquet`,
+      ключованою тим самим часом бару, що й бар-серія, із `Decimal` у рядку, і
+      повторний ingest замінює свій час, а не дописує другий рядок.
+    enforced_by: src/nautilus_lab/infrastructure/taker_flow_catalog.py
+    verified_by: tests/unit/test_taker_flow.py::test_taker_flow_series_round_trips_and_merges_by_timestamp
+    note: >
+      Причина окремої серії, а не колонки в бар-серії: `NautilusParquetCatalog`
+      пише `nautilus_trader.model.data.Bar`, у якого немає поля під taker-обсяг,
+      тож значення фізично не проходить через рушій і губиться на `to_domain_bar`
+      (саме так поле 9 і було втрачено — дефект D4 з
+      docs/23-infrastruktura-danyh-plan.md). Другий бік інваріанта — «читається
+      назад рівно там, де треба» — закриває
+      tests/unit/test_taker_flow.py::test_bar_feed_enriches_only_matching_timestamps,
+      а третій — «порушення `taker <= volume` не пропускається» —
+      tests/unit/test_bars.py::test_taker_volume_above_bar_volume_is_rejected.
+      Четвертий — «значення долітає до робота крізь рушій» —
+      tests/integration/test_taker_flow_backtest.py::test_real_taker_split_reaches_the_robot_and_changes_its_verdict:
+      на тій самій серії барів robot торгує на tick-rule-проксі й не торгує на
+      справжньому 50/50-потоці, тож втрата джойну десь між каталогом і `BarVpin`
+      зробила б ці два прогони однаковими.
+      Чого тести не перевіряють: чи збігається серія потоку з бар-серією того
+      самого інтервалу — ознак інтервалу в самій серії немає, тому невідповідність
+      виявляється не при читанні, а пізніше, на `validate_bar` (taker-обсяг
+      більший за обсяг бару), і це fail closed, а не тихе число.
 
   - statement: >
       Опис інструмента — явний список, а не «будь-який тікер на USDT»: інгестити

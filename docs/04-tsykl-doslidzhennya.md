@@ -105,8 +105,7 @@ for bar_type in ("ETH/USDT.SIM-1-HOUR-LAST-EXTERNAL", "BTC/USDT.SIM-1-HOUR-LAST-
 PY
 ```
 
-> Порада: якщо такий код потрібен часто, покладіть його у файл `tools/catalog_health.py`
-> і запускайте `.venv/bin/python tools/catalog_health.py catalog`.
+> Порада: якщо такий скрипт потрібен часто, ви можете зберегти його локально.
 
 Здоровий вивід (реальний приклад для 7 місяців погодинних даних):
 

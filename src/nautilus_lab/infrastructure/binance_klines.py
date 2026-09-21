@@ -90,6 +90,12 @@ def parse_binance_kline(row: object, *, instrument_id: str) -> OhlcvBar:
     if not isinstance(row, list) or len(row) < 7:
         raise ValueError("binance kline row must be a list with at least 7 fields")
     close_ms = int(row[6])
+    # Field 9 is `takerBuyBaseAssetVolume`: the base volume aggressive buyers took in
+    # this bar. It is the only real maker/taker split a kline carries, and dropping it
+    # forces every order-flow feature onto the tick-rule proxy (defect D4 in
+    # docs/23-infrastruktura-danyh-plan.md). Rows shorter than 10 fields cannot answer
+    # the question, so the field stays None — unknown, rather than assumed zero.
+    taker_buy = Decimal(str(row[9])) if len(row) > 9 else None
     return OhlcvBar(
         instrument_id=instrument_id,
         ts_utc=datetime.fromtimestamp(close_ms / 1000, tz=UTC),
@@ -98,6 +104,7 @@ def parse_binance_kline(row: object, *, instrument_id: str) -> OhlcvBar:
         low=Decimal(str(row[3])),
         close=Decimal(str(row[4])),
         volume=Decimal(str(row[5])),
+        taker_buy_base_volume=taker_buy,
     )
 
 

@@ -15,7 +15,7 @@ from nautilus_lab.application.dtos import BacktestReport, BacktestRequest
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.metrics import compute_metrics
 from nautilus_lab.domain.regime import RobotName
-from nautilus_lab.infrastructure.nautilus.bar_convert import to_engine_bars
+from nautilus_lab.infrastructure.nautilus.bar_convert import datetime_to_nanos, to_engine_bars
 from nautilus_lab.infrastructure.nautilus.instrument import resolve_instrument
 from nautilus_lab.infrastructure.nautilus.signal_strategy import SignalRobot, SignalRobotConfig
 from nautilus_lab.infrastructure.nautilus.spread_strategy import SpreadRobot, SpreadRobotConfig
@@ -31,6 +31,15 @@ class NautilusResearchBacktest:
         instrument = resolve_instrument(request.instrument_id, fees=request.fee_schedule)
         bar_type = BarType.from_str(request.bar_type)
         engine_bars = to_engine_bars(bars, bar_type=bar_type, instrument=instrument)
+        # The taker split cannot ride inside a Nautilus `Bar`, so it is handed to the
+        # strategy as a lookup keyed by the bar event timestamp. The key is built with
+        # the same `datetime_to_nanos` that `to_engine_bars` uses, which makes the join
+        # exact rather than approximate.
+        taker_buy_by_ns = {
+            datetime_to_nanos(bar.ts_utc): bar.taker_buy_base_volume
+            for bar in bars
+            if bar.taker_buy_base_volume is not None
+        }
         strategy = SignalRobot(
             SignalRobotConfig(
                 instrument_id=instrument.id,
@@ -77,6 +86,7 @@ class NautilusResearchBacktest:
                 use_ratchet=request.risk_overlay.use_ratchet,
                 ratchet_arm_pct=request.risk_overlay.ratchet_arm_pct,
             ),
+            taker_buy_base_volume_by_ns=taker_buy_by_ns or None,
         )
         return self._execute(
             request=request,

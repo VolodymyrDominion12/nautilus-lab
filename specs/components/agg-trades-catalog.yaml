@@ -1,0 +1,107 @@
+# =============================================================================
+#  agg-trades-catalog — публічні Binance aggTrades → Parquet-каталог тіків
+# =============================================================================
+#  Компонентна спека для нової серії агрегованих тіків. Слідує тій самій
+#  дисципліні, що й data-catalog.yaml: кожен інваріант має enforced_by + verified_by.
+# =============================================================================
+kind: component
+name: agg-trades-catalog
+version: "1.0"
+status: active
+title: "Parquet-каталог aggTrades: публічний REST Binance, day-sharded, без API-ключів"
+
+hypothesis: >
+  AggTrades — це найдрібніший публічно доступний потік Binance (без ключів).
+  Якщо зберігати їх поруч із кайн-каталогом у тому ж кореневому каталозі,
+  то VPIN і Хоукс можна обчислювати на реальному потоці агресій, а не на
+  барових проксі з помилками на 10–30%. Перевага реальних тіків над проксі
+  відчутна передусім на розшарених режимах (висока токсичність потоку)
+  і при подіях (новини, ліквідації), де барова агрегація «згладжує» саме те,
+  що несе сигнал.
+
+invariants:
+  public_endpoints_only: true      # /api/v3/aggTrades, без підпису
+  agg_id_monotonic: true           # sorted by agg_id, dedup on write
+  half_open_time_window: true      # [start, end), matches kline convention
+  day_sharded_parquet: true        # one file per UTC day per symbol
+  price_qty_as_string: true        # no float precision loss
+
+invariants_enforced:
+  - statement: >
+      Завантаження відбувається лише через публічний REST Binance
+      (`api.binance.com/api/v3/aggTrades`): без підпису, без ключів.
+      Код перевіряє адресу в тестах; будь-який інший хост означав би дані,
+      які не можна відтворити.
+    enforced_by: src/nautilus_lab/infrastructure/binance_agg_trades.py
+    verified_by: tests/unit/test_binance_agg_trades.py::test_fetch_single_page
+
+  - statement: >
+      Пагінація прозора: другий запит і далі використовують fromId замість startTime,
+      щоб не пропустити трейди на межі часових вікон. Змішування startTime і fromId
+      може привести до пустої відповіді навіть коли дані є.
+    enforced_by: src/nautilus_lab/infrastructure/binance_agg_trades.py
+    verified_by: tests/unit/test_binance_agg_trades.py::test_fetch_paginates_via_from_id
+
+  - statement: >
+      Торги поза вікном [start, end) відкидаються навіть якщо REST повернув їх
+      (через cursor overrun). Ця перевірка дзеркалить klines-поведінку і запобігає
+      look-ahead при ковзному пере-fetch.
+    enforced_by: src/nautilus_lab/infrastructure/binance_agg_trades.py
+    verified_by: tests/unit/test_binance_agg_trades.py::test_fetch_filters_trades_outside_window
+
+  - statement: >
+      Повторний write тих самих тіків не дублює їх: merge-on-write дедуплікує
+      за agg_id перед записом. Це дозволяє incremental update без перевірки
+      перетину вікон на стороні caller.
+    enforced_by: src/nautilus_lab/infrastructure/agg_trades_catalog.py
+    verified_by: tests/unit/test_binance_agg_trades.py::test_catalog_write_deduplicates_by_agg_id
+
+  - statement: >
+      Торги, що перетинають два UTC-дні, розкладаються у два окремих Parquet-файли
+      (day-sharding). Це обмежує розмір файлів і дозволяє інкрементальне оновлення
+      без перезапису всієї серії.
+    enforced_by: src/nautilus_lab/infrastructure/agg_trades_catalog.py
+    verified_by: tests/unit/test_binance_agg_trades.py::test_catalog_cross_day_write
+
+  - statement: >
+      price та qty зберігаються як рядки (str), не як float, щоб не втрачати
+      точність Binance. Caller, якому потрібна арифметика, викликає Decimal(str(price)).
+    enforced_by: src/nautilus_lab/infrastructure/agg_trades_catalog.py
+    verified_by: tests/unit/test_binance_agg_trades.py::test_catalog_write_and_load_roundtrip
+
+  - statement: >
+      is_buyer_maker=True означає продавець-тейкер (агресивний продаж); False — покупець-тейкер.
+      Семантика відкрита через властивості is_aggressive_buy / is_aggressive_sell на AggTrade.
+    enforced_by: src/nautilus_lab/domain/ticks.py
+    verified_by: tests/unit/test_binance_agg_trades.py::test_parse_row_buyer_maker_flag
+
+data_layout:
+  root: "<catalog_path>/"
+  pattern: "data/agg_trade/<SYMBOL>/<YYYY-MM-DD>.parquet"
+  columns:
+    - name: agg_id
+      dtype: int64
+      note: "monotonically increasing Binance aggregate trade ID"
+    - name: ts_utc
+      dtype: "datetime64[us, UTC]"
+      note: "millisecond-precision UTC timestamp from Binance field T"
+    - name: instrument_id
+      dtype: str
+      note: "e.g. ETH/USDT.SIM"
+    - name: price
+      dtype: str
+      note: "Binance field p, stored as string to preserve exact decimals"
+    - name: qty
+      dtype: str
+      note: "Binance field q, stored as string"
+    - name: is_buyer_maker
+      dtype: bool
+      note: "Binance field m: True = sell taker, False = buy taker"
+
+related_components:
+  - data-catalog        # bar series, same catalog root
+  - risk-layer          # VPIN-based circuit breaker consumes this series
+
+cli_entry: "lab ingest --trades --start YYYY-MM-DD --symbols ETHUSDT"
+source: "Binance public REST /api/v3/aggTrades (no API keys)"
+measured: false

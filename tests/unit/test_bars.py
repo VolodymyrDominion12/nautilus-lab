@@ -16,6 +16,7 @@ def _bar(
     close: Decimal = Decimal("100.5"),
     low: Decimal = Decimal("99"),
     volume: Decimal = Decimal("1"),
+    taker_buy_base_volume: Decimal | None = None,
 ) -> OhlcvBar:
     return OhlcvBar(
         instrument_id="ETH/USDT.SIM",
@@ -25,6 +26,7 @@ def _bar(
         low=low,
         close=close,
         volume=volume,
+        taker_buy_base_volume=taker_buy_base_volume,
     )
 
 
@@ -67,3 +69,32 @@ def test_negative_volume_is_rejected() -> None:
 def test_naive_timestamp_is_rejected() -> None:
     with pytest.raises(InvalidBarError, match="timezone-aware"):
         validate_bar(_bar(ts_utc=datetime(2024, 1, 1, 12, 0)))
+
+
+def test_taker_split_is_unknown_by_default_and_the_sell_side_is_derived() -> None:
+    """`None` means unknown, and the sell side is arithmetic, never a second field."""
+    unknown = _bar(volume=Decimal("10"))
+    assert unknown.taker_buy_base_volume is None
+    assert unknown.taker_sell_base_volume is None
+
+    known = _bar(volume=Decimal("10"), taker_buy_base_volume=Decimal("4"))
+    validate_bar(known)
+    assert known.taker_sell_base_volume == Decimal("6")
+
+
+def test_taker_volume_above_bar_volume_is_rejected() -> None:
+    """Takers cannot buy more base than the bar traded — a mismatch must fail loudly."""
+    with pytest.raises(InvalidBarError, match="taker buy"):
+        validate_bar(_bar(volume=Decimal("10"), taker_buy_base_volume=Decimal("11")))
+
+
+def test_negative_taker_volume_is_rejected() -> None:
+    with pytest.raises(InvalidBarError, match="taker buy"):
+        validate_bar(_bar(volume=Decimal("10"), taker_buy_base_volume=Decimal("-1")))
+
+
+def test_fully_aggressive_buy_bar_is_valid() -> None:
+    """A bar where buyers took everything is a real observation, not an edge case."""
+    bar = _bar(volume=Decimal("10"), taker_buy_base_volume=Decimal("10"))
+    validate_bar(bar)
+    assert bar.taker_sell_base_volume == Decimal("0")

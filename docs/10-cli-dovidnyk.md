@@ -40,6 +40,13 @@ usage: lab ingest [-h] [--start START] [--end END] [--catalog CATALOG] [--symbol
 Що робить: публічний REST `https://api.binance.com/api/v3/klines`, пагінація по 1000 свічок,
 без API-ключів. Інтервал беруть із `BAR_INTERVAL` (типово `1h`). Записує бари й опис інструмента в каталог.
 
+Крім барів, ingest зберігає **потік тейкерів** — поле 9 klines
+(`takerBuyBaseAssetVolume`) — окремою серією `<catalog>/data/taker_flow/<SYMBOL>/taker_flow.parquet`
+(теж Parquet + Zstd, `Decimal` рядком, ключ — час закриття бару). Це не дублювання обсягу:
+Nautilus `Bar` не має колонки під taker-обсяг, тож без окремої серії значення гине на
+round-trip через рушій і VPIN доводиться рахувати проксі tick-rule. `ResearchBarFeed`
+підмішує серію назад у бари за міткою часу (Фаза 4, docs/23 §6).
+
 Запити йдуть через стійкий клієнт (`infrastructure/http_resilience.py`): він читає
 `X-MBX-USED-WEIGHT-1M` і вичікує вікно при ≥90% ліміту, поважає `Retry-After` на HTTP 429,
 повторює 418 (бан IP) і 5xx з експоненційним backoff. Коли спроби вичерпано — кидає помилку,
@@ -57,8 +64,13 @@ uv run lab ingest --funding --start 2024-01-01 --symbols ETHUSDT,BTCUSDT
 Вивід:
 
 ```
-symbol=ETHUSDT wrote=5088 first=2025-01-01T00:59:59.999000+00:00 last=2025-07-31T23:59:59.999000+00:00 catalog=/.../catalog
+symbol=ETHUSDT wrote=5088 taker_flow=5088 first=2025-01-01T00:59:59.999000+00:00 last=2025-07-31T23:59:59.999000+00:00 catalog=/.../catalog
 ```
+
+`taker_flow=0` означає, що серії потоку немає (фід без поля 9 або старий каталог), і VPIN
+працюватиме на tick-rule-проксі. `--incremental` на каталозі без цієї серії робить разовий
+backfill усього вікна й друкує `taker-flow backfill: re-reading the full window` — інакше
+«бари вже свіжі» назавжди лишало б ознаку потоку порожньою.
 
 ### `lab ingest --funding`
 

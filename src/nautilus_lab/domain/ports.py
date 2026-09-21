@@ -3,11 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Protocol
 
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.order_book import OrderBookSnapshot
+from nautilus_lab.domain.ticks import AggTrade
 
 
 class PublicBarFeed(Protocol):
@@ -91,8 +93,60 @@ class FundingCatalog(Protocol):
     ) -> list[FundingSnapshot]: ...
 
 
+class TakerFlowCatalog(Protocol):
+    """Per-bar taker-buy volume, stored beside the bar series.
+
+    Not a `BarCatalog` and not part of `OhlcvBar`'s storage: Nautilus `Bar` has no
+    field for it, so it is kept as its own series keyed by the bar close timestamp and
+    joined back by the research feed. Reading a symbol with no such series returns an
+    empty mapping — an unknown split, not a zero one.
+    """
+
+    def write(self, bars: Sequence[OhlcvBar], *, symbol: str) -> int: ...
+
+    def load(
+        self,
+        *,
+        symbol: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> Mapping[datetime, Decimal]: ...
+
+
 class OrderBookSnapshotFeed(Protocol):
     def fetch_snapshot(self, *, symbol: str) -> OrderBookSnapshot: ...
+
+
+class AggTradesFeed(Protocol):
+    """Public aggregated-trade history. No credentials, research only.
+
+    One call returns a contiguous slice of the aggTrades series for one symbol.
+    The implementation must paginate transparently so that callers see a single
+    flat list, ordered by ``agg_id`` (Binance's guarantee).
+    """
+
+    def fetch(
+        self,
+        *,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+        instrument_id: str,
+    ) -> list[AggTrade]: ...
+
+
+class AggTradesCatalog(Protocol):
+    """Parquet storage for aggregated trades beside the bar series."""
+
+    def write(self, trades: Sequence[AggTrade], *, symbol: str) -> int: ...
+
+    def load(
+        self,
+        *,
+        symbol: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[AggTrade]: ...
 
 
 class ChatCompleter(Protocol):

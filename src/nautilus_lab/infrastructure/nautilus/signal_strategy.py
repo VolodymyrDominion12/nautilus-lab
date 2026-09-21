@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Protocol
@@ -98,7 +100,12 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
 class SignalRobot(Strategy):  # type: ignore[misc]
     """Thin Nautilus adapter: domain signal -> risk -> sized order."""
 
-    def __init__(self, config: SignalRobotConfig) -> None:
+    def __init__(
+        self,
+        config: SignalRobotConfig,
+        *,
+        taker_buy_base_volume_by_ns: Mapping[int, Decimal] | None = None,
+    ) -> None:
         super().__init__(config)
         self._robot = _build_robot(config)
         self._limits = RiskLimits(
@@ -142,12 +149,25 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         self._previous_close: Decimal | None = None
         self._ratchet: RatchetState | None = None
+        # Real per-bar taker split, keyed by bar event timestamp. It travels as a
+        # constructor argument rather than a config field because it is data, not a
+        # parameter: it must not show up in a strategy config dump, and it is only
+        # known once the bars for this run were loaded.
+        self._taker_buy_by_ns = (
+            None if taker_buy_base_volume_by_ns is None else dict(taker_buy_base_volume_by_ns)
+        )
 
     def on_start(self) -> None:
         self.subscribe_bars(self.config.bar_type)
 
     def on_bar(self, bar: Bar) -> None:
         domain_bar = _to_domain_bar(bar, str(self.config.instrument_id))
+        if self._taker_buy_by_ns is not None:
+            taker_buy = self._taker_buy_by_ns.get(int(bar.ts_event))
+            if taker_buy is not None:
+                # Enrich before validating so the `taker <= volume` invariant covers the
+                # join too: a stale flow series must fail here, not skew the feature.
+                domain_bar = replace(domain_bar, taker_buy_base_volume=taker_buy)
         validate_bar(domain_bar, previous_ts=self._previous_ts, now=domain_bar.ts_utc)
         self._previous_ts = domain_bar.ts_utc
         self._atr.update(domain_bar)

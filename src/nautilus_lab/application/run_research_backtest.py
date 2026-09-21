@@ -6,6 +6,7 @@ from nautilus_lab.application.dtos import (
     BarFeed,
     ResearchBacktestPort,
     TickFeed,
+    OrderBookFeed,
 )
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.domain.regime import RobotName, require_backtest_support
@@ -13,11 +14,16 @@ from nautilus_lab.domain.regime import RobotName, require_backtest_support
 
 class RunResearchBacktest:
     def __init__(
-        self, engine: ResearchBacktestPort, feed: BarFeed, tick_feed: TickFeed | None = None
+        self,
+        engine: ResearchBacktestPort,
+        feed: BarFeed,
+        tick_feed: TickFeed | None = None,
+        book_feed: OrderBookFeed | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
+        self._book_feed = book_feed
 
     def execute(self, request: BacktestRequest) -> BacktestReport:
         require_simulated_mode(request.mode)
@@ -39,7 +45,13 @@ class RunResearchBacktest:
                 raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
             ticks = self._tick_feed.load(request)
 
-        return self._engine.run(request, bars, ticks)
+        books = None
+        if request.robot is RobotName.ML_OBI:
+            if self._book_feed is None:
+                raise ValueError("OrderBook feed must be provided to use ML_OBI")
+            books = self._book_feed.load(request)
+
+        return self._engine.run(request, bars, ticks, books)
 
 
 def minimum_bars(robot: RobotName) -> int:

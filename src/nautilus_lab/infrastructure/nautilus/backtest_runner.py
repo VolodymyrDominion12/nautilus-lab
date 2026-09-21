@@ -14,6 +14,7 @@ from nautilus_trader.model.objects import Currency, Money
 from nautilus_lab.application.dtos import BacktestReport, BacktestRequest
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.metrics import compute_metrics
+from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.infrastructure.nautilus.bar_convert import datetime_to_nanos, to_engine_bars
@@ -27,7 +28,11 @@ class NautilusResearchBacktest:
     """Low-level BacktestEngine with fees, latency, and slippage."""
 
     def run(
-        self, request: BacktestRequest, bars: list[OhlcvBar], ticks: list[AggTrade] | None = None
+        self,
+        request: BacktestRequest,
+        bars: list[OhlcvBar],
+        ticks: list[AggTrade] | None = None,
+        books: list[OrderBookSnapshot] | None = None,
     ) -> BacktestReport:
         if request.robot is RobotName.PAIRS:
             raise ValueError("pairs robot requires run_spread with two instruments")
@@ -98,10 +103,16 @@ class NautilusResearchBacktest:
 
             engine_ticks = to_engine_ticks(ticks, instrument=instrument)
 
+        engine_books = []
+        if books:
+            from nautilus_lab.infrastructure.nautilus.bar_convert import to_engine_books
+
+            engine_books = to_engine_books(books, instrument=instrument)
+
         return self._execute(
             request=request,
             instruments=[instrument],
-            data=[*engine_bars, *engine_ticks],
+            data=[*engine_bars, *engine_ticks, *engine_books],
             strategy=strategy,
         )
 

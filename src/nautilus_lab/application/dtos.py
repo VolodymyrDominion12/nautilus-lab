@@ -9,6 +9,7 @@ from typing import Protocol
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
+from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.metrics import BacktestMetrics
 from nautilus_lab.domain.pairs.params import PairsParams
@@ -332,7 +333,11 @@ class MultiWindowReport:
 
 class ResearchBacktestPort(Protocol):
     def run(
-        self, request: BacktestRequest, bars: list[OhlcvBar], ticks: list[AggTrade] | None = None
+        self,
+        request: BacktestRequest,
+        bars: list[OhlcvBar],
+        ticks: list[AggTrade] | None = None,
+        books: list[OrderBookSnapshot] | None = None,
     ) -> BacktestReport: ...
 
     def run_spread(
@@ -430,6 +435,10 @@ class BarFeed(Protocol):
 
 class TickFeed(Protocol):
     def load(self, request: BacktestRequest) -> list[AggTrade]: ...
+
+
+class OrderBookFeed(Protocol):
+    def load(self, request: BacktestRequest) -> list[OrderBookSnapshot]: ...
 
 
 def selected_from_request(request: BacktestRequest) -> SelectedParams:

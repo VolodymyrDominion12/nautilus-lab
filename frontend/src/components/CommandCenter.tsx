@@ -14,7 +14,14 @@ import {
 import { fetchCommandCenter } from '../services/api';
 import type { CommandCenterResponse } from '../services/api';
 import { MetricCard } from './MetricCard';
-import { formatBps, formatDateTime, formatElapsed, formatPct, toNumber } from '../lib/format';
+import {
+  describeStaleness,
+  formatBps,
+  formatDateTime,
+  formatElapsed,
+  formatPct,
+  toNumber,
+} from '../lib/format';
 import { verdictFor } from '../lib/research';
 
 /**
@@ -56,6 +63,7 @@ export const CommandCenter: React.FC = () => {
   const excess = toNumber(multi?.mean_excess_return_raw);
 
   const experimentRows = data?.recent_experiments ?? [];
+  const staleness = describeStaleness(data?.catalog_last_date);
   const bestExperiment = experimentRows.reduce<{ label: string; value: number } | null>(
     (best, entry) => {
       const value = toNumber(entry.multi_window?.mean_excess_return_raw);
@@ -474,8 +482,32 @@ export const CommandCenter: React.FC = () => {
             {data?.catalog_last_date && (
               <div className="flex justify-between gap-3">
                 <dt className="text-gray-500">Data last date</dt>
-                <dd className="text-gray-300 font-mono text-xs">{data.catalog_last_date}</dd>
+                <dd className="flex items-center gap-2">
+                  <span className="text-gray-300 font-mono text-xs">
+                    {data.catalog_last_date.slice(0, 19)}
+                  </span>
+                  {staleness.level !== 'unknown' && (
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                        staleness.level === 'current'
+                          ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/50'
+                          : staleness.level === 'aging'
+                            ? 'bg-amber-950/60 text-amber-300 border-amber-800/50'
+                            : 'bg-red-950/60 text-red-300 border-red-800/50'
+                      }`}
+                    >
+                      {staleness.days}d old
+                    </span>
+                  )}
+                </dd>
               </div>
+            )}
+            {staleness.level === 'stale' && (
+              <p className="text-[11px] text-red-300/90">
+                The newest bar is {staleness.days} days old, so a walk-forward here studies the
+                past rather than the recent market. Run an incremental klines ingest before
+                reporting a result.
+              </p>
             )}
             {data?.catalog_total_bars != null && data.catalog_total_bars > 0 && (
               <div className="flex justify-between gap-3">

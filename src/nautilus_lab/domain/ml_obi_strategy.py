@@ -9,6 +9,7 @@ from nautilus_lab.domain.microstructure import (
     weighted_order_flow_imbalance,
 )
 from nautilus_lab.domain.ml_classifier import DirectionClassifier, DirectionProbabilities
+from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.signals import Signal, SignalSide
 
@@ -29,6 +30,9 @@ class MlObiStrategy:
         self._threshold = threshold
         self._hawkes = hawkes or ExponentialHawkes()
         self._previous: OrderBookSnapshot | None = None
+
+    def on_bar(self, bar: OhlcvBar) -> Signal | None:
+        return None
 
     def on_book(self, snapshot: OrderBookSnapshot) -> Signal | None:
 

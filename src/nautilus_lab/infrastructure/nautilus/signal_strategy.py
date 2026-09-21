@@ -167,6 +167,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             None if taker_buy_base_volume_by_ns is None else dict(taker_buy_base_volume_by_ns)
         )
         self._last_tick_ts: datetime | None = None
+        self._last_vol_forecast: Decimal | None = None
 
     def on_start(self) -> None:
         self.subscribe_bars(self.config.bar_type)
@@ -203,7 +204,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         validate_bar(domain_bar, previous_ts=self._previous_ts, now=domain_bar.ts_utc)
         self._previous_ts = domain_bar.ts_utc
         self._atr.update(domain_bar)
-        vol_forecast = self._vol.update(domain_bar, self._previous_close)
+        self._last_vol_forecast = self._vol.update(domain_bar, self._previous_close)
         self._previous_close = domain_bar.close
 
         signal = self._robot.on_bar(domain_bar)
@@ -274,7 +275,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             self._overlay,
             stats=self._trade_stats,
             # vol_forecast will just be whatever the last closed bar gave us
-            forecast_vol=self._vol.last_forecast,
+            forecast_vol=self._last_vol_forecast,
         )
         qty = size_position(
             equity=equity,
@@ -442,7 +443,7 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
         )
     if robot is RobotName.ML_OBI:
         classifier = _build_classifier(config.ml_obi_model_path)
-        return MlObiStrategy(
+        return MlObiStrategy(  # type: ignore[return-value]
             instrument_id=instrument_id,
             classifier=classifier,
             threshold=config.ml_obi_threshold,

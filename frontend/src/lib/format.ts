@@ -131,3 +131,24 @@ export const dateToUnixSeconds = (date: string | null | undefined): number | nul
   const parsed = Math.floor(new Date(`${date.slice(0, 10)}T00:00:00Z`).getTime() / 1000);
   return Number.isFinite(parsed) ? parsed : null;
 };
+
+export type Staleness = 'current' | 'aging' | 'stale' | 'unknown';
+
+/**
+ * How old the newest bar is, in whole days, and how to read it.
+ *
+ * A catalog that ends months ago silently turns every walk-forward into a study of the
+ * past, and nothing in the result payload says so — only the data does. `null` stays
+ * `unknown`: an unparseable date is not evidence of freshness.
+ */
+export const describeStaleness = (
+  lastDate: string | null | undefined,
+  nowMs: number = Date.now(),
+): { days: number | null; level: Staleness } => {
+  const last = dateToUnixSeconds(lastDate);
+  if (last == null) return { days: null, level: 'unknown' };
+  const days = Math.floor((nowMs / 1000 - last) / 86_400);
+  if (days <= 7) return { days, level: 'current' };
+  if (days <= 30) return { days, level: 'aging' };
+  return { days, level: 'stale' };
+};

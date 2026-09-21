@@ -1,8 +1,8 @@
 # 05. Роботи: хто що робить
 
-У проєкті **11 значень `--robot`**: **сім підключені до рушія** (`regime`, `ema`, `pairs`,
-`vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`) і **чотири — набори MFT-модулів**,
-які до CLI не підключені (`funding`, `ml_obi`, `glft`, `tri_scan`) і падають fail closed. Це різниця,
+У проєкті **11 значень `--robot`**: **вісім підключені до рушія** (`regime`, `ema`, `pairs`,
+`vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ml_obi`) і **три — набори MFT-модулів**,
+які до CLI не підключені (`funding`, `glft`, `tri_scan`) і падають fail closed. Це різниця,
 яку треба розуміти з першого дня.
 
 Детальні розділи нижче написані для `regime`, `ema` і `pairs`; решта підключених роботів описана
@@ -20,7 +20,7 @@
 | `meta_label` | `MetaLabelStrategy` | ✅ так | Мета-модель гейтить входи `regime`; потрібен `META_LABEL_MODEL_PATH` |
 | `adaptive_ema` | `AdaptiveEmaRouter` | ✅ так | Режимний фільтр зі змінним кроком EMA (selectivity). **Гіпотезу відхилено виміром** (адаптивний α не кращий за сталий, обидва програють buy&hold) — [18](18-transformery-ssm-vidpovidnist.md) §3 P3 |
 | `funding` | `FundingCashAndCarry` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
-| `ml_obi` | `MlObiStrategy` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
+| `ml_obi` | `MlObiStrategy` | ✅ так | Напрямок за мікроструктурою книги (OBI, WOFI, Fade) |
 | `glft` | `GlftMarketMaker` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 | `tri_scan` | `find_negative_cycles` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 
@@ -36,6 +36,7 @@ BACKTEST_WIRED_ROBOTS = frozenset(
         RobotName.FORMULAIC_LGBM,
         RobotName.META_LABEL,
         RobotName.ADAPTIVE_EMA,
+        RobotName.ML_OBI,
     }
 )
 ```
@@ -47,8 +48,8 @@ BACKTEST_WIRED_ROBOTS = frozenset(
 Реальний вивід:
 
 ```
-$ uv run lab research --robot ml_obi --synthetic --bars 200
-robot 'ml_obi' has no backtest adapter yet; use one of: adaptive_ema, ema, formulaic_lgbm, meta_label, pairs, regime, vpin_momentum. Its module is a domain building block only and is not wired to the engine.
+$ uv run lab research --robot funding --synthetic --bars 200
+robot 'funding' has no backtest adapter yet; use one of: adaptive_ema, ema, formulaic_lgbm, meta_label, ml_obi, pairs, regime, vpin_momentum. Its module is a domain building block only and is not wired to the engine.
 $ echo $?
 1
 ```
@@ -57,7 +58,7 @@ $ echo $?
 > тому `--robot ml_obi` **тихо** запускав `regime` і давав правдоподібний, але неправдивий звіт.
 > Тепер це явна помилка.
 
-**Що робити:** якщо вам потрібен `funding`, `ml_obi` або `glft` у бектесті — його треба підключити
+**Що робити:** якщо вам потрібен `funding` або `glft` у бектесті — його треба підключити
 (див. [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)), а поки що використовувати модулі
 напряму з коду (див. [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md)).
 

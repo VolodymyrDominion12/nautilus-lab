@@ -84,7 +84,7 @@ def test_cli_scan_missing_flag_fails() -> None:
     assert main(["scan"]) == 1
 
 
-@pytest.mark.parametrize("robot", ["funding", "ml_obi", "glft", "tri_scan"])
+@pytest.mark.parametrize("robot", ["funding", "glft", "tri_scan"])
 def test_cli_robot_without_adapter_fails_closed(robot: str) -> None:
     """A robot with no engine adapter must fail loudly instead of running regime."""
     assert main(["research", "--robot", robot, "--synthetic", "--bars", "200"]) == 1
@@ -126,7 +126,7 @@ def test_cli_multi_window_rejects_an_explicit_window() -> None:
     )
 
 
-@pytest.mark.parametrize("robot", ["regime", "ema", "pairs"])
+@pytest.mark.parametrize("robot", ["regime", "ema", "pairs", "ml_obi"])
 def test_cli_wired_robots_are_supported(robot: str) -> None:
     for item in RobotName:
         if item.value == robot:

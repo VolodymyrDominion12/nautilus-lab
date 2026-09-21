@@ -7,7 +7,7 @@
  * number as a result. Run with `npm run check:logic`.
  */
 
-import { formatBps, formatPct, toneOf } from '../src/lib/format';
+import { describeStaleness, formatBps, formatPct, toneOf } from '../src/lib/format';
 import {
   cliCommand,
   foldLayout,
@@ -382,6 +382,29 @@ check('toneOf(null) is neutral', toneOf(null) === 'neutral');
 check('formatPct(0.0123) is +1.23%', formatPct(0.0123) === '+1.23%');
 check('formatBps(0.0005) is 5.0 bps', formatBps(0.0005) === '5.0 bps');
 check('formatPct(-0.05) keeps the sign', formatPct(-0.05) === '-5.00%');
+
+console.log('staleness — a catalog that ends months ago is not "fresh"');
+{
+  const now = Date.parse('2026-06-01T12:00:00Z');
+  check(
+    'a bar from today is current',
+    describeStaleness('2026-06-01T00:00:00+00:00', now).level === 'current',
+  );
+  check(
+    'a bar three weeks old is aging',
+    describeStaleness('2026-05-11T00:00:00+00:00', now).level === 'aging',
+  );
+  check(
+    'a bar from last year is stale',
+    describeStaleness('2025-01-01T00:00:00+00:00', now).level === 'stale',
+  );
+  check('an unparseable date is unknown, not fresh', describeStaleness(null, now).level === 'unknown');
+  check(
+    'the age is reported in whole days',
+    describeStaleness('2026-05-02T00:00:00+00:00', now).days === 30,
+    String(describeStaleness('2026-05-02T00:00:00+00:00', now).days),
+  );
+}
 
 console.log('fractionBoundaries — derives the bar-index split, not a time fraction');
 {

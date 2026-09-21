@@ -173,6 +173,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self.subscribe_bars(self.config.bar_type)
         if self.config.use_tick_vpin or self.config.use_hawkes:
             self.subscribe_trade_ticks(self.config.instrument_id)
+        if self.config.robot == RobotName.ML_OBI.value:
+            self.subscribe_order_book_depth(self.config.instrument_id, depth=10)
 
     def on_trade_tick(self, tick: TradeTick) -> None:
         if not hasattr(self._robot, "on_trade_tick"):
@@ -215,7 +217,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             
         self._process_signal(signal, domain_bar.close)
 
-    def on_order_book_depth_10(self, depth: OrderBookDepth10) -> None:
+    def on_order_book_depth(self, depth: OrderBookDepth10) -> None:
         if not hasattr(self._robot, "on_book"):
             return
         snapshot = to_domain_snapshot(depth, str(self.config.instrument_id))

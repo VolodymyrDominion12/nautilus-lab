@@ -11,11 +11,13 @@ from nautilus_lab.application.risk import (
     size_position,
 )
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
+from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import (
     InvalidRiskError,
     LiveTradingDisabledError,
 )
+from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.ticks import AggTrade

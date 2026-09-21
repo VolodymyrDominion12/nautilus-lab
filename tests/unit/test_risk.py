@@ -206,6 +206,7 @@ def test_research_use_case_delegates_to_port(limits: RiskLimits) -> None:
             request: BacktestRequest,
             bars: list[OhlcvBar],
             ticks: list[AggTrade] | None = None,
+            books: list[OrderBookSnapshot] | None = None,
         ) -> BacktestReport:
             assert len(bars) == 150
             return BacktestReport(

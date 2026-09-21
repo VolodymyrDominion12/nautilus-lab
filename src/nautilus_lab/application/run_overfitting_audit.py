@@ -10,6 +10,7 @@ from nautilus_lab.application.dtos import (
     OverfitAuditReport,
     OverfitAuditRequest,
     ResearchBacktestPort,
+    TickFeed,
     apply_selected,
     index_of_best_configuration,
 )
@@ -40,9 +41,10 @@ class RunOverfitAudit:
     pure noise. CSCV makes that visible as one probability.
     """
 
-    def __init__(self, engine: ResearchBacktestPort, feed: BarFeed) -> None:
+    def __init__(self, engine: ResearchBacktestPort, feed: BarFeed, tick_feed: TickFeed | None = None) -> None:
         self._engine = engine
         self._feed = feed
+        self._tick_feed = tick_feed
 
     def execute(self, request: OverfitAuditRequest) -> OverfitAuditReport:
         require_simulated_mode(request.backtest.mode)
@@ -59,8 +61,14 @@ class RunOverfitAudit:
         )
         _require_warmup(request.backtest.robot, blocks)
 
+        ticks = None
+        if request.backtest.use_tick_vpin or request.backtest.use_hawkes:
+            if self._tick_feed is None:
+                raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
+            ticks = self._tick_feed.load(request.backtest)
+
         def run(candidate: BacktestRequest, block_index: int) -> BacktestReport:
-            return self._engine.run(candidate, list(blocks[block_index]))
+            return self._engine.run(candidate, list(blocks[block_index]), ticks)
 
         return self._audit(request, run, len(blocks))
 

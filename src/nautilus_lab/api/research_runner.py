@@ -47,6 +47,11 @@ class ResearchJobConfig:
     pbo: bool = False
     pbo_blocks: int = 8
     bar_vpin: bool = False
+    #: Tick-level regime filters. Both need the aggregated-trade series
+    #: (`lab ingest --trades`); without it the run fails closed with a clear message
+    #: instead of silently falling back to the bar-volume proxy.
+    tick_vpin: bool = False
+    hawkes: bool = False
     stress_slice: str | None = None
     generate_tearsheet: bool = True
     journal: bool = False
@@ -151,6 +156,10 @@ def _apply_config(cfg: Settings, job: ResearchJobConfig) -> Settings:
         updates["embargo_bars"] = job.embargo_bars
     if job.bar_vpin:
         updates["use_bar_vpin"] = True
+    if job.tick_vpin:
+        updates["use_tick_vpin"] = True
+    if job.hawkes:
+        updates["use_hawkes"] = True
     if job.catalog_path:
         updates["catalog_path"] = job.catalog_path
     if job.instrument_id:
@@ -501,6 +510,8 @@ def config_from_job(job: ResearchJobConfig) -> dict[str, Any]:
         "pbo": job.pbo,
         "pbo_blocks": job.pbo_blocks,
         "bar_vpin": job.bar_vpin,
+        "tick_vpin": job.tick_vpin,
+        "hawkes": job.hawkes,
         "stress_slice": job.stress_slice,
         "generate_tearsheet": job.generate_tearsheet,
         "journal": job.journal,

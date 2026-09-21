@@ -34,7 +34,10 @@ from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
 from nautilus_lab.infrastructure.llm_client import OpenAICompatibleChatClient
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
 from nautilus_lab.infrastructure.nautilus.bar_feed import ResearchBarFeed
-from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
+from nautilus_lab.infrastructure.nautilus.instrument import (
+    binance_symbol_for_instrument,
+    binance_symbol_to_instrument_id,
+)
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
@@ -68,19 +71,36 @@ def notifier(cfg: Settings | None = None) -> AlertNotifier:
     )
 
 
+class _TickFeedAdapter:
+    def __init__(self, catalog: ParquetAggTradesCatalog) -> None:
+        self._catalog = catalog
+
+    def load(self, request: BacktestRequest) -> list[AggTrade]:
+        symbol = binance_symbol_for_instrument(request.instrument_id)
+        if not symbol:
+            return []
+        return self._catalog.load(symbol=symbol, start=request.start, end=request.end)
+
+
 def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
     resolved = cfg or settings()
-    return RunResearchBacktest(NautilusResearchBacktest(), research_feed(resolved))
+    catalog_impl = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    tick_feed = _TickFeedAdapter(catalog_impl)
+    return RunResearchBacktest(NautilusResearchBacktest(), research_feed(resolved), tick_feed)
 
 
 def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
     resolved = cfg or settings()
-    return RunWalkForward(NautilusResearchBacktest(), research_feed(resolved))
+    catalog_impl = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    tick_feed = _TickFeedAdapter(catalog_impl)
+    return RunWalkForward(NautilusResearchBacktest(), research_feed(resolved), tick_feed)
 
 
 def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
     resolved = cfg or settings()
-    return RunOverfitAudit(NautilusResearchBacktest(), research_feed(resolved))
+    catalog_impl = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    tick_feed = _TickFeedAdapter(catalog_impl)
+    return RunOverfitAudit(NautilusResearchBacktest(), research_feed(resolved), tick_feed)
 
 
 def llm_completer(
@@ -207,6 +227,12 @@ def research_request(
         embargo_bars=cfg.embargo_bars,
         stress_slice=stress_slice,
         use_bar_vpin=cfg.use_bar_vpin,
+        use_tick_vpin=cfg.use_tick_vpin,
+        use_hawkes=cfg.use_hawkes,
+        hawkes_baseline=cfg.hawkes_baseline,
+        hawkes_alpha=cfg.hawkes_alpha,
+        hawkes_beta=cfg.hawkes_beta,
+        hawkes_toxic_threshold=cfg.hawkes_toxic_threshold,
         vpin_bucket_volume=cfg.vpin_bucket_volume,
         vpin_toxic_threshold=cfg.vpin_toxic_threshold,
         vpin_momentum_ema_period=cfg.vpin_momentum_ema_period,

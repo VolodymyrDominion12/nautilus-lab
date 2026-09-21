@@ -26,6 +26,10 @@ from nautilus_lab.api.catalog_service import (
     resolve_catalog_path,
 )
 from nautilus_lab.api.command_center import build_command_center, scan_triangular_demo
+from nautilus_lab.api.data_health import (
+    describe_data_health_cached,
+    invalidate_data_health_cache,
+)
 from nautilus_lab.api.experiment_history import list_history, load_history_entry
 from nautilus_lab.api.journal_service import list_journal_entries, update_journal_decision
 from nautilus_lab.api.ml_runner import list_models
@@ -42,7 +46,15 @@ from nautilus_lab.api.settings_schema import (
 from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
 from nautilus_lab.application.run_paper import PAPER_SUPPORTED_ROBOTS
 from nautilus_lab.domain.errors import InvalidHypothesisError
-from nautilus_lab.domain.regime import BACKTEST_WIRED_ROBOTS, RobotName
+from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
+from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
+from nautilus_lab.domain.regime import (
+    BACKTEST_WIRED_ROBOTS,
+    HAWKES_ROBOTS,
+    TICK_VPIN_ROBOTS,
+    RobotName,
+    tick_filters_supported,
+)
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.interfaces.composition import settings
 
@@ -91,6 +103,8 @@ class ResearchRunRequest(BaseModel):
     pbo: bool = False
     pbo_blocks: int = 8
     bar_vpin: bool = False
+    tick_vpin: bool = False
+    hawkes: bool = False
     stress_slice: str | None = None
     generate_tearsheet: bool = True
     journal: bool = False
@@ -112,6 +126,9 @@ class IngestRunRequest(BaseModel):
     end: str | None = None
     catalog: str | None = None
     incremental: bool = False
+    #: Series to ingest. `klines` is the default (bars for every robot); `trades` pulls
+    #: aggregated trades for the tick-level filters; `funding` pulls settlements.
+    series: str = "klines"
 
 
 class SettingsUpdate(BaseModel):
@@ -236,6 +253,8 @@ def get_status(catalog_path: str | None = None) -> dict[str, Any]:
         "jobs": jobs,
         "strategies_available": [item.value for item in RobotName],
         "wired_robots": sorted(item.value for item in BACKTEST_WIRED_ROBOTS),
+        "tick_vpin_robots": sorted(item.value for item in TICK_VPIN_ROBOTS),
+        "hawkes_robots": sorted(item.value for item in HAWKES_ROBOTS),
         "catalog_exists": bool(summary.get("exists", False)),
         "catalog_instruments": int(summary.get("total_instruments", 0) or 0),
         "catalog_path": resolved_catalog,
@@ -277,6 +296,16 @@ def get_catalog_bars(
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/data")
+def get_data_health(catalog_path: str | None = None) -> dict[str, Any]:
+    """Which of the four series trees this catalog actually holds, and how far each reaches.
+
+    The engine reads a missing tick/funding series as an empty one, so "the run finished"
+    is not evidence that the filter it was configured with had any data behind it.
+    """
+    return describe_data_health_cached(catalog_path)
 
 
 def strategy_spec_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -438,6 +467,36 @@ def run_research(background_tasks: BackgroundTasks, req: ResearchRunRequest) -> 
             ),
         )
 
+    # Tick-level filters are constructor inputs of the regime router, so on a robot that
+    # never builds one they would be accepted and then ignored: the run would be labelled
+    # tick-filtered while every decision came from the bar proxy.
+    if req.tick_vpin or req.hawkes:
+        unsupported = tick_filters_supported(
+            RobotName(req.robot), tick_vpin=req.tick_vpin, hawkes=req.hawkes
+        )
+        if unsupported:
+            raise HTTPException(status_code=400, detail=unsupported)
+        if req.source != "catalog":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "tick-level filters need the aggregated-trade series, which only exists "
+                    "for catalog runs; synthetic bars have no ticks to read."
+                ),
+            )
+        symbol = binance_symbol_for_instrument(req.instrument_id or settings().instrument_id)
+        ticks = ParquetAggTradesCatalog(resolve_catalog_path(req.catalog_path))
+        if symbol and not ticks.series_exists(symbol):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"no aggregated-trade series for {symbol} in this catalog: run "
+                    f"`lab ingest --trades --symbols {symbol}` first. The engine reads a "
+                    "missing tick series as an empty one, which would leave the filter at "
+                    "its defaults instead of failing."
+                ),
+            )
+
     log_path = os.path.join(REPORTS_DIR, "last_run.log")
     json_path = os.path.join(REPORTS_DIR, "last_run.json")
     open(log_path, "w", encoding="utf-8").close()
@@ -460,6 +519,8 @@ def run_research(background_tasks: BackgroundTasks, req: ResearchRunRequest) -> 
         "pbo": req.pbo,
         "pbo_blocks": req.pbo_blocks,
         "bar_vpin": req.bar_vpin,
+        "tick_vpin": req.tick_vpin,
+        "hawkes": req.hawkes,
         "stress_slice": req.stress_slice,
         "generate_tearsheet": req.generate_tearsheet,
         "journal": req.journal,
@@ -617,10 +678,20 @@ def run_ingest_subprocess(cmd: list[str], log_path: str) -> None:
             CURRENT_INGEST_PROCESS.wait()
             f.write(f"\nProcess finished with code {CURRENT_INGEST_PROCESS.returncode}\n")
             # The status endpoint caches catalog descriptions; an ingest is exactly the
-            # event that makes the cached counts wrong.
+            # event that makes the cached counts wrong. The coverage panel caches the same
+            # way, and a tick ingest changes nothing else in it.
             invalidate_catalog_cache(_catalog_arg(cmd))
+            invalidate_data_health_cache(_catalog_arg(cmd))
         except Exception as e:
             f.write(f"\nException occurred: {e!s}\n")
+
+
+#: Kinds of ingest the dashboard may launch, mapped to the CLI flag that selects them.
+INGEST_SERIES_FLAGS: dict[str, list[str]] = {
+    "klines": [],
+    "trades": ["--trades"],
+    "funding": ["--funding"],
+}
 
 
 @app.post("/api/catalog/ingest")
@@ -630,10 +701,31 @@ def run_ingest(background_tasks: BackgroundTasks, req: IngestRunRequest) -> dict
     if ing_proc is not None and ing_proc.poll() is None:
         return {"status": "error", "message": "An ingest process is already running."}
 
+    if req.series not in INGEST_SERIES_FLAGS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unknown series {req.series!r}; use one of: "
+                f"{', '.join(sorted(INGEST_SERIES_FLAGS))}"
+            ),
+        )
+    if req.incremental and req.series != "klines":
+        # `--incremental` walks forward from the last stored bar, which only the bar series
+        # has; the CLI ignores it for the other two, so accepting it here would look like a
+        # partial fetch while the full window was pulled anyway.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"incremental only applies to the bar series; a {req.series} ingest always "
+                "walks the requested window."
+            ),
+        )
+
     log_path = os.path.join(REPORTS_DIR, "ingest.log")
     open(log_path, "w", encoding="utf-8").close()
 
     cmd = [_python_executable(), "-m", "nautilus_lab.interfaces.cli", "ingest"]
+    cmd.extend(INGEST_SERIES_FLAGS[req.series])
     if req.symbols:
         cmd.extend(["--symbols", req.symbols])
     if req.start:

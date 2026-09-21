@@ -44,6 +44,20 @@ class ParquetAggTradesCatalog:
     def _symbol_dir(self, symbol: str) -> Path:
         return self._root / "data" / "agg_trade" / symbol.upper()
 
+    def series_dir(self, symbol: str) -> Path:
+        """Directory holding this symbol's day shards. May not exist yet."""
+        return self._symbol_dir(symbol)
+
+    def series_exists(self, symbol: str) -> bool:
+        """True when at least one day shard is stored for this symbol.
+
+        The engine treats a missing tick series as an empty one, so a tick-level filter
+        over it would run on defaults and still be labelled tick-based. Callers that
+        offer such a filter ask this first.
+        """
+        directory = self._symbol_dir(symbol)
+        return directory.exists() and any(directory.glob("*.parquet"))
+
     def write(self, trades: Sequence[AggTrade], *, symbol: str) -> int:
         """Persist ``trades`` grouped by UTC day. Returns the count written.
 

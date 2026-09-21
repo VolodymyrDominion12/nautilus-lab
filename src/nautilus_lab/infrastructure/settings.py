@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     adaptive_selectivity: Decimal = Decimal("0.5")
     adaptive_slope_lookback: int = 10
     use_bar_vpin: bool = False
+    use_tick_vpin: bool = False
+    use_hawkes: bool = False
+    hawkes_baseline: Decimal = Decimal("0.1")
+    hawkes_alpha: Decimal = Decimal("0.5")
+    hawkes_beta: Decimal = Decimal("1.0")
+    hawkes_toxic_threshold: Decimal = Decimal("2.0")
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
     embargo_bars: int = 10

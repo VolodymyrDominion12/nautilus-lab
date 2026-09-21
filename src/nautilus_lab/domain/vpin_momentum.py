@@ -6,7 +6,7 @@ from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.ema import ExponentialMovingAverage
 from nautilus_lab.domain.signals import Signal, SignalSide
-from nautilus_lab.domain.vpin import BarVpin
+from nautilus_lab.domain.vpin import VpinModel, VpinState
 
 
 class VpinMomentum:
@@ -16,8 +16,7 @@ class VpinMomentum:
         self,
         *,
         instrument_id: str,
-        bucket_volume: Decimal = Decimal("1000"),
-        toxic_threshold: Decimal = Decimal("0.7"),
+        vpin: VpinModel,
         ema_period: int = 50,
         atr_period: int = 14,
         atr_multiple: Decimal = Decimal("2"),
@@ -32,7 +31,7 @@ class VpinMomentum:
         if min_hold_bars < 0:
             raise ValueError("min_hold_bars must be >= 0")
         self._instrument_id = instrument_id
-        self._vpin = BarVpin(bucket_volume=bucket_volume, toxic_threshold=toxic_threshold)
+        self._vpin = vpin
         self._ema = ExponentialMovingAverage(ema_period)
         self._atr = AverageTrueRange(atr_period)
         self._atr_multiple = atr_multiple
@@ -40,6 +39,10 @@ class VpinMomentum:
         self._direction = 0
         self._bars_in_position = 0
         self._extreme = Decimal("0")
+
+    def on_trade_tick(self, *, is_buy: bool, volume: Decimal, dt_seconds: Decimal) -> None:
+        if self._vpin is not None and hasattr(self._vpin, "update_from_trade"):
+            self._vpin.update_from_trade(is_buy=is_buy, volume=volume)
 
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
         state = self._vpin.update(bar)

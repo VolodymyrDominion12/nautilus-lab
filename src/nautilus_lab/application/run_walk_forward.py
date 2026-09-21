@@ -10,6 +10,7 @@ from nautilus_lab.application.dtos import (
     MultiWindowReport,
     ResearchBacktestPort,
     SelectedParams,
+    TickFeed,
     WalkForwardFold,
     WalkForwardReport,
     WalkForwardRequest,
@@ -35,9 +36,10 @@ from nautilus_lab.domain.walk_forward import (
 class RunWalkForward:
     """Fit parameters on in-sample bars; report only the out-of-sample run."""
 
-    def __init__(self, engine: ResearchBacktestPort, feed: BarFeed) -> None:
+    def __init__(self, engine: ResearchBacktestPort, feed: BarFeed, tick_feed: TickFeed | None = None) -> None:
         self._engine = engine
         self._feed = feed
+        self._tick_feed = tick_feed
 
     def execute(self, request: WalkForwardRequest) -> WalkForwardReport:
         require_simulated_mode(request.backtest.mode)
@@ -57,11 +59,17 @@ class RunWalkForward:
         folds = split_by_window(bars, window)
         _require_warmup(request.backtest.robot, len(folds.in_sample), "in-sample")
         _require_warmup(request.backtest.robot, len(folds.out_of_sample), "out-of-sample")
+        ticks = None
+        if request.backtest.use_tick_vpin or request.backtest.use_hawkes:
+            if self._tick_feed is None:
+                raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
+            ticks = self._tick_feed.load(request.backtest)
+            
         return self._select_and_evaluate(
             request,
             window,
-            run_is=lambda candidate: self._engine.run(candidate, list(folds.in_sample)),
-            run_oos=lambda candidate: self._engine.run(candidate, list(folds.out_of_sample)),
+            run_is=lambda candidate: self._engine.run(candidate, list(folds.in_sample), ticks),
+            run_oos=lambda candidate: self._engine.run(candidate, list(folds.out_of_sample), ticks),
         )
 
     def _execute_pairs(self, request: WalkForwardRequest, embargo: int) -> WalkForwardReport:
@@ -142,12 +150,18 @@ class RunWalkForward:
         _require_warmup(
             request.backtest.robot, len(split.out_of_sample), f"fold {index} out-of-sample"
         )
+        ticks = None
+        if request.backtest.use_tick_vpin or request.backtest.use_hawkes:
+            if self._tick_feed is None:
+                raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
+            ticks = self._tick_feed.load(request.backtest)
+            
         return self._run_fold(
             request,
             index,
             window,
-            run_is=lambda candidate: self._engine.run(candidate, list(split.in_sample)),
-            run_oos=lambda candidate: self._engine.run(candidate, list(split.out_of_sample)),
+            run_is=lambda candidate: self._engine.run(candidate, list(split.in_sample), ticks),
+            run_oos=lambda candidate: self._engine.run(candidate, list(split.out_of_sample), ticks),
             oos_reference=split.out_of_sample,
         )
 

@@ -73,8 +73,14 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     quote_currency: str = "USDT"
     qty_step: Decimal = Decimal("0.001")
     use_bar_vpin: bool = False
+    use_tick_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    use_hawkes: bool = False
+    hawkes_baseline: Decimal = Decimal("0.1")
+    hawkes_alpha: Decimal = Decimal("0.5")
+    hawkes_beta: Decimal = Decimal("1.0")
+    hawkes_toxic_threshold: Decimal = Decimal("2.0")
     vpin_momentum_ema_period: int = 50
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
     formulaic_model_path: str | None = None
@@ -156,9 +162,31 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._taker_buy_by_ns = (
             None if taker_buy_base_volume_by_ns is None else dict(taker_buy_base_volume_by_ns)
         )
+        self._last_tick_ts: datetime | None = None
 
     def on_start(self) -> None:
         self.subscribe_bars(self.config.bar_type)
+        if self.config.use_tick_vpin or self.config.use_hawkes:
+            self.subscribe_trade_ticks(self.config.instrument_id)
+
+    def on_trade_tick(self, tick: TradeTick) -> None:
+        if not hasattr(self._robot, "on_trade_tick"):
+            return
+            
+        ts_utc = datetime.fromtimestamp(tick.ts_event / 1_000_000_000, tz=UTC)
+        if self._last_tick_ts is None:
+            dt_seconds = Decimal("0")
+        else:
+            dt = (ts_utc - self._last_tick_ts).total_seconds()
+            dt_seconds = Decimal(str(dt))
+        self._last_tick_ts = ts_utc
+        
+        is_buy = tick.aggressor_side == AggressorSide.BUYER
+        volume = _as_decimal(tick.size)
+        
+        # We rely on structural subtyping (duck typing) since SingleLegRobot 
+        # doesn't enforce on_trade_tick
+        self._robot.on_trade_tick(is_buy=is_buy, volume=volume, dt_seconds=dt_seconds)
 
     def on_bar(self, bar: Bar) -> None:
         domain_bar = _to_domain_bar(bar, str(self.config.instrument_id))
@@ -333,10 +361,21 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             slow_period=config.slow_period,
         )
     if robot is RobotName.VPIN_MOMENTUM:
+        vpin = None
+        if config.use_tick_vpin:
+            from nautilus_lab.domain.vpin import TickVpin
+            vpin = TickVpin(
+                bucket_volume=config.vpin_bucket_volume,
+                toxic_threshold=config.vpin_toxic_threshold,
+            )
+        else:
+            vpin = BarVpin(
+                bucket_volume=config.vpin_bucket_volume,
+                toxic_threshold=config.vpin_toxic_threshold,
+            )
         return VpinMomentum(
             instrument_id=instrument_id,
-            bucket_volume=config.vpin_bucket_volume,
-            toxic_threshold=config.vpin_toxic_threshold,
+            vpin=vpin,
             ema_period=config.vpin_momentum_ema_period,
             atr_multiple=config.vpin_momentum_atr_multiple,
         )
@@ -375,11 +414,28 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
 
 def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRouter:
     vpin = None
-    if config.use_bar_vpin:
+    if config.use_tick_vpin:
+        from nautilus_lab.domain.vpin import TickVpin
+        vpin = TickVpin(
+            bucket_volume=config.vpin_bucket_volume,
+            toxic_threshold=config.vpin_toxic_threshold,
+        )
+    elif config.use_bar_vpin:
         vpin = BarVpin(
             bucket_volume=config.vpin_bucket_volume,
             toxic_threshold=config.vpin_toxic_threshold,
         )
+        
+    hawkes = None
+    if config.use_hawkes:
+        from nautilus_lab.domain.hawkes import ExponentialHawkes
+        hawkes = ExponentialHawkes(
+            baseline=config.hawkes_baseline,
+            alpha=config.hawkes_alpha,
+            beta=config.hawkes_beta,
+            toxic_threshold=config.hawkes_toxic_threshold,
+        )
+
     return RegimeRouter(
         instrument_id=instrument_id,
         params=RegimeParams(
@@ -393,6 +449,7 @@ def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRout
             bb_k=config.bb_k,
         ),
         vpin=vpin,
+        hawkes=hawkes,
     )
 
 

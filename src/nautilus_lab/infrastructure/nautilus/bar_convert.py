@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.data import Bar, BarType, TradeTick
+from nautilus_trader.model.enums import AggressorSide
 from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.objects import Price, Quantity
 
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.ticks import AggTrade
 
 
 def datetime_to_nanos(ts: datetime) -> int:
@@ -57,3 +59,21 @@ def _as_decimal(value: object) -> Decimal:
         converted = converter()
         return converted if isinstance(converted, Decimal) else Decimal(str(converted))
     return Decimal(str(value))
+
+def to_engine_ticks(
+    trades: list[AggTrade],
+    *,
+    instrument: CurrencyPair,
+) -> list[TradeTick]:
+    return [
+        TradeTick(
+            instrument_id=instrument.id,
+            price=Price(trade.price, precision=instrument.price_precision),
+            size=Quantity(trade.qty, precision=instrument.size_precision),
+            aggressor_side=AggressorSide.SELLER if trade.is_buyer_maker else AggressorSide.BUYER,
+            trade_id=str(trade.agg_id),
+            ts_event=datetime_to_nanos(trade.ts_utc),
+            ts_init=datetime_to_nanos(trade.ts_utc),
+        )
+        for trade in trades
+    ]

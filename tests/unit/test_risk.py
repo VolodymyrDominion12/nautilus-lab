@@ -200,7 +200,7 @@ def test_require_simulated_mode_allows_paper() -> None:
 
 def test_research_use_case_delegates_to_port(limits: RiskLimits) -> None:
     class FakeEngine:
-        def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
+        def run(self, request: BacktestRequest, bars: list[OhlcvBar], ticks: list = None) -> BacktestReport:
             assert len(bars) == 150
             return BacktestReport(
                 fills=3, positions=2, ending_balance=Decimal("100100"), notes="ok"
@@ -267,7 +267,7 @@ def test_evaluate_entry_trips_cvar_breaker(limits: RiskLimits) -> None:
 
 def test_research_use_case_rejects_short_history(limits: RiskLimits) -> None:
     class FakeEngine:
-        def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
+        def run(self, request: BacktestRequest, bars: list[OhlcvBar], ticks: list = None) -> BacktestReport:
             raise AssertionError("engine must not run")
 
         def run_spread(
@@ -294,7 +294,7 @@ def test_research_use_case_rejects_short_history(limits: RiskLimits) -> None:
 
 def test_research_use_case_rejects_live(limits: RiskLimits) -> None:
     class FakeEngine:
-        def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
+        def run(self, request: BacktestRequest, bars: list[OhlcvBar], ticks: list = None) -> BacktestReport:
             raise AssertionError("engine must not run")
 
         def run_spread(

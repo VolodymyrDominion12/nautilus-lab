@@ -37,7 +37,7 @@ def test_walk_forward_selects_on_in_sample_and_reports_out_of_sample() -> None:
         def __init__(self) -> None:
             self.calls: list[tuple[int, int, datetime, int]] = []
 
-        def run(self, request: BacktestRequest, folded: list[OhlcvBar]) -> BacktestReport:
+        def run(self, request: BacktestRequest, folded: list[OhlcvBar], ticks: list = None) -> BacktestReport:
             self.calls.append((request.fast_ema, request.slow_ema, folded[0].ts_utc, len(folded)))
             in_sample = folded[0].ts_utc == is_start
             if request.fast_ema == 5:
@@ -118,7 +118,7 @@ class _WindowEngine:
     def __init__(self) -> None:
         self.calls = 0
 
-    def run(self, request: BacktestRequest, folded: list[OhlcvBar]) -> BacktestReport:
+    def run(self, request: BacktestRequest, folded: list[OhlcvBar], ticks: list = None) -> BacktestReport:
         self.calls += 1
         return BacktestReport(
             fills=len(folded),

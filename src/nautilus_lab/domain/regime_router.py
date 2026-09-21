@@ -10,7 +10,8 @@ from nautilus_lab.domain.regime import (
     RegimeSnapshot,
 )
 from nautilus_lab.domain.signals import Signal, SignalSide
-from nautilus_lab.domain.vpin import BarVpin, VpinState
+from nautilus_lab.domain.vpin import VpinModel, VpinState
+from nautilus_lab.domain.hawkes import ExponentialHawkes, HawkesIntensity
 
 
 class RegimeRouter:
@@ -21,11 +22,13 @@ class RegimeRouter:
         *,
         instrument_id: str,
         params: RegimeParams,
-        vpin: BarVpin | None = None,
+        vpin: VpinModel | None = None,
+        hawkes: ExponentialHawkes | None = None,
     ) -> None:
         self._instrument_id = instrument_id
         self._classifier = RegimeClassifier(params)
         self._vpin = vpin
+        self._hawkes = hawkes
         self._uptrend = UptrendBreakout(
             instrument_id=instrument_id,
             channel_period=params.donchian_period,
@@ -43,8 +46,15 @@ class RegimeRouter:
         )
         self._last_regime: MarketRegime | None = None
 
+    def on_trade_tick(self, *, is_buy: bool, volume: Decimal, dt_seconds: Decimal) -> None:
+        if self._vpin is not None and hasattr(self._vpin, "update_from_trade"):
+            self._vpin.update_from_trade(is_buy=is_buy, volume=volume)
+        if self._hawkes is not None:
+            self._hawkes.on_trade(side="buy" if is_buy else "sell", volume=volume, dt_seconds=dt_seconds)
+
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
         vpin_state = self._vpin.update(bar) if self._vpin is not None else None
+        hawkes_state = self._hawkes.last if self._hawkes is not None else None
         snapshot = self._classifier.update(bar.close)
         if snapshot is None:
             self._uptrend.on_bar(bar)
@@ -64,7 +74,7 @@ class RegimeRouter:
                 regime=snapshot.regime,
             )
         self._last_regime = snapshot.regime
-        effective_regime = self._effective_regime(snapshot, vpin_state)
+        effective_regime = self._effective_regime(snapshot, vpin_state, hawkes_state)
         if effective_regime is MarketRegime.UPTREND:
             return self._uptrend.on_bar(bar)
         if effective_regime is MarketRegime.DOWNTREND:
@@ -72,10 +82,20 @@ class RegimeRouter:
         return self._range.on_bar(bar)
 
     def _effective_regime(
-        self, snapshot: RegimeSnapshot, vpin_state: VpinState | None
+        self,
+        snapshot: RegimeSnapshot,
+        vpin_state: VpinState | None,
+        hawkes_state: HawkesIntensity | None,
     ) -> MarketRegime:
-        if vpin_state is None or not vpin_state.toxic:
+        toxic = False
+        if vpin_state is not None and vpin_state.toxic:
+            toxic = True
+        if hawkes_state is not None and hawkes_state.toxic_flow:
+            toxic = True
+            
+        if not toxic:
             return snapshot.regime
+            
         if snapshot.regime is MarketRegime.RANGE:
             if snapshot.slope > 0:
                 return MarketRegime.UPTREND

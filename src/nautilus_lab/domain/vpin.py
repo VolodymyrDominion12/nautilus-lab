@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Protocol
 
 from nautilus_lab.domain.bars import OhlcvBar
 
@@ -11,6 +12,76 @@ class VpinState:
     value: Decimal
     bucket_filled: Decimal
     toxic: bool
+
+
+class VpinModel(Protocol):
+    """Common interface for volume-synchronized probability of informed trading."""
+
+    @property
+    def last(self) -> VpinState | None: ...
+
+    def update(self, bar: OhlcvBar) -> VpinState | None: ...
+
+
+class TickVpin:
+    """Volume-bucket VPIN, filled strictly tick-by-tick from AggTrades.
+    
+    This provides true order-flow toxicity without the intra-bar approximation.
+    Buckets emit exactly when filled by a sequence of aggressive orders.
+    """
+
+    def __init__(
+        self,
+        *,
+        bucket_volume: Decimal,
+        toxic_threshold: Decimal = Decimal("0.7"),
+    ) -> None:
+        if bucket_volume <= 0:
+            raise ValueError("bucket_volume must be > 0")
+        if toxic_threshold <= 0 or toxic_threshold > 1:
+            raise ValueError("toxic_threshold must be in (0, 1]")
+        self._bucket_volume = bucket_volume
+        self._toxic_threshold = toxic_threshold
+        self._buy_volume = Decimal("0")
+        self._sell_volume = Decimal("0")
+        self._filled = Decimal("0")
+        self._last: VpinState | None = None
+
+    @property
+    def last(self) -> VpinState | None:
+        return self._last
+
+    def update(self, bar: OhlcvBar) -> VpinState | None:
+        """No-op for compatibility. TickVpin is updated via update_from_trade."""
+        return self._last
+
+    def update_from_trade(self, *, is_buy: bool, volume: Decimal) -> None:
+        if volume <= 0:
+            return
+        remaining = volume
+        while remaining > 0:
+            space = self._bucket_volume - self._filled
+            chunk = min(remaining, space)
+            if is_buy:
+                self._buy_volume += chunk
+            else:
+                self._sell_volume += chunk
+            self._filled += chunk
+            remaining -= chunk
+            if self._filled >= self._bucket_volume:
+                self._emit_bucket()
+
+    def _emit_bucket(self) -> None:
+        total = self._buy_volume + self._sell_volume
+        value = Decimal("0") if total <= 0 else abs(self._buy_volume - self._sell_volume) / total
+        self._last = VpinState(
+            value=value,
+            bucket_filled=self._bucket_volume,
+            toxic=value >= self._toxic_threshold,
+        )
+        self._buy_volume = Decimal("0")
+        self._sell_volume = Decimal("0")
+        self._filled = Decimal("0")
 
 
 class BarVpin:

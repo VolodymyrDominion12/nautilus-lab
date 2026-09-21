@@ -15,6 +15,7 @@ from nautilus_lab.application.dtos import BacktestReport, BacktestRequest
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.metrics import compute_metrics
 from nautilus_lab.domain.regime import RobotName
+from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.infrastructure.nautilus.bar_convert import datetime_to_nanos, to_engine_bars
 from nautilus_lab.infrastructure.nautilus.instrument import resolve_instrument
 from nautilus_lab.infrastructure.nautilus.signal_strategy import SignalRobot, SignalRobotConfig
@@ -25,7 +26,7 @@ from nautilus_lab.infrastructure.timeframe import interval_from_bar_type, nautil
 class NautilusResearchBacktest:
     """Low-level BacktestEngine with fees, latency, and slippage."""
 
-    def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport:
+    def run(self, request: BacktestRequest, bars: list[OhlcvBar], ticks: list[AggTrade] | None = None) -> BacktestReport:
         if request.robot is RobotName.PAIRS:
             raise ValueError("pairs robot requires run_spread with two instruments")
         instrument = resolve_instrument(request.instrument_id, fees=request.fee_schedule)
@@ -88,10 +89,16 @@ class NautilusResearchBacktest:
             ),
             taker_buy_base_volume_by_ns=taker_buy_by_ns or None,
         )
+        
+        engine_ticks = []
+        if ticks:
+            from nautilus_lab.infrastructure.nautilus.bar_convert import to_engine_ticks
+            engine_ticks = to_engine_ticks(ticks, instrument=instrument)
+            
         return self._execute(
             request=request,
             instruments=[instrument],
-            data=engine_bars,
+            data=[*engine_bars, *engine_ticks],
             strategy=strategy,
         )
 

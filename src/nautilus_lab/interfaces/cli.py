@@ -139,6 +139,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Enable bar-level VPIN regime filter (regime robot)",
     )
     research.add_argument(
+        "--tick-vpin",
+        action="store_true",
+        help="Enable tick-level VPIN regime filter (regime robot)",
+    )
+    research.add_argument(
+        "--hawkes",
+        action="store_true",
+        help="Enable tick-level Hawkes process regime filter (regime robot)",
+    )
+    research.add_argument(
         "--tearsheet",
         help="Path to save interactive HTML tearsheet (e.g. reports/tearsheet.html)",
     )
@@ -246,6 +256,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         cfg = cfg.model_copy(update={"catalog_path": catalog_path})
     if getattr(args, "bar_vpin", False):
         cfg = cfg.model_copy(update={"use_bar_vpin": True})
+    if getattr(args, "tick_vpin", False):
+        cfg = cfg.model_copy(update={"use_tick_vpin": True})
+    if getattr(args, "hawkes", False):
+        cfg = cfg.model_copy(update={"use_hawkes": True})
     if getattr(args, "embargo_bars", None) is not None:
         cfg = cfg.model_copy(update={"embargo_bars": args.embargo_bars})
     try:

@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
@@ -21,6 +20,11 @@ def _parse_utc(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _iso(ts_event_ns: int) -> str:
+    """Nautilus nanosecond event timestamp -> ISO-8601 UTC string."""
+    return datetime.fromtimestamp(ts_event_ns / 1_000_000_000, tz=UTC).isoformat()
 
 
 #: The dashboard reads one catalog for the whole process, but the process is launched from
@@ -76,8 +80,11 @@ def describe_catalog(catalog_path: str | None = None) -> dict[str, Any]:
         for inst in cat.instruments():
             bars = cat.bars(instrument_ids=[str(inst.id)])
             count = len(bars)
-            first_dt = str(pd.to_datetime(bars[0].ts_event, unit="ns")) if count > 0 else None
-            last_dt = str(pd.to_datetime(bars[-1].ts_event, unit="ns")) if count > 0 else None
+            # ISO-8601, not `str(Timestamp)`: pandas renders its own nanosecond precision
+            # ("2026-09-18 23:59:59.999000064"), which is not a format a browser is
+            # obliged to parse and does not match the tick/funding series' timestamps.
+            first_dt = _iso(bars[0].ts_event) if count > 0 else None
+            last_dt = _iso(bars[-1].ts_event) if count > 0 else None
             raw_sym = (
                 inst.raw_symbol.value if hasattr(inst.raw_symbol, "value") else str(inst.raw_symbol)
             )

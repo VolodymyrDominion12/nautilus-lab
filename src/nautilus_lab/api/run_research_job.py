@@ -42,6 +42,8 @@ def _job_from_payload(payload: dict[str, Any], reports_dir: Path) -> ResearchJob
         pbo=bool(payload.get("pbo", False)),
         pbo_blocks=int(payload.get("pbo_blocks", 8)),
         bar_vpin=bool(payload.get("bar_vpin", False)),
+        tick_vpin=bool(payload.get("tick_vpin", False)),
+        hawkes=bool(payload.get("hawkes", False)),
         stress_slice=str(payload["stress_slice"]) if payload.get("stress_slice") else None,
         generate_tearsheet=bool(payload.get("generate_tearsheet", True)),
         journal=bool(payload.get("journal", False)),

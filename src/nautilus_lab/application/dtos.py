@@ -15,6 +15,7 @@ from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
 from nautilus_lab.domain.risk import RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
+from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 
@@ -43,8 +44,14 @@ class BacktestRequest:
     embargo_bars: int = 0
     stress_slice: str | None = None
     use_bar_vpin: bool = False
+    use_tick_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    use_hawkes: bool = False
+    hawkes_baseline: Decimal = Decimal("0.1")
+    hawkes_alpha: Decimal = Decimal("0.5")
+    hawkes_beta: Decimal = Decimal("1.0")
+    hawkes_toxic_threshold: Decimal = Decimal("2.0")
     vpin_momentum_ema_period: int = 50
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
     formulaic_model_path: str | None = None
@@ -324,7 +331,7 @@ class MultiWindowReport:
 
 
 class ResearchBacktestPort(Protocol):
-    def run(self, request: BacktestRequest, bars: list[OhlcvBar]) -> BacktestReport: ...
+    def run(self, request: BacktestRequest, bars: list[OhlcvBar], ticks: list[AggTrade] | None = None) -> BacktestReport: ...
 
     def run_spread(
         self,
@@ -417,6 +424,10 @@ class BarFeed(Protocol):
     def load(self, request: BacktestRequest) -> list[OhlcvBar]: ...
 
     def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]: ...
+
+
+class TickFeed(Protocol):
+    def load(self, request: BacktestRequest) -> list[AggTrade]: ...
 
 
 def selected_from_request(request: BacktestRequest) -> SelectedParams:

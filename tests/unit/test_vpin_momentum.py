@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.signals import SignalSide
+from nautilus_lab.domain.vpin import BarVpin
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
 
 
@@ -23,10 +24,10 @@ def _bars(closes: list[str]) -> list[OhlcvBar]:
 
 
 def test_no_signal_while_indicators_warm_up() -> None:
+    vpin = BarVpin(bucket_volume=Decimal("100"), toxic_threshold=Decimal("0.6"))
     robot = VpinMomentum(
         instrument_id="ETH/USDT.SIM",
-        bucket_volume=Decimal("100"),
-        toxic_threshold=Decimal("0.6"),
+        vpin=vpin,
         ema_period=5,
         atr_period=3,
     )
@@ -35,10 +36,10 @@ def test_no_signal_while_indicators_warm_up() -> None:
 
 
 def test_enters_long_on_toxic_upward_flow() -> None:
+    vpin = BarVpin(bucket_volume=Decimal("100"), toxic_threshold=Decimal("0.6"))
     robot = VpinMomentum(
         instrument_id="ETH/USDT.SIM",
-        bucket_volume=Decimal("100"),
-        toxic_threshold=Decimal("0.6"),
+        vpin=vpin,
         ema_period=2,
         atr_period=1,
         min_hold_bars=0,
@@ -49,10 +50,10 @@ def test_enters_long_on_toxic_upward_flow() -> None:
 
 
 def test_exits_when_price_loses_the_ema() -> None:
+    vpin = BarVpin(bucket_volume=Decimal("100"), toxic_threshold=Decimal("0.6"))
     robot = VpinMomentum(
         instrument_id="ETH/USDT.SIM",
-        bucket_volume=Decimal("100"),
-        toxic_threshold=Decimal("0.6"),
+        vpin=vpin,
         ema_period=2,
         atr_period=1,
         min_hold_bars=0,

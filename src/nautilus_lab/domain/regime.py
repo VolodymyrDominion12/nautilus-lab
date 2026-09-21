@@ -55,6 +55,43 @@ def require_backtest_support(robot: RobotName) -> None:
         )
 
 
+#: Robots whose regime filter reads the aggregated-trade series when `use_tick_vpin` is
+#: set (`_build_robot` in infrastructure/nautilus/signal_strategy.py). For any other robot
+#: the flag is a no-op, which is why callers must refuse it instead of accepting a run
+#: that looks tick-filtered and is not.
+TICK_VPIN_ROBOTS: frozenset[RobotName] = frozenset(
+    {
+        RobotName.REGIME,
+        RobotName.META_LABEL,
+        RobotName.VPIN_MOMENTUM,
+    }
+)
+
+#: Robots whose regime filter reads Hawkes self-exciting intensity when `use_hawkes` is set.
+HAWKES_ROBOTS: frozenset[RobotName] = frozenset(
+    {
+        RobotName.REGIME,
+        RobotName.META_LABEL,
+    }
+)
+
+
+def tick_filters_supported(robot: RobotName, *, tick_vpin: bool, hawkes: bool) -> str | None:
+    """Why the requested tick filters cannot be used by this robot, or None.
+
+    Both filters are constructor inputs of the regime router, so a robot that never
+    builds one silently ignores the flag: the run would be labelled "tick VPIN" while
+    every decision came from the bar proxy. Returning a reason keeps that out of a report.
+    """
+    if tick_vpin and robot not in TICK_VPIN_ROBOTS:
+        allowed = ", ".join(sorted(item.value for item in TICK_VPIN_ROBOTS))
+        return f"tick-level VPIN is only wired for: {allowed}; got {robot.value!r}"
+    if hawkes and robot not in HAWKES_ROBOTS:
+        allowed = ", ".join(sorted(item.value for item in HAWKES_ROBOTS))
+        return f"Hawkes intensity is only wired for: {allowed}; got {robot.value!r}"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class RegimeParams:
     """Kaufman ER + EMA slope with hysteresis. All windows use closed bars."""

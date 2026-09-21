@@ -31,6 +31,11 @@ class ExponentialHawkes:
         self._toxic_threshold = toxic_threshold
         self._buy_state = Decimal("0")
         self._sell_state = Decimal("0")
+        self._last: HawkesIntensity | None = None
+
+    @property
+    def last(self) -> HawkesIntensity | None:
+        return self._last
 
     def update(
         self,
@@ -49,7 +54,8 @@ class ExponentialHawkes:
         buy = self._mu + self._buy_state
         sell = self._mu + self._sell_state
         toxic = max(buy, sell) >= self._toxic_threshold
-        return HawkesIntensity(buy_intensity=buy, sell_intensity=sell, toxic_flow=toxic)
+        self._last = HawkesIntensity(buy_intensity=buy, sell_intensity=sell, toxic_flow=toxic)
+        return self._last
 
     def on_trade(
         self, *, side: str, volume: Decimal = Decimal("1"), dt_seconds: Decimal

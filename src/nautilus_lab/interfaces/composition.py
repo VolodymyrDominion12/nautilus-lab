@@ -22,6 +22,7 @@ from nautilus_lab.application.run_overfitting_audit import RunOverfitAudit
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
 from nautilus_lab.application.run_walk_forward import RunWalkForward
 from nautilus_lab.domain.bars import BarOrigin
+from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.ports import ChatCompleter
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.ticks import AggTrade
@@ -89,6 +90,7 @@ class _TickFeedAdapter:
             return []
         return self._catalog.load(symbol=symbol, start=request.start, end=request.end)
 
+
 class _BookFeedAdapter:
     def __init__(self, catalog: ParquetOrderBookCatalog) -> None:
         self._catalog = catalog
@@ -106,7 +108,9 @@ def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
     book_catalog = orderbook_catalog(resolved)
     tick_feed = _TickFeedAdapter(tick_catalog)
     book_feed = _BookFeedAdapter(book_catalog)
-    return RunResearchBacktest(NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed)
+    return RunResearchBacktest(
+        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed
+    )
 
 
 def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
@@ -124,7 +128,9 @@ def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
     book_catalog = orderbook_catalog(resolved)
     tick_feed = _TickFeedAdapter(tick_catalog)
     book_feed = _BookFeedAdapter(book_catalog)
-    return RunOverfitAudit(NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed)
+    return RunOverfitAudit(
+        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed
+    )
 
 
 def llm_completer(

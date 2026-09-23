@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.hawkes import ExponentialHawkes
 from nautilus_lab.domain.microstructure import (
     liquidity_fade_velocity,
@@ -9,7 +10,6 @@ from nautilus_lab.domain.microstructure import (
     weighted_order_flow_imbalance,
 )
 from nautilus_lab.domain.ml_classifier import DirectionClassifier, DirectionProbabilities
-from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.signals import Signal, SignalSide
 

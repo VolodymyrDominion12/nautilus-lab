@@ -26,8 +26,8 @@ from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
-from nautilus_lab.domain.ml_obi_strategy import MlObiStrategy
 from nautilus_lab.domain.meta_label_strategy import MetaLabelStrategy
+from nautilus_lab.domain.ml_obi_strategy import MlObiStrategy
 from nautilus_lab.domain.ratchet_stop import RatchetState, initial_ratchet, step_ratchet
 from nautilus_lab.domain.regime import RegimeParams, RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
@@ -43,8 +43,8 @@ from nautilus_lab.infrastructure.lightgbm_classifier import (
     LightGBMSuccessClassifier,
     require_model_path,
 )
-from nautilus_lab.infrastructure.vol_forecast import build_vol_forecaster
 from nautilus_lab.infrastructure.nautilus.bar_convert import to_domain_snapshot
+from nautilus_lab.infrastructure.vol_forecast import build_vol_forecaster
 
 
 class SingleLegRobot(Protocol):
@@ -211,10 +211,10 @@ class SignalRobot(Strategy):  # type: ignore[misc]
 
         signal = self._robot.on_bar(domain_bar)
         self._track_equity(domain_bar.ts_utc)
-        
+
         if self._apply_ratchet(domain_bar, self._equity()):
             return
-            
+
         self._process_signal(signal, domain_bar.close)
 
     def on_order_book_depth(self, depth: OrderBookDepth10) -> None:
@@ -222,12 +222,12 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return
         snapshot = to_domain_snapshot(depth, str(self.config.instrument_id))
         signal = self._robot.on_book(snapshot)
-        
+
         self._track_equity(snapshot.ts_utc)
-        
+
         # If we had a bar we could apply ratchet, but we don't have an OhlcvBar here.
         # It's fine to skip ratchet for book updates, or we can mock a bar. We'll skip for now.
-        
+
         mid_price = (snapshot.bids[0].price + snapshot.asks[0].price) / Decimal("2")
         self._process_signal(signal, mid_price)
 
@@ -445,7 +445,7 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
         )
     if robot is RobotName.ML_OBI:
         classifier = _build_classifier(config.ml_obi_model_path)
-        return MlObiStrategy(  # type: ignore[return-value]
+        return MlObiStrategy(
             instrument_id=instrument_id,
             classifier=classifier,
             threshold=config.ml_obi_threshold,

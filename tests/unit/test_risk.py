@@ -11,7 +11,6 @@ from nautilus_lab.application.risk import (
     size_position,
 )
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
-from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import (
     InvalidRiskError,
@@ -281,6 +280,7 @@ def test_research_use_case_rejects_short_history(limits: RiskLimits) -> None:
             request: BacktestRequest,
             bars: list[OhlcvBar],
             ticks: list[AggTrade] | None = None,
+            books: list[OrderBookSnapshot] | None = None,
         ) -> BacktestReport:
             raise AssertionError("engine must not run")
 
@@ -313,6 +313,7 @@ def test_research_use_case_rejects_live(limits: RiskLimits) -> None:
             request: BacktestRequest,
             bars: list[OhlcvBar],
             ticks: list[AggTrade] | None = None,
+            books: list[OrderBookSnapshot] | None = None,
         ) -> BacktestReport:
             raise AssertionError("engine must not run")
 

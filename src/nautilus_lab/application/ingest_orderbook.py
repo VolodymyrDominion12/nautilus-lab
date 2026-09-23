@@ -16,19 +16,19 @@ class IngestOrderBook:
 
     def __call__(self, symbol: str, batch_size: int = 100) -> None:
         """Run the ingestion loop. Block until interrupted.
-        
+
         Args:
             symbol: e.g. ETHUSDT
             batch_size: flush to disk every N snapshots (100 = ~10 seconds at 100ms updates)
         """
         self._logger.info("Starting live L2 ingest for %s...", symbol)
         live_feed = BinanceLiveOrderBook(symbol)
-        
+
         buffer: list[OrderBookSnapshot] = []
         try:
             for snap in live_feed.snapshots():
                 buffer.append(snap)
-                
+
                 if len(buffer) >= batch_size:
                     written = self._catalog.write(buffer, symbol=symbol)
                     self._logger.info("Flushed %d L2 snapshots for %s", written, symbol)

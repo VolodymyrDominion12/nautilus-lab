@@ -9,9 +9,9 @@ from typing import Protocol
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
-from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.metrics import BacktestMetrics
+from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
 from nautilus_lab.domain.risk import RiskLimits

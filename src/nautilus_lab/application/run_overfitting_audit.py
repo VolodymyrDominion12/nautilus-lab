@@ -7,6 +7,7 @@ from nautilus_lab.application.dtos import (
     BacktestReport,
     BacktestRequest,
     BarFeed,
+    OrderBookFeed,
     OverfitAuditReport,
     OverfitAuditRequest,
     ResearchBacktestPort,
@@ -42,11 +43,16 @@ class RunOverfitAudit:
     """
 
     def __init__(
-        self, engine: ResearchBacktestPort, feed: BarFeed, tick_feed: TickFeed | None = None
+        self,
+        engine: ResearchBacktestPort,
+        feed: BarFeed,
+        tick_feed: TickFeed | None = None,
+        book_feed: OrderBookFeed | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
+        self._book_feed = book_feed
 
     def execute(self, request: OverfitAuditRequest) -> OverfitAuditReport:
         require_simulated_mode(request.backtest.mode)
@@ -69,8 +75,16 @@ class RunOverfitAudit:
                 raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
             ticks = self._tick_feed.load(request.backtest)
 
+        # `ml_obi` cannot score a block without order books, and passing `None` would
+        # silently audit a different strategy than the one being reported on.
+        books = None
+        if request.backtest.robot is RobotName.ML_OBI:
+            if self._book_feed is None:
+                raise ValueError("OrderBook feed must be provided to use ML_OBI")
+            books = self._book_feed.load(request.backtest)
+
         def run(candidate: BacktestRequest, block_index: int) -> BacktestReport:
-            return self._engine.run(candidate, list(blocks[block_index]), ticks)
+            return self._engine.run(candidate, list(blocks[block_index]), ticks, books)
 
         return self._audit(request, run, len(blocks))
 

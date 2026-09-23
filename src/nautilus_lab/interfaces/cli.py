@@ -418,12 +418,12 @@ def _run_ingest_depth(cfg: Settings, *, symbols: list[str]) -> int:
     if not symbols:
         print("At least one symbol required.", file=sys.stderr)
         return 1
-    
+
     use_case = ingest_orderbook_use_case(cfg)
     symbol = symbols[0]
     if len(symbols) > 1:
         print(f"Warning: Only one symbol supported for --depth currently. Using {symbol}.")
-    
+
     print(f"Starting live L2 orderbook ingest for {symbol} to {cfg.catalog_path} ...")
     try:
         use_case(symbol)
@@ -949,6 +949,7 @@ def _print_walk_forward(report: WalkForwardReport) -> None:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 def _run_ml_train(cfg: Settings, args: argparse.Namespace) -> int:
     from nautilus_lab.api.ml_runner import MLTrainConfig, execute_ml_train

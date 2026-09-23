@@ -47,23 +47,24 @@ def build_obi_dataset(
 ) -> ObiDataset:
     if horizon < 1:
         raise ValueError("horizon must be >= 1")
-        
+
     features: list[tuple[Decimal, ...]] = []
     labels: list[str] = []
     sample_times: list[int] = []
     label_ends: list[int] = []
-    
+
     hawkes = ExponentialHawkes()
     previous: OrderBookSnapshot | None = None
-    
+
     for index, snapshot in enumerate(snapshots):
         snapshot.validate()
         if previous is None:
             previous = snapshot
             continue
-            
+
         dt_seconds = Decimal(str((snapshot.ts_utc - previous.ts_utc).total_seconds()))
-        # Skip updates that happened at the exact same timestamp if any (protect against division by zero in fade)
+        # Two snapshots sharing a timestamp carry no elapsed time; dividing by it in the
+        # liquidity-fade velocity would raise, so the later one cannot be used as an update.
         if dt_seconds == 0:
             previous = snapshot
             continue
@@ -71,16 +72,16 @@ def build_obi_dataset(
         obi = order_book_imbalance(snapshot)
         ofi = weighted_order_flow_imbalance(snapshot, previous)
         fade = liquidity_fade_velocity(snapshot, previous)
-        
+
         buy_volume = ofi if ofi > 0 else Decimal("0")
         sell_volume = -ofi if ofi < 0 else Decimal("0")
-        
+
         hawkes_intensity = hawkes.update(
             buy_volume=buy_volume,
             sell_volume=sell_volume,
             dt_seconds=dt_seconds,
         )
-        
+
         row = (
             obi,
             ofi,
@@ -88,27 +89,27 @@ def build_obi_dataset(
             hawkes_intensity.buy_intensity,
             hawkes_intensity.sell_intensity,
         )
-        
+
         future_index = index + horizon
         if future_index >= len(snapshots):
             break
-            
+
         current_mid = (snapshot.bids[0].price + snapshot.asks[0].price) / 2
         future_snapshot = snapshots[future_index]
         future_mid = (future_snapshot.bids[0].price + future_snapshot.asks[0].price) / 2
-        
+
         if current_mid <= 0:
             previous = snapshot
             continue
-            
+
         ret = (future_mid - current_mid) / current_mid
         features.append(row)
         labels.append(label_direction(ret, threshold_bps=threshold_bps))
         sample_times.append(index)
         label_ends.append(index + horizon + 1)
-        
+
         previous = snapshot
-        
+
     return ObiDataset(
         features=features,
         labels=labels,

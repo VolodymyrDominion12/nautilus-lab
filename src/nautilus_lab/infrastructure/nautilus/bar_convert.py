@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -93,7 +94,7 @@ def to_engine_books(
                 BookOrder(
                     side=OrderSide.BUY,
                     price=Price(level.price, precision=instrument.price_precision),
-                    size=Quantity(level.volume, precision=instrument.size_precision),
+                    size=Quantity(level.size, precision=instrument.size_precision),
                     order_id=0,
                 )
                 for level in snapshot.bids
@@ -102,7 +103,7 @@ def to_engine_books(
                 BookOrder(
                     side=OrderSide.SELL,
                     price=Price(level.price, precision=instrument.price_precision),
-                    size=Quantity(level.volume, precision=instrument.size_precision),
+                    size=Quantity(level.size, precision=instrument.size_precision),
                     order_id=0,
                 )
                 for level in snapshot.asks
@@ -119,13 +120,25 @@ def to_engine_books(
 
 
 def to_domain_snapshot(depth: OrderBookDepth10, instrument_id: str) -> OrderBookSnapshot:
+    """Convert an engine depth snapshot back into the domain type.
+
+    `OrderBookDepth10` is a fixed-width container: fewer than ten supplied levels are
+    padded with zero-price, zero-size orders. Those rows are container filler, not
+    market data — kept, they make `OrderBookSnapshot.validate()` fail ("asks must be
+    ascending") on the strategy's first book event and push empty levels into the
+    imbalance metrics — so they are dropped here.
+    """
     return OrderBookSnapshot(
         instrument_id=instrument_id,
         ts_utc=nanos_to_datetime(depth.ts_event),
-        bids=[
-            BookLevel(price=_as_decimal(b.price), volume=_as_decimal(b.size)) for b in depth.bids
-        ],
-        asks=[
-            BookLevel(price=_as_decimal(a.price), volume=_as_decimal(a.size)) for a in depth.asks
-        ],
+        bids=_domain_levels(depth.bids),
+        asks=_domain_levels(depth.asks),
+    )
+
+
+def _domain_levels(levels: Sequence[BookOrder]) -> tuple[BookLevel, ...]:
+    return tuple(
+        BookLevel(price=_as_decimal(level.price), size=_as_decimal(level.size))
+        for level in levels
+        if _as_decimal(level.size) > 0
     )

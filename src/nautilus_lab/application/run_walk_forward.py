@@ -42,7 +42,7 @@ class RunWalkForward:
         engine: ResearchBacktestPort,
         feed: BarFeed,
         tick_feed: TickFeed | None = None,
-        book_feed: "OrderBookFeed | None" = None,
+        book_feed: OrderBookFeed | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed

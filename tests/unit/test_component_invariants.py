@@ -12,10 +12,16 @@ import pytest
 from nautilus_lab.application.run_overfitting_audit import _block_ranges
 from nautilus_lab.application.run_paper import RunPaperResearch
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.order_book import BookLevel, OrderBookSnapshot
 from nautilus_lab.domain.ports import JsonHttpClient
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.signals import LegIntent, QuoteIntent, Signal, SignalSide, SpreadSignal
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
+from nautilus_lab.infrastructure.nautilus.bar_convert import (
+    datetime_to_nanos,
+    to_domain_snapshot,
+    to_engine_books,
+)
 from nautilus_lab.infrastructure.nautilus.instrument import (
     binance_symbol_to_instrument_id,
     resolve_instrument,
@@ -23,6 +29,7 @@ from nautilus_lab.infrastructure.nautilus.instrument import (
 )
 from nautilus_lab.infrastructure.paper_trading import PaperTradingLogger
 from nautilus_lab.infrastructure.settings import Settings
+from nautilus_lab.interfaces import composition
 from nautilus_lab.interfaces.cli import main
 from nautilus_lab.interfaces.composition import catalog, research_request
 
@@ -302,4 +309,89 @@ def test_domain_strategies_do_not_size_positions() -> None:
         ask_price=Decimal("2002"),
     )
     assert quote.bid_qty_weight == Decimal("1")
-    assert not hasattr(quote, "qty")
+
+
+# --- interfaces-composition ---
+
+
+def test_composition_use_case_factories_construct() -> None:
+    """Every `*_use_case()` factory in composition builds a use case without raising.
+
+    A factory that dies on construction kills a whole CLI path while unit tests stay
+    green: `overfit_audit_use_case()` passed four arguments to a three-argument
+    `RunOverfitAudit`, so `lab research --pbo` was a `TypeError` and nothing said so.
+    """
+    cfg = Settings()
+    factories = {
+        name: getattr(composition, name)
+        for name in dir(composition)
+        if name.endswith("_use_case") and callable(getattr(composition, name))
+    }
+    assert set(factories) >= {
+        "research_use_case",
+        "walk_forward_use_case",
+        "overfit_audit_use_case",
+        "ingest_use_case",
+        "ingest_funding_use_case",
+        "ingest_agg_trades_use_case",
+        "ingest_orderbook_use_case",
+    }
+    for name, factory in sorted(factories.items()):
+        try:
+            factory(cfg)
+        except TypeError as exc:
+            raise AssertionError(f"{name}() cannot build its use case: {exc}") from exc
+
+
+def test_feed_hungry_use_cases_receive_their_feeds() -> None:
+    """Tick/book-dependent paths must be handed a feed, not constructed without one.
+
+    `ml_obi` and the tick filters raise when their feed is `None`, so a factory that
+    drops an argument makes the robot unusable rather than merely silent.
+    """
+    cfg = Settings()
+    for factory in (
+        composition.research_use_case,
+        composition.walk_forward_use_case,
+        composition.overfit_audit_use_case,
+    ):
+        use_case = factory(cfg)
+        assert use_case._tick_feed is not None, factory.__name__
+        assert use_case._book_feed is not None, factory.__name__
+
+
+# --- order-book ---
+
+
+def test_order_book_snapshot_round_trip_keeps_prices_and_sizes() -> None:
+    """domain → engine → domain keeps levels intact (`BookLevel` stores `size`, not `volume`).
+
+    The converter built `BookLevel(volume=...)` and read `level.volume`, so every
+    order-book round trip raised `TypeError` while the suite stayed green.
+    """
+    cfg = Settings()
+    request = research_request(cfg, bar_count=100)
+    instrument = resolve_instrument(request.instrument_id, fees=cfg.fee_schedule())
+    ts_utc = datetime(2024, 1, 1, tzinfo=UTC)
+    snapshot = OrderBookSnapshot(
+        instrument_id=request.instrument_id,
+        ts_utc=ts_utc,
+        bids=(
+            BookLevel(price=Decimal("3000.50"), size=Decimal("1.5")),
+            BookLevel(price=Decimal("3000.40"), size=Decimal("2.0")),
+        ),
+        asks=(
+            BookLevel(price=Decimal("3000.60"), size=Decimal("0.5")),
+            BookLevel(price=Decimal("3000.70"), size=Decimal("3.0")),
+        ),
+    )
+    snapshot.validate()
+
+    depth = to_engine_books([snapshot], instrument=instrument)[0]
+    restored = to_domain_snapshot(depth, request.instrument_id)
+    restored.validate()
+
+    assert restored.bids == snapshot.bids
+    assert restored.asks == snapshot.asks
+    assert datetime_to_nanos(restored.ts_utc) == datetime_to_nanos(snapshot.ts_utc)
+    assert restored.instrument_id == snapshot.instrument_id

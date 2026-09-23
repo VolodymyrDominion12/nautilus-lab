@@ -82,11 +82,23 @@ def to_engine_ticks(
     ]
 
 
+#: `OrderBookDepth10` is a fixed ten-level container. Binance snapshots arrive with up
+#: to 20 levels a side, and passing them straight through raises
+#: "bids length greater than maximum 10", killing every run that feeds books.
+BOOK_DEPTH = 10
+
+
 def to_engine_books(
     snapshots: list[OrderBookSnapshot],
     *,
     instrument: CurrencyPair,
 ) -> list[OrderBookDepth10]:
+    """Convert domain snapshots into ten-level engine snapshots.
+
+    Levels beyond the tenth are dropped: the engine type cannot carry them, and the
+    microstructure features read at most the top five. The truncation is stated here
+    rather than left implicit in a crash.
+    """
     return [
         OrderBookDepth10(
             instrument_id=instrument.id,
@@ -97,7 +109,7 @@ def to_engine_books(
                     size=Quantity(level.size, precision=instrument.size_precision),
                     order_id=0,
                 )
-                for level in snapshot.bids
+                for level in snapshot.bids[:BOOK_DEPTH]
             ],
             asks=[
                 BookOrder(
@@ -106,10 +118,10 @@ def to_engine_books(
                     size=Quantity(level.size, precision=instrument.size_precision),
                     order_id=0,
                 )
-                for level in snapshot.asks
+                for level in snapshot.asks[:BOOK_DEPTH]
             ],
-            bid_counts=[1] * len(snapshot.bids),
-            ask_counts=[1] * len(snapshot.asks),
+            bid_counts=[1] * min(len(snapshot.bids), BOOK_DEPTH),
+            ask_counts=[1] * min(len(snapshot.asks), BOOK_DEPTH),
             flags=0,
             sequence=0,
             ts_event=datetime_to_nanos(snapshot.ts_utc),

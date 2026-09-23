@@ -265,6 +265,15 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             self.log.warning(f"Risk blocked entry: {decision.reason}")
             return
 
+        # An order that is accepted but not yet filled leaves the portfolio flat, so
+        # `is_net_long`/`is_net_short` below say "no position" and the next signal
+        # stacks another entry on top of the pending one. On book-driven robots that
+        # ran a 1x-capped size up to ~4x notional (ml_obi), because book updates arrive
+        # far faster than the 50ms fill latency. One live order at a time, then.
+        if self._has_working_order():
+            self._breaches.record("order already working")
+            return
+
         desired_buy = signal.side is SignalSide.BUY
         if desired_buy and self.portfolio.is_net_long(self.config.instrument_id):
             return
@@ -363,6 +372,21 @@ class SignalRobot(Strategy):  # type: ignore[misc]
 
     def _is_flat(self) -> bool:
         return bool(self.portfolio.is_flat(self.config.instrument_id))
+
+    def _has_working_order(self) -> bool:
+        """True while an order for this instrument is submitted but not yet closed.
+
+        `cache.orders_open()` alone is not enough: in a backtest an order is INFLIGHT
+        (sitting in the risk/exec engine) well before it is OPEN, and `Portfolio` only
+        shows a position once the fill lands. With 100ms book updates against 50ms fill
+        latency the strategy saw `flat=True` while two of its own orders were still in
+        flight and stacked thirteen entries into one second — roughly 4x the 1x notional
+        cap that `size_position` is supposed to enforce.
+        """
+        instrument_id = self.config.instrument_id
+        if self.cache.orders_open(instrument_id=instrument_id):
+            return True
+        return bool(self.cache.client_order_ids_inflight(instrument_id=instrument_id))
 
     def _equity(self) -> Decimal | None:
         quote = Currency.from_str(self.config.quote_currency)

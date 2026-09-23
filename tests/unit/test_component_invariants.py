@@ -395,3 +395,31 @@ def test_order_book_snapshot_round_trip_keeps_prices_and_sizes() -> None:
     assert restored.asks == snapshot.asks
     assert datetime_to_nanos(restored.ts_utc) == datetime_to_nanos(snapshot.ts_utc)
     assert restored.instrument_id == snapshot.instrument_id
+
+
+def test_order_book_conversion_truncates_to_the_engine_depth() -> None:
+    """A 20-level Binance snapshot must not crash the engine's ten-level container."""
+    cfg = Settings()
+    request = research_request(cfg, bar_count=100)
+    instrument = resolve_instrument(request.instrument_id, fees=cfg.fee_schedule())
+    snapshot = OrderBookSnapshot(
+        instrument_id=request.instrument_id,
+        ts_utc=datetime(2024, 1, 1, tzinfo=UTC),
+        bids=tuple(
+            BookLevel(price=Decimal(3000 - index), size=Decimal("1")) for index in range(20)
+        ),
+        asks=tuple(
+            BookLevel(price=Decimal(3001 + index), size=Decimal("1")) for index in range(20)
+        ),
+    )
+    snapshot.validate()
+
+    depth = to_engine_books([snapshot], instrument=instrument)[0]
+
+    assert len(depth.bids) == 10
+    assert len(depth.asks) == 10
+    # the levels kept are the best ones, not an arbitrary slice
+    restored = to_domain_snapshot(depth, request.instrument_id)
+    assert restored.bids[0].price == snapshot.bids[0].price
+    assert restored.asks[0].price == snapshot.asks[0].price
+    restored.validate()

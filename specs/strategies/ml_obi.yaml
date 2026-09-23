@@ -1,11 +1,26 @@
 # =============================================================================
 #  ml_obi — напрямок за мікроструктурою книги ордерів (OBI / WOFI / fade)
 # =============================================================================
-#  Статус blocked: доменний код існує й покритий unit-тестом, але адаптера
-#  виконання немає (BACKTEST_WIRED_ROBOTS у domain/regime.py). Головна причина
-#  глибша за адаптер: у лабораторії немає даних книги ордерів, а без них ознаки
-#  OBI/WOFI/fade не існують узагалі.
-#      .venv/bin/lab research --robot ml_obi --synthetic --bars 200 → код 1
+#  Статус candidate. Раніше тут стояло «blocked» із трьома причинами (немає
+#  фіду книги, немає адаптера, немає моделі) — дві з трьох закрито кодом:
+#    * фід книги є: `lab ingest --depth` + `ParquetOrderBookCatalog`
+#      (`catalog/data/orderbook/<SYMBOL>/<date>.parquet`), у каталозі лежить
+#      1 доба ETHUSDT (2026-09-21, знімки 100 мс);
+#    * адаптер є: `subscribe_order_book_depth` + гілка `RobotName.ML_OBI`
+#      у `_build_robot()`, робот у `BACKTEST_WIRED_ROBOTS` і в
+#      `PAPER_SUPPORTED_ROBOTS`.
+#  Лишається головне: виміру немає (`evidence.measured: false`). Одна доба
+#  знімків — це не вибірка, на якій можна щось стверджувати.
+#
+#  Два дефекти, знайдені під час прогону paper-сесії (2026-09-23), виправлені:
+#    1. `to_engine_books()` передавав усі 20 рівнів Binance у контейнер
+#       `OrderBookDepth10` → `ValueError: bids length greater than maximum 10`;
+#       тепер рівні обрізаються до 10 (`BOOK_DEPTH`);
+#    2. `_has_working_order()` дивився лише на `cache.orders_open()`, який
+#       порожній, доки ордер INFLIGHT, а `Portfolio` не показує позицію до
+#       філу. Робот бачив `flat=True` при власних незакритих ордерах і наклав
+#       тринадцять входів за одну секунду на реальній книзі ETH (≈4× від
+#       ліміту 1x). Тепер вхід блокується, поки є inflight-ордер.
 # =============================================================================
 kind: strategy
 name: ml_obi
@@ -29,36 +44,23 @@ hypothesis: >
   ці три ознаки не існують.
 
 blocked_reason: >
-  (1) Немає даних книги — і це головна перешкода, а не адаптер. Протокол
-  `OrderBookSnapshotFeed` оголошений у `domain/ports.py`, але не має жодної
-  реалізації: `grep -rn "fetch_snapshot" src/` поза `ports.py` → порожньо. У
-  `infrastructure/` немає ні REST/WS-фіду книги, ні запису знімків у каталог:
-  `lab ingest` тягне лише klines (`BinancePublicKlines`), і в каталозі лежать
-  тільки bar-серії (`catalog/data/bar/ETHUSDT.SIM-1-HOUR-LAST-EXTERNAL`,
-  `BTCUSDT.SIM-...`). Тобто `OrderBookSnapshot` можна створити лише вручну — так
-  роблять unit-тести й приклад docs/09 §3. docs/08 §2.1 фіксує це як 🔴 «Немає
-  фіду книги ордерів».
-  (2) Немає адаптера, і наявний протокол йому не підходить.
-  `infrastructure/nautilus/signal_strategy.py` підписується на бари
-  (`subscribe_bars`) і вимагає від робота `on_bar(bar) -> Signal | None`
-  (`SingleLegRobot`), а `MlObiStrategy` має `on_book(snapshot)`. Немає ні
-  підписки на `subscribe_order_book_deltas`, ні конвертера
-  `OrderBookDelta → OrderBookSnapshot` (з `BookLevel` на `Decimal`), ні гілки в
-  `_build_robot()`. `MlObiStrategy.on_book()` не викликає жоден модуль у `src/` —
-  лише `tests/unit/test_mft_modules.py::test_ml_obi_strategy`.
-  (3) Немає моделі. Клас вимагає ін'єкції `DirectionClassifier` (протокол із
-  `domain/ml_classifier.py`). Без extra `ml` доступний лише
-  `HeuristicDirectionClassifier` — це правила, а не навчання;
-  `LightGBMDirectionClassifier` приймає готовий `model_path`, але натренованого
-  бустера в репозиторії немає, і немає збору датасету з книги
-  (`application/train_classifier.py` дає лише `purged_k_fold` і `label_direction`
-  — заготовку, не конвеєр).
-  (4) Модель виконання не підходить для мікроструктури. Рушій запускається з
-  `bar_execution=True` і роботи надсилають ринкові ордери
-  (`backtest_runner.py::_execute()`); docs/08 §7.2 прямо каже, що мікроструктурні
-  стратегії в цьому проєкті перевіряти не можна — симуляція виконання надто груба.
-  Навіть якби книга з'явилася, результат такого прогону міряв би артефакти
-  симулятора, а не перевагу.
+  Виміру немає, і причина тепер одна — обсяг даних книги, а не код. Дві з трьох
+  початкових перешкод закрито: фід книги існує (`lab ingest --depth`,
+  `ParquetOrderBookCatalog`), адаптер існує (`subscribe_order_book_depth`,
+  гілка в `_build_robot()`, `BACKTEST_WIRED_ROBOTS`, `PAPER_SUPPORTED_ROBOTS`).
+  Що лишається:
+  (1) Історія книги — одна доба. У каталозі лежить лише
+  `catalog/data/orderbook/ETHUSDT/2026-09-21.parquet`; історичного L2 публічно
+  не існує (docs/23 §2), тож знімки можна тільки збирати вперед. На одній добі
+  не можна ні підібрати поріг на IS, ні перевірити його на OOS.
+  (2) Модель не натренована. `LightGBMDirectionClassifier` доступний, але
+  `ml_obi_model_path` типово порожній, тож працює
+  `HeuristicDirectionClassifier` — правила, а не навчання. Датасет для OBI
+  (`application/train_obi.py`) і `lab ml --model-type obi` з'явились, але
+  навчати їх можна лише на тій самій одній добі.
+  (3) Модель виконання лишається грубою: `bar_execution=True` і ринкові ордери.
+  Мікроструктурна перевага на такій симуляції міряє артефакти рушія, а не
+  перевагу (docs/08 §7.2). Це не закривається кодом у межах цієї фази.
 
 edge_conditions:
   - name: obi_carries_direction_information

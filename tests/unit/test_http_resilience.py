@@ -230,3 +230,17 @@ def test_decode_of_non_json_error_page_is_none_not_a_crash() -> None:
     from nautilus_lab.infrastructure.http_resilience import _decode
 
     assert _decode(b"<html>429 Too Many Requests</html>") is None
+
+
+def test_transport_read_timeout_is_short_enough_to_retry_not_to_wait() -> None:
+    """A stalled socket must cost a retry, not most of a minute.
+
+    Measured 2026-09-23 on `api/v3/aggTrades`: ~1 in 3 pages stalled and never
+    answered, so the read timeout was pure waiting cost on the tick ingest path.
+    """
+    from nautilus_lab.infrastructure.http_resilience import _HTTP_TIMEOUT_SECONDS
+
+    assert 0 < _HTTP_TIMEOUT_SECONDS <= 10, (
+        "a stalled request is retried anyway; waiting 30s for it makes tick ingest "
+        "spend its wall clock on sockets that will never answer"
+    )

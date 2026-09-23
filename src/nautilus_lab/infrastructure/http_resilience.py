@@ -35,7 +35,14 @@ from urllib.request import Request, urlopen
 from nautilus_lab.domain.errors import MarketDataError, RateLimitedError
 from nautilus_lab.domain.ports import JsonResponse, JsonTransport
 
-_HTTP_TIMEOUT_SECONDS = 30
+# Read timeout for one request. Measured 2026-09-23 against `api/v3/aggTrades`: the
+# typical page answers in ~0.7s and an occasional one in ~4.7s, but roughly one in
+# three stalls and never answers at all. A stalled socket is retried either way, so the
+# timeout is pure waiting cost: at 30s a tick ingest spent most of its wall clock on
+# sockets that were never going to reply, which is what made a single day of history
+# look impossible. 10s keeps the slow-but-real 4.7s case and cuts each stall's cost
+# threefold.
+_HTTP_TIMEOUT_SECONDS = 10
 _RETRYABLE_STATUSES = frozenset({418, 429, 500, 502, 503, 504})
 _WEIGHT_HEADER = "x-mbx-used-weight-1m"
 

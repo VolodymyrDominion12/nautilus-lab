@@ -118,6 +118,15 @@ uv run lab paper --robot regime --bars 1500 --journal      # останні 1500
 uv run lab paper --robot pairs --bars 800                  # дві ноги
 uv run lab paper --robot vpin_momentum --bars 400 --select-on-is   # параметри — лише на IS
 uv run lab paper --robot regime --source live --live-bars 5 # + закриті бари з публічного WS
+uv run lab paper --robot regime --bars 200 --tick-vpin       # тік-рівневий фільтр (потрібна серія aggTrades)
+```
+
+Тіки можна зібрати лише живим потоком: REST-історія не віддає їх у дослідницькому
+масштабі (виміри — [docs/24 §5.2](docs/24-paper-treydynh.md)).
+
+```bash
+uv run lab ingest --trades --live-ticks 20 --symbols ETHUSDT   # 20 хв живого потоку в каталог
+uv run python scripts/measure_tick_vpin.py --symbol ETHUSDT    # розподіл VPIN на зібраному
 ```
 
 Сесії дописуються в `reports/paper/sessions.jsonl`. П'ять роботів реально торгують у

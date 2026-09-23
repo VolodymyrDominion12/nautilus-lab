@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from decimal import Decimal
 
 from nautilus_lab.application.dtos import (
@@ -20,6 +21,7 @@ from nautilus_lab.application.dtos import (
 )
 from nautilus_lab.application.param_grid import iter_param_grid
 from nautilus_lab.application.risk import require_simulated_mode
+from nautilus_lab.application.run_research_backtest import minimum_bars
 from nautilus_lab.application.score import in_sample_score
 from nautilus_lab.domain.align import split_aligned_by_window
 from nautilus_lab.domain.bars import OhlcvBar
@@ -34,6 +36,7 @@ from nautilus_lab.domain.walk_forward import (
     rolling_windows,
     split_by_window,
 )
+from nautilus_lab.domain.windowing import warmup_tail
 
 
 class RunWalkForward:
@@ -77,10 +80,51 @@ class RunWalkForward:
             run_is=lambda candidate: self._engine.run(
                 candidate, list(folds.in_sample), ticks, books
             ),
-            run_oos=lambda candidate: self._engine.run(
-                candidate, list(folds.out_of_sample), ticks, books
-            ),
+            run_oos=self._single_oos_runner(request, bars, folds.out_of_sample, ticks, books),
         )
+
+    def _single_oos_runner(
+        self,
+        request: WalkForwardRequest,
+        history: Sequence[OhlcvBar],
+        oos: Sequence[OhlcvBar],
+        ticks: list[AggTrade] | None,
+        books: list[OrderBookSnapshot] | None,
+    ) -> Callable[[BacktestRequest], BacktestReport]:
+        """OOS run over warm-up + window bars, trading only from the window's first bar."""
+        warm = warmup_tail(history, oos, _oos_warmup_count(request))
+        bars = [*warm, *oos]
+        trade_start = oos[0].ts_utc if warm else None
+
+        def run(candidate: BacktestRequest) -> BacktestReport:
+            return self._engine.run(replace(candidate, trade_start=trade_start), bars, ticks, books)
+
+        return run
+
+    def _pairs_oos_runner(
+        self,
+        request: WalkForwardRequest,
+        all_bars: dict[str, list[OhlcvBar]],
+        oos_bars: dict[str, list[OhlcvBar]],
+    ) -> Callable[[BacktestRequest], BacktestReport]:
+        leg_a = request.backtest.pairs.leg_a
+        warm_a = warmup_tail(all_bars[leg_a], oos_bars[leg_a], _oos_warmup_count(request))
+        warm_ts = {bar.ts_utc for bar in warm_a}
+        # Every leg is warmed on the same timestamps as the reference leg, so the spread
+        # model never sees one leg's bar without the other's.
+        bars = {
+            instrument_id: [
+                *(bar for bar in all_bars[instrument_id] if bar.ts_utc in warm_ts),
+                *oos_bars[instrument_id],
+            ]
+            for instrument_id in oos_bars
+        }
+        trade_start = oos_bars[leg_a][0].ts_utc if warm_a else None
+
+        def run(candidate: BacktestRequest) -> BacktestReport:
+            return self._engine.run_spread(replace(candidate, trade_start=trade_start), bars)
+
+        return run
 
     def _load_events(
         self, request: BacktestRequest
@@ -127,7 +171,7 @@ class RunWalkForward:
             request,
             window,
             run_is=lambda candidate: self._engine.run_spread(candidate, is_bars),
-            run_oos=lambda candidate: self._engine.run_spread(candidate, oos_bars),
+            run_oos=self._pairs_oos_runner(request, all_bars, oos_bars),
         )
 
     def execute_multi(self, request: WalkForwardRequest) -> MultiWindowReport:
@@ -192,9 +236,7 @@ class RunWalkForward:
             run_is=lambda candidate: self._engine.run(
                 candidate, list(split.in_sample), ticks, books
             ),
-            run_oos=lambda candidate: self._engine.run(
-                candidate, list(split.out_of_sample), ticks, books
-            ),
+            run_oos=self._single_oos_runner(request, bars, split.out_of_sample, ticks, books),
             oos_reference=split.out_of_sample,
         )
 
@@ -233,7 +275,7 @@ class RunWalkForward:
             index,
             window,
             run_is=lambda candidate: self._engine.run_spread(candidate, is_bars),
-            run_oos=lambda candidate: self._engine.run_spread(candidate, oos_bars),
+            run_oos=self._pairs_oos_runner(request, all_bars, oos_bars),
             oos_reference=oos_bars[leg_a],
         )
 
@@ -252,8 +294,6 @@ class RunWalkForward:
         # Only the final fold owns the tearsheet path, otherwise every fold would
         # overwrite the same file and the last one would look like the only result.
         if request.tearsheet_path and index == request.folds - 1:
-            from dataclasses import replace
-
             selected_request = replace(selected_request, tearsheet_path=request.tearsheet_path)
         oos = run_oos(selected_request)
         return WalkForwardFold(
@@ -279,8 +319,6 @@ class RunWalkForward:
 
         selected_request = apply_selected(request.backtest, best_params)
         if request.tearsheet_path:
-            from dataclasses import replace
-
             selected_request = replace(selected_request, tearsheet_path=request.tearsheet_path)
 
         oos = run_oos(selected_request)
@@ -321,7 +359,11 @@ class RunWalkForward:
             tried += 1
             candidate = apply_selected(request.backtest, params)
             report = run_is(candidate)
-            score = in_sample_score(report)
+            score = in_sample_score(
+                report,
+                metric=request.backtest.selection_metric,
+                starting_equity=request.backtest.starting_equity,
+            )
             if best_is_report is None or best_score is None or score > best_score:
                 best_score = score
                 best_params = params
@@ -361,6 +403,16 @@ def _multi_report(
             f"{last.window.out_of_sample_end.isoformat()})"
         ),
     )
+
+
+def _oos_warmup_count(request: WalkForwardRequest) -> int:
+    if request.oos_warmup_bars is not None:
+        return max(0, request.oos_warmup_bars)
+    # A book-driven robot has no bar indicators to warm; its window is the book series.
+    if request.backtest.robot is RobotName.ML_OBI:
+        return 0
+    # The same rule `_require_warmup` enforces (the spec validator keeps the two equal).
+    return minimum_bars(request.backtest.robot)
 
 
 def _require_warmup(robot: RobotName, bar_count: int, fold: str) -> None:

@@ -250,80 +250,100 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
     updatePriceLines(state.position);
   }, [state]);
 
-  // WebSocket Connection
+  // WebSocket Connection — reconnects with backoff. Before, one API restart or network
+  // blip left the terminal on "Stream disconnected" until the page was reloaded.
   useEffect(() => {
-    const wsUrl = getLivePaperWsUrl();
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let pingTimer: ReturnType<typeof setInterval> | null = null;
+    let attempt = 0;
 
-    ws.onopen = () => {
-      setIsConnected(true);
-      setStatusMsg('Connected to Live Stream');
-    };
+    const connect = () => {
+      if (disposed) return;
+      const ws = new WebSocket(getLivePaperWsUrl());
+      wsRef.current = ws;
 
-    ws.onclose = () => {
-      setIsConnected(false);
-      setStatusMsg('Stream disconnected');
-    };
+      ws.onopen = () => {
+        attempt = 0;
+        setIsConnected(true);
+        setStatusMsg('Connected to Live Stream');
+      };
 
-    ws.onerror = (err) => {
-      console.warn('Live Paper WS error:', err);
-    };
+      ws.onclose = () => {
+        if (pingTimer) clearInterval(pingTimer);
+        pingTimer = null;
+        setIsConnected(false);
+        if (disposed) return;
+        const delayMs = Math.min(15000, 1000 * 2 ** attempt);
+        attempt += 1;
+        setStatusMsg(`Stream disconnected — reconnecting in ${Math.round(delayMs / 1000)}s`);
+        retryTimer = setTimeout(connect, delayMs);
+      };
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'INIT_STATE' || msg.type === 'STATE_UPDATE') {
-          const newState = msg.data as LivePaperState;
-          setState(newState);
-          updatePriceLines(newState.position);
-          if (newState.position) {
-            setEditSl(newState.position.stop_loss || '');
-            setEditTp(newState.position.take_profit || '');
-          }
-        } else if (msg.type === 'BAR_UPDATE') {
-          const bar = msg.data as LiveBar;
-          if (candleSeriesRef.current && volumeSeriesRef.current) {
-            candleSeriesRef.current.update({
-              time: bar.time as Time,
-              open: bar.open,
-              high: bar.high,
-              low: bar.low,
-              close: bar.close,
+      ws.onerror = (err) => {
+        console.warn('Live Paper WS error:', err);
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data === 'pong') return;
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'INIT_STATE' || msg.type === 'STATE_UPDATE') {
+            const newState = msg.data as LivePaperState;
+            setState(newState);
+            updatePriceLines(newState.position);
+            if (newState.position) {
+              setEditSl(newState.position.stop_loss || '');
+              setEditTp(newState.position.take_profit || '');
+            }
+          } else if (msg.type === 'BAR_UPDATE') {
+            const bar = msg.data as LiveBar;
+            if (candleSeriesRef.current && volumeSeriesRef.current) {
+              candleSeriesRef.current.update({
+                time: bar.time as Time,
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+              });
+              volumeSeriesRef.current.update({
+                time: bar.time as Time,
+                value: bar.volume,
+                color: bar.close >= bar.open ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)',
+              });
+            }
+
+            // Update position mark price and floating PnL
+            setState((prev) => {
+              if (!prev) return null;
+              return {
+                ...prev,
+                last_price: msg.last_price ?? prev.last_price,
+                current_equity: msg.current_equity ?? prev.current_equity,
+                unrealized_pnl: msg.unrealized_pnl ?? prev.unrealized_pnl,
+                position: msg.position ?? prev.position,
+              };
             });
-            volumeSeriesRef.current.update({
-              time: bar.time as Time,
-              value: bar.volume,
-              color: bar.close >= bar.open ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)',
-            });
           }
-
-          // Update position mark price and floating PnL
-          setState((prev) => {
-            if (!prev) return null;
-            return {
-              ...prev,
-              last_price: msg.last_price ?? prev.last_price,
-              current_equity: msg.current_equity ?? prev.current_equity,
-              unrealized_pnl: msg.unrealized_pnl ?? prev.unrealized_pnl,
-              position: msg.position ?? prev.position,
-            };
-          });
+        } catch (e) {
+          console.error('Error parsing WS message:', e);
         }
-      } catch (e) {
-        console.error('Error parsing WS message:', e);
-      }
+      };
+
+      pingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send('ping');
+        }
+      }, 15000);
     };
 
-    const pingTimer = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send('ping');
-      }
-    }, 15000);
+    connect();
 
     return () => {
-      clearInterval(pingTimer);
-      ws.close();
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (pingTimer) clearInterval(pingTimer);
+      wsRef.current?.close();
     };
   }, []);
 

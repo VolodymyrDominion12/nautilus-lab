@@ -1,0 +1,69 @@
+"""Who may drive the dashboard API.
+
+The API launches processes, rewrites `.env` and calls the LLM with the key from it.
+It used to answer any origin (`allow_origins=["*"]` with credentials) and had no
+authentication, so any web page open in the same browser could `PUT /api/settings`
+(point `LLM_BASE_URL` at itself and collect `LLM_API_KEY` on the next proposal) or
+start jobs. CORS alone does not stop that: a cross-site "simple" POST still reaches
+the server, only its response is hidden from the page.
+
+Two independent gates, both cheap:
+
+* **Origin** — a browser always sends `Origin` on cross-site requests and WebSocket
+  handshakes. A request that carries one must come from the dashboard's own origin.
+  Requests without `Origin` (curl, scripts, tests) are not browser attacks.
+* **Token** — optional. When `API_TOKEN` is set, every `/api` call must present it
+  (`X-Lab-Token` header, or `?token=` for WebSockets, which cannot set headers).
+
+Static report mounts are exempt from the token: the dashboard embeds tearsheets in an
+iframe, which cannot send a header, and they hold nothing that changes state.
+"""
+
+from __future__ import annotations
+
+import hmac
+from dataclasses import dataclass
+
+DEFAULT_ALLOWED_ORIGINS: tuple[str, ...] = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+    # The API's own origin: FastAPI's /docs page sends it on "Try it out" requests.
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+)
+TOKEN_HEADER = "x-lab-token"
+
+
+@dataclass(frozen=True, slots=True)
+class ApiSecurity:
+    allowed_origins: tuple[str, ...] = DEFAULT_ALLOWED_ORIGINS
+    token: str = ""
+
+    @classmethod
+    def from_values(cls, *, origins: str, token: str) -> ApiSecurity:
+        parsed = tuple(item.strip().rstrip("/") for item in origins.split(",") if item.strip())
+        return cls(allowed_origins=parsed or DEFAULT_ALLOWED_ORIGINS, token=token.strip())
+
+    def refusal(
+        self,
+        *,
+        method: str,
+        path: str,
+        origin: str | None,
+        presented_token: str | None,
+    ) -> str | None:
+        """Why this request must be refused, or None when it may proceed."""
+        if method.upper() == "OPTIONS":
+            # Preflight: CORSMiddleware answers it and withholds headers from
+            # origins it does not know, which is what makes the browser give up.
+            return None
+        if origin is not None and origin.rstrip("/") not in self.allowed_origins:
+            return f"origin {origin!r} is not allowed to use this API"
+        needs_token = bool(self.token) and path.startswith("/api")
+        if needs_token and not (
+            presented_token and hmac.compare_digest(presented_token, self.token)
+        ):
+            return "missing or invalid API token"
+        return None

@@ -10,7 +10,7 @@ from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
 from nautilus_lab.domain.fees import FeeSchedule
-from nautilus_lab.domain.metrics import BacktestMetrics
+from nautilus_lab.domain.metrics import BacktestMetrics, SelectionMetric
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
@@ -63,6 +63,11 @@ class BacktestRequest:
     ml_obi_threshold: Decimal = Decimal("0.55")
     adaptive_params: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
     tearsheet_path: str | None = None
+    # Bars before this instant only warm indicators: no signal is acted on and no equity
+    # is recorded. None = trade from the first bar (the pre-2026-09-23 behaviour).
+    trade_start: datetime | None = None
+    # What in-sample selection maximises (grid, Optuna, paper --select-on-is).
+    selection_metric: SelectionMetric = SelectionMetric.PNL
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +181,9 @@ class WalkForwardRequest:
     optuna_trials: int = 20
     tearsheet_path: str | None = None
     folds: int = 1
+    # Bars fed to the indicators right before each out-of-sample window (never traded).
+    # None = the robot's own warm-up minimum; 0 = start every OOS window cold.
+    oos_warmup_bars: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,19 +430,42 @@ class OverfitAuditReport:
 
     def summary_line(self) -> str:
         if not self.is_meaningful:
+            # Name the condition that actually failed: "need >= 2 configurations" was
+            # printed for a 3-configuration run whose real problem was < 2 splits.
+            missing = []
+            if self.configuration_count < 2:
+                missing.append(f"{self.configuration_count} configurations (need >= 2)")
+            if self.split_count < 2:
+                missing.append(f"{self.split_count} usable splits (need >= 2)")
             return (
                 f"PBO undefined: {self.configuration_count} configurations x "
-                f"{self.blocks} blocks (need >= 2 configurations)"
+                f"{self.blocks} blocks; " + "; ".join(missing)
             )
         verdict = (
             "selection generalises"
             if self.pbo < Decimal("0.5")
             else "selection is no better than chance"
         )
+        # PBO ranks configurations against each other; it says nothing about whether
+        # any of them makes money. A low PBO over six losing configurations used to read
+        # as a pass.
+        if not self._best_configuration_is_profitable():
+            verdict += ", but no configuration is profitable on average"
         return (
             f"PBO={self.pbo} over {self.split_count} splits x "
             f"{self.configuration_count} configurations on {self.blocks} blocks ({verdict})"
         )
+
+    def _best_configuration_is_profitable(self) -> bool:
+        if not self.block_returns or not self.block_returns[0]:
+            return False
+        index = self.best_configuration_index()
+        values: list[Decimal] = [
+            value for row in self.block_returns if (value := row[index]) is not None
+        ]
+        if not values:
+            return False
+        return sum(values, Decimal("0")) / Decimal(len(values)) > 0
 
 
 class BarFeed(Protocol):

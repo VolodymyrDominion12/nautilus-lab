@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+
+import pytest
 
 from nautilus_lab.api.paper_streamer import (
     LivePaperConfig,
     LivePaperSessionManager,
 )
+from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.signals import Signal, SignalSide
 
 
 def test_paper_streamer_initial_state() -> None:
@@ -132,3 +138,87 @@ def test_paper_streamer_manual_close_and_update_stops() -> None:
     assert manager.position is None
     assert len(manager.fills) == 2
     assert manager.fills[1].reason == "manual_close"
+
+
+# --- shared rules with the backtest (P1-5) -------------------------------------------
+
+
+def _signal(side: SignalSide) -> Signal:
+    return Signal(
+        instrument_id="BTCUSDT",
+        side=side,
+        bar_ts_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        reason="test",
+    )
+
+
+def _bars(count: int) -> list[OhlcvBar]:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    return [
+        OhlcvBar(
+            instrument_id="BTCUSDT",
+            ts_utc=start + timedelta(minutes=index),
+            open=Decimal("100"),
+            high=Decimal("101"),
+            low=Decimal("99"),
+            close=Decimal("100"),
+            volume=Decimal("1"),
+        )
+        for index in range(count)
+    ]
+
+
+def test_unknown_robot_fails_closed_instead_of_becoming_regime() -> None:
+    with pytest.raises(ValueError, match="cannot build robot"):
+        LivePaperSessionManager(LivePaperConfig(robot="vpin_momentum"))
+
+
+def test_start_with_unknown_robot_keeps_the_previous_session_config() -> None:
+    manager = LivePaperSessionManager(LivePaperConfig(symbol="BTCUSDT"))
+    with pytest.raises(ValueError):
+        asyncio.run(manager.start(LivePaperConfig(symbol="ETHUSDT", robot="nope")))
+    assert manager.config.symbol == "BTCUSDT"
+    assert not manager.is_active
+
+
+def test_opposite_signal_reverses_the_position() -> None:
+    manager = LivePaperSessionManager(LivePaperConfig(symbol="BTCUSDT"))
+    manager.is_active = True
+    manager._open_position_internal("LONG", Decimal("100"))
+
+    manager._apply_signal(_signal(SignalSide.SELL), Decimal("101"))
+
+    assert manager.position is not None
+    assert manager.position.side == "SHORT"
+    assert [fill.reason for fill in manager.fills][-2] == "signal_exit"
+
+
+def test_breaker_blocks_the_entry_but_never_the_exit() -> None:
+    manager = LivePaperSessionManager(LivePaperConfig(symbol="BTCUSDT"))
+    manager.is_active = True
+    manager._open_position_internal("LONG", Decimal("100"))
+    # A peak far above current equity trips the drawdown breaker.
+    manager._peak_equity = manager.current_equity * Decimal("2")
+
+    events = manager._apply_signal(_signal(SignalSide.SELL), Decimal("100"))
+
+    assert manager.position is None, "the long must be closed even with the breaker tripped"
+    assert any("Risk blocked entry" in event for event in events)
+    assert manager.risk_refusals == {"max drawdown circuit breaker": 1}
+
+
+def test_closed_bar_reaches_the_robot_once_and_in_order() -> None:
+    manager = LivePaperSessionManager(LivePaperConfig(symbol="BTCUSDT"))
+    bars = _bars(3)
+    assert manager.warm_up(bars) == 3
+    # Replayed history (a reconnect re-sends the last closed kline) is ignored.
+    assert manager.warm_up(bars[-2:]) == 0
+    assert manager._accept_closed_bar(bars[-1]) is False
+
+
+def test_warm_up_failure_is_a_cold_start_not_a_crash() -> None:
+    async def failing(symbol: str, interval: str, count: int) -> list[OhlcvBar]:
+        raise OSError("network down")
+
+    manager = LivePaperSessionManager(LivePaperConfig(), history_loader=failing)
+    assert asyncio.run(manager._warm_up_from_history()) == 0

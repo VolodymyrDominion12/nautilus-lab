@@ -86,6 +86,7 @@ class _Engine:
     def __init__(self) -> None:
         self.single: tuple[int, int | None, int | None] | None = None
         self.spread: dict[str, int] | None = None
+        self.request: BacktestRequest | None = None
 
     def run_paper(
         self,
@@ -94,6 +95,7 @@ class _Engine:
         ticks: list[Any] | None = None,
         books: list[Any] | None = None,
     ) -> PaperSessionReport:
+        self.request = request
         self.single = (
             len(bars),
             None if ticks is None else len(ticks),
@@ -137,7 +139,10 @@ def test_paper_session_window_is_the_most_recent_bars_not_the_whole_catalog() ->
     use_case.execute(_request(bars=200))
 
     assert engine.single is not None
-    assert engine.single[0] == 200
+    # 200 traded bars, plus the regime robot's 150 warm-up bars right before them.
+    assert engine.single[0] == 350
+    assert engine.request is not None
+    assert engine.request.trade_start == feed._bars[-200].ts_utc
 
 
 def test_paper_session_refuses_live_mode() -> None:

@@ -323,3 +323,68 @@ def test_ml_obi_walk_forward_without_book_feed_fails_closed() -> None:
     )
     with pytest.raises(ValueError, match="OrderBook feed"):
         RunWalkForward(_WindowEngine(), Feed()).execute(WalkForwardRequest(backtest=request))
+
+
+def _recording_run(calls: list[tuple[BacktestRequest, list[OhlcvBar]]]) -> _WindowEngine:
+    class Recorder(_WindowEngine):
+        def run(
+            self,
+            request: BacktestRequest,
+            folded: list[OhlcvBar],
+            ticks: list[AggTrade] | None = None,
+            books: list[OrderBookSnapshot] | None = None,
+        ) -> BacktestReport:
+            calls.append((request, folded))
+            return super().run(request, folded, ticks, books)
+
+    return Recorder()
+
+
+def _ema_request() -> BacktestRequest:
+    return BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=400,
+        starting_equity=Decimal("100000"),
+        risk=_limits(),
+        robot=RobotName.EMA,
+    )
+
+
+class _Feed:
+    def __init__(self, bars: list[OhlcvBar]) -> None:
+        self._bars = bars
+
+    def load(self, request: BacktestRequest) -> list[OhlcvBar]:
+        return self._bars
+
+    def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
+        return {request.instrument_id: self._bars}
+
+
+def test_oos_run_is_warmed_on_the_bars_right_before_the_window() -> None:
+    """OOS used to start cold and spend its first bars warming indicators."""
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=11)
+    calls: list[tuple[BacktestRequest, list[OhlcvBar]]] = []
+    report = RunWalkForward(_recording_run(calls), _Feed(bars)).execute(
+        WalkForwardRequest(backtest=_ema_request())
+    )
+
+    oos_request, oos_bars = calls[-1]
+    oos_start = report.window.out_of_sample_start
+    assert oos_request.trade_start is not None
+    assert oos_request.trade_start >= oos_start
+    warm = [bar for bar in oos_bars if bar.ts_utc < oos_request.trade_start]
+    assert len(warm) == 50  # EMA warm-up minimum
+    # In-sample selection runs are never shifted: they trade from their first bar.
+    assert all(request.trade_start is None for request, _ in calls[:-1])
+
+
+def test_oos_warmup_can_be_switched_off() -> None:
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=11)
+    calls: list[tuple[BacktestRequest, list[OhlcvBar]]] = []
+    RunWalkForward(_recording_run(calls), _Feed(bars)).execute(
+        WalkForwardRequest(backtest=_ema_request(), oos_warmup_bars=0)
+    )
+    oos_request, _ = calls[-1]
+    assert oos_request.trade_start is None

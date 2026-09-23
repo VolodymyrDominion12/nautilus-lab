@@ -24,7 +24,7 @@ from nautilus_lab.application.dtos import (
 )
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.marking import OpenLot, unrealized_pnl
-from nautilus_lab.domain.metrics import compute_metrics
+from nautilus_lab.domain.metrics import PERIODS_PER_YEAR, compute_metrics
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.ticks import AggTrade
@@ -92,14 +92,15 @@ class NautilusResearchBacktest:
         invisible until it mattered.
         """
         report, ledger = self._execute(_single_run(request, bars, ticks, books))
+        traded = _traded(bars, request)
         return _paper_report(
             request,
             report,
             ledger,
-            bar_count=len(bars),
-            window_start=bars[0].ts_utc if bars else None,
-            window_end=bars[-1].ts_utc if bars else None,
-            mark_price=bars[-1].close if bars else None,
+            bar_count=len(traded),
+            window_start=traded[0].ts_utc if traded else None,
+            window_end=traded[-1].ts_utc if traded else None,
+            mark_price=traded[-1].close if traded else None,
         )
 
     def run_spread(
@@ -116,9 +117,10 @@ class NautilusResearchBacktest:
         bars_by_instrument: dict[str, list[OhlcvBar]],
     ) -> PaperSessionReport:
         report, ledger = self._execute(_spread_run(request, bars_by_instrument))
-        leg_a = bars_by_instrument.get(request.pairs.leg_a, [])
-        starts = [bars[0].ts_utc for bars in bars_by_instrument.values() if bars]
-        ends = [bars[-1].ts_utc for bars in bars_by_instrument.values() if bars]
+        leg_a = _traded(bars_by_instrument.get(request.pairs.leg_a, []), request)
+        traded = [_traded(bars, request) for bars in bars_by_instrument.values()]
+        starts = [bars[0].ts_utc for bars in traded if bars]
+        ends = [bars[-1].ts_utc for bars in traded if bars]
         return _paper_report(
             request,
             report,
@@ -182,6 +184,7 @@ class NautilusResearchBacktest:
                 turnover=turnover,
                 traded_notional=traded_notional,
                 ending_equity=ending,
+                periods_per_year=_periods_per_year(request),
             )
             saved_tearsheet: str | None = None
             if request.tearsheet_path:
@@ -229,6 +232,26 @@ def _open_lots(positions_report: object) -> list[OpenLot]:
             )
         )
     return lots
+
+
+def _periods_per_year(request: BacktestRequest) -> int | None:
+    """Bars per year behind the equity curve, or None when it is not bar-sampled."""
+    if request.robot is RobotName.ML_OBI:
+        return None  # sampled on every book update, not once per bar
+    try:
+        return PERIODS_PER_YEAR.get(interval_from_bar_type(request.bar_type))
+    except ValueError:
+        return None
+
+
+def _trade_start_ns(request: BacktestRequest) -> int | None:
+    return None if request.trade_start is None else datetime_to_nanos(request.trade_start)
+
+
+def _traded(bars: list[OhlcvBar], request: BacktestRequest) -> list[OhlcvBar]:
+    """The bars a run actually trades: warm-up bars before `trade_start` excluded."""
+    start = request.trade_start
+    return bars if start is None else [bar for bar in bars if bar.ts_utc >= start]
 
 
 def _last_closes(bars_by_instrument: dict[str, list[OhlcvBar]]) -> dict[str, Decimal]:
@@ -561,6 +584,8 @@ def _single_run(
             hawkes_toxic_threshold=request.hawkes_toxic_threshold,
             ml_obi_model_path=request.ml_obi_model_path,
             ml_obi_threshold=request.ml_obi_threshold,
+            trade_start_ns=_trade_start_ns(request),
+            drawdown_cooldown_days=request.risk_overlay.drawdown_cooldown_days,
         ),
         taker_buy_base_volume_by_ns=taker_buy_by_ns or None,
     )
@@ -629,6 +654,8 @@ def _spread_run(
             kelly_min_trades=request.risk_overlay.kelly_min_trades,
             use_cvar_breaker=request.risk_overlay.use_cvar_breaker,
             max_cvar_99=request.risk_overlay.max_cvar_99,
+            trade_start_ns=_trade_start_ns(request),
+            drawdown_cooldown_days=request.risk_overlay.drawdown_cooldown_days,
         ),
     )
     return _RunSpec(

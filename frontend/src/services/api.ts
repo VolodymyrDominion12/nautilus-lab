@@ -1,4 +1,5 @@
 import { apiUrl } from '../config';
+import { withWsToken } from '../lib/apiAuth';
 
 export interface JobState {
   running: boolean;
@@ -870,7 +871,7 @@ export async function updateLiveStops(params: {
 
 export function getLivePaperWsUrl(): string {
   const base = apiUrl('/api/paper/live-stream');
-  return base.replace(/^http/, 'ws');
+  return withWsToken(base.replace(/^http/, 'ws'));
 }
 
 export async function scanTriangular() {

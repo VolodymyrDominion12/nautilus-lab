@@ -138,6 +138,25 @@ invariants_enforced:
       відображалися жодного разу. Тест фіксує контракт, а не факт наявності
       даних у каталозі.
 
+  - statement: >
+      API не виконує запит із чужого origin: браузерний запит, що несе заголовок
+      Origin не зі списку `API_ALLOWED_ORIGINS`, отримує 403, а за заданого
+      `API_TOKEN` кожен виклик `/api` вимагає `X-Lab-Token` (для WebSocket — `?token=`).
+    enforced_by: src/nautilus_lab/api/security.py
+    verified_by: tests/unit/test_api_security.py::test_foreign_origin_is_refused_even_without_a_token
+    note: >
+      До 2026-09-23 CORS був `*` разом із credentials і без автентифікації: будь-яка
+      сторінка в тому ж браузері могла переписати `.env` (підмінити `LLM_BASE_URL` і
+      забрати `LLM_API_KEY`) або запускати процеси. Прогін через сам застосунок —
+      tests/unit/test_api_security_gate.py::test_cross_site_settings_write_is_refused.
+
+  - statement: >
+      Слот джоба займається всередині запиту під блокуванням: другий запуск того
+      самого джоба, поки перший ще не породив процес, отримує `status: error`, а
+      опитування логу одразу після старту бачить `is_running: true`.
+    enforced_by: src/nautilus_lab/api/app.py
+    verified_by: tests/unit/test_api_job_slots.py::test_second_launch_is_refused_while_the_first_has_not_spawned
+
 notes: >
   Компонент покриває лише ті інваріанти, які сьогодні мають тест. Свідомо не
   записано: (1) що `--folds N>=2` з явними датами відхиляється — це вже

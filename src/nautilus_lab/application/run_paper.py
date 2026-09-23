@@ -13,6 +13,7 @@ Nautilus simulation engine, and `require_simulated_mode` refuses `live` outright
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 from nautilus_lab.application.dtos import (
@@ -36,6 +37,7 @@ from nautilus_lab.domain.regime import RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot
 from nautilus_lab.domain.signals import SignalSide
+from nautilus_lab.domain.windowing import warmup_tail
 from nautilus_lab.infrastructure.paper_trading import PaperTradingLogger
 
 #: Robots a paper session can actually build, mirroring the engine's `_build_robot`.
@@ -106,7 +108,14 @@ class RunPaperSession:
         # `bar_count` is a window length here, not a floor: a session runs the most
         # recent closed bars forward, which is what makes it a rehearsal rather than
         # another look at the whole history.
-        bars = _tail(self._feed.load(request), request.bar_count)
+        history = self._feed.load(request)
+        bars = _tail(history, request.bar_count)
+        # The session window is traded from its first bar: the bars right before it only
+        # warm the indicators (a regime robot otherwise sat silent for ~150 bars).
+        warm = [] if request.robot is RobotName.ML_OBI else warmup_tail(history, bars, minimum)
+        if warm:
+            request = replace(request, trade_start=bars[0].ts_utc)
+            bars = [*warm, *bars]
 
         ticks = None
         if request.use_tick_vpin or request.use_hawkes:

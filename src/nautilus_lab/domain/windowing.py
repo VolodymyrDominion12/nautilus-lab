@@ -40,3 +40,20 @@ def within_bars[EventT: _Timestamped](
         return []
     start, end = span
     return [event for event in events if start < event.ts_utc <= end]
+
+
+def warmup_tail(
+    history: Sequence[OhlcvBar], window: Sequence[OhlcvBar], count: int
+) -> list[OhlcvBar]:
+    """The `count` bars of `history` that close right before `window` starts.
+
+    An out-of-sample run used to start cold: a regime robot spends its first ~150 bars
+    warming indicators, so a quarter of a short fold was silently not traded. These
+    bars are known at the window's start (they close before it), so feeding them to the
+    indicators — while forbidding trades until the window opens — leaks nothing.
+    """
+    if count <= 0 or not window:
+        return []
+    start = window[0].ts_utc
+    before = [bar for bar in history if bar.ts_utc < start]
+    return before[-count:]

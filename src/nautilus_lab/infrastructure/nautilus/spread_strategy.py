@@ -19,6 +19,7 @@ from nautilus_lab.application.risk import (
 )
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
+from nautilus_lab.domain.drawdown_cooldown import PeakState, advance, on_refusal
 from nautilus_lab.domain.marking import OpenLot, marked_equity
 from nautilus_lab.domain.pairs.pairs_trading import PairsTrading
 from nautilus_lab.domain.pairs.params import PairsParams
@@ -54,6 +55,8 @@ class SpreadRobotConfig(StrategyConfig, frozen=True):
     kelly_min_trades: int = 30
     use_cvar_breaker: bool = False
     max_cvar_99: Decimal = Decimal("0.05")
+    trade_start_ns: int | None = None
+    drawdown_cooldown_days: int = 0
 
 
 class SpreadRobot(Strategy):  # type: ignore[misc]
@@ -89,6 +92,8 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         self._prev_ts_b: datetime | None = None
         self._day_start_equity: Decimal | None = None
         self._peak_equity: Decimal | None = None
+        self._peak_state: PeakState | None = None
+        self._last_equity_ts: datetime | None = None
         self._day: date | None = None
         self._equity_curve: list[Decimal] = []
         self._turnover: Decimal = Decimal("0")
@@ -123,6 +128,9 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             return
 
         signal = self._robot.on_bars(self._last_a, self._last_b)
+        start = self.config.trade_start_ns
+        if start is not None and int(bar.ts_event) < start:
+            return  # warm-up bar: the spread model learns, nothing is traded or recorded
         equity = self._equity()
         if equity is not None:
             self._update_equity_path(self._last_a.ts_utc, equity)
@@ -188,6 +196,7 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         )
         decision = evaluate_entry(snapshot, self._limits, self._overlay)
         if not decision.allowed:
+            self._note_refusal(decision.reason)
             self.log.warning(f"Risk blocked spread entry: {decision.reason}")
             return False
         return True
@@ -289,8 +298,19 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         if self._day != day:
             self._day = day
             self._day_start_equity = equity
-        if self._peak_equity is None or equity > self._peak_equity:
-            self._peak_equity = equity
+        state = self._peak_state or PeakState(peak=equity)
+        self._peak_state = advance(
+            state,
+            equity=equity,
+            now=ts_utc,
+            cooldown_days=self.config.drawdown_cooldown_days,
+        )
+        self._peak_equity = self._peak_state.peak
+        self._last_equity_ts = ts_utc
+
+    def _note_refusal(self, reason: str) -> None:
+        if self._peak_state is not None and self._last_equity_ts is not None:
+            self._peak_state = on_refusal(self._peak_state, reason=reason, now=self._last_equity_ts)
 
 
 def _to_domain_bar(bar: Bar) -> OhlcvBar:

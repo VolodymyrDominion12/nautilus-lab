@@ -446,8 +446,15 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
         }
 
         // The process died before writing last_run.json. Without this the UI would say
-        // "Simulating..." forever because polling only stops on a finished result.
-        if (launch && !res.is_running && launch.sawRunning && launch.polls > 2) {
+        // "Simulating..." forever because polling only stops on a finished result. A job
+        // that died before the first poll never shows `is_running`, so a quiet idle
+        // server also ends the wait after a few polls.
+        if (
+          launch &&
+          !res.is_running &&
+          launch.polls > 2 &&
+          (launch.sawRunning || launch.polls > 5)
+        ) {
           setStaleNotice(
             'The research process stopped without writing a result. The log above has the reason.',
           );

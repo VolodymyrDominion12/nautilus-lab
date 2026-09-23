@@ -32,3 +32,13 @@ def test_within_bars_drops_history_and_future() -> None:
 
 def test_within_bars_without_bars_keeps_nothing() -> None:
     assert within_bars([_Event(datetime(2024, 1, 1, tzinfo=UTC))], []) == []
+
+
+def test_warmup_tail_takes_the_bars_closing_before_the_window() -> None:
+    from nautilus_lab.domain.windowing import warmup_tail
+
+    bars = make_bars(10)
+    assert warmup_tail(bars, bars[6:], 3) == bars[3:6]
+    assert warmup_tail(bars, bars[2:], 5) == bars[:2]  # not enough history: all of it
+    assert warmup_tail(bars, bars[6:], 0) == []
+    assert warmup_tail(bars, [], 3) == []

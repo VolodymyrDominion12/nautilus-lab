@@ -24,6 +24,7 @@ from nautilus_lab.application.risk import (
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRouter
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
+from nautilus_lab.domain.drawdown_cooldown import PeakState, advance, on_refusal
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
 from nautilus_lab.domain.marking import OpenLot, marked_equity
@@ -110,6 +111,10 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     use_ratchet: bool = False
     ratchet_arm_pct: Decimal = Decimal("0.0125")
     use_protective_stop: bool = True
+    # Bars that close before this timestamp (ns) only warm indicators; see
+    # BacktestRequest.trade_start.
+    trade_start_ns: int | None = None
+    drawdown_cooldown_days: int = 0
     ml_obi_model_path: str | None = None
     ml_obi_threshold: Decimal = Decimal("0.55")
 
@@ -148,6 +153,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._previous_ts: datetime | None = None
         self._day_start_equity: Decimal | None = None
         self._peak_equity: Decimal | None = None
+        self._peak_state: PeakState | None = None
+        self._last_equity_ts: datetime | None = None
         self._day: date | None = None
         self._equity_curve: list[Decimal] = []
         self._turnover: Decimal = Decimal("0")
@@ -225,6 +232,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
 
         signal = self._robot.on_bar(domain_bar)
         self._last_mark = domain_bar.close
+        if self._warming_up(int(bar.ts_event)):
+            return
         self._track_equity(domain_bar.ts_utc)
 
         if self._apply_ratchet(domain_bar):
@@ -242,6 +251,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         # protective stop still is (it rests on the venue, not in this callback).
         mid_price = (snapshot.bids[0].price + snapshot.asks[0].price) / Decimal("2")
         self._last_mark = mid_price
+        if self._warming_up(int(depth.ts_event)):
+            return
         self._track_equity(snapshot.ts_utc)
         self._process_signal(signal, mid_price)
 
@@ -289,6 +300,10 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         ):
             self._stop_order_id = None
             self.log.info("Protective stop filled; position closed at the stop")
+
+    def _warming_up(self, ts_event_ns: int) -> bool:
+        start = self.config.trade_start_ns
+        return start is not None and ts_event_ns < start
 
     def _track_equity(self, ts_utc: datetime) -> None:
         equity = self._equity()
@@ -358,6 +373,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         decision = evaluate_entry(snapshot, self._limits, self._overlay)
         if not decision.allowed:
             self._breaches.record(decision.reason)
+            self._note_refusal(decision.reason)
             self.log.warning(f"Risk blocked entry: {decision.reason}")
             return None
 
@@ -512,8 +528,19 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         if self._day != day:
             self._day = day
             self._day_start_equity = equity
-        if self._peak_equity is None or equity > self._peak_equity:
-            self._peak_equity = equity
+        state = self._peak_state or PeakState(peak=equity)
+        self._peak_state = advance(
+            state,
+            equity=equity,
+            now=ts_utc,
+            cooldown_days=self.config.drawdown_cooldown_days,
+        )
+        self._peak_equity = self._peak_state.peak
+        self._last_equity_ts = ts_utc
+
+    def _note_refusal(self, reason: str) -> None:
+        if self._peak_state is not None and self._last_equity_ts is not None:
+            self._peak_state = on_refusal(self._peak_state, reason=reason, now=self._last_equity_ts)
 
 
 def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:

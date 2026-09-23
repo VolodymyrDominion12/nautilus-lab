@@ -182,7 +182,11 @@ class RunParamSelection:
         for candidate_params in iter_param_grid(request):
             tried += 1
             report = run_is(apply_selected(request, candidate_params))
-            score = in_sample_score(report)
+            score = in_sample_score(
+                report,
+                metric=request.selection_metric,
+                starting_equity=request.starting_equity,
+            )
             if best_report is None or best_score is None or score > best_score:
                 best_score = score
                 best_params = candidate_params

@@ -3,9 +3,29 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 from math import sqrt
 
 from nautilus_lab.domain.bars import OhlcvBar
+
+
+class SelectionMetric(StrEnum):
+    """What the in-sample parameter search maximises (application/score.py)."""
+
+    PNL = "pnl"
+    SHARPE = "sharpe"
+    CALMAR = "calmar"
+
+
+#: Bars per year for each supported interval (crypto trades 24/7).
+PERIODS_PER_YEAR: dict[str, int] = {
+    "1m": 525_600,
+    "5m": 105_120,
+    "15m": 35_040,
+    "1h": 8_760,
+    "4h": 2_190,
+    "1d": 365,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +39,10 @@ class BacktestMetrics:
     # of a per-unit cost: doing that would inflate breakeven roughly twofold.
     traded_notional: Decimal = Decimal("0")
     breakeven_cost: Decimal | None = None
+    # `sharpe_like` scaled by sqrt(bars per year). The per-bar number cannot be compared
+    # across timeframes (a 1m and a 1h run differ by sqrt(60) for the same edge); this
+    # one can. None when the bar interval is unknown or the curve is not bar-sampled.
+    sharpe_annualized: Decimal | None = None
 
     @property
     def paid_cost_rate(self) -> Decimal | None:
@@ -55,9 +79,15 @@ def compute_metrics(
     turnover: Decimal,
     traded_notional: Decimal = Decimal("0"),
     ending_equity: Decimal | None = None,
+    periods_per_year: int | None = None,
 ) -> BacktestMetrics:
     max_dd = _max_drawdown(equity_curve, starting_equity)
     sharpe = _sharpe_like(equity_curve)
+    annualized = (
+        None
+        if sharpe is None or periods_per_year is None or periods_per_year <= 0
+        else sharpe * Decimal(str(sqrt(periods_per_year)))
+    )
     net_pnl = _net_pnl(starting_equity, equity_curve, ending_equity)
     return BacktestMetrics(
         fees_paid=fees_paid,
@@ -70,6 +100,7 @@ def compute_metrics(
             fees_paid=fees_paid,
             traded_notional=traded_notional,
         ),
+        sharpe_annualized=annualized,
     )
 
 

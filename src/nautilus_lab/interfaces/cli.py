@@ -15,6 +15,7 @@ from nautilus_lab.application.dtos import (
     apply_selected,
 )
 from nautilus_lab.application.journal import JournalEntry, record_run
+from nautilus_lab.application.promotion_gate import evaluate_gate
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
 from nautilus_lab.application.run_paper import (
@@ -360,6 +361,48 @@ def main(argv: Sequence[str] | None = None) -> int:
     train.add_argument("--end", help="UTC end (YYYY-MM-DD)")
     train.add_argument("--threshold", default="0.55", help="Classifier probability threshold")
 
+    xsmom = sub.add_parser(
+        "xsmom",
+        help="Cross-sectional momentum over a basket of spot coins: walk-forward (+ audit)",
+    )
+    xsmom.add_argument(
+        "--symbols",
+        default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT",
+        help="Comma-separated Binance spot symbols already in the catalog",
+    )
+    xsmom.add_argument("--interval", default=None, help="Bar interval (default: settings)")
+    xsmom.add_argument("--catalog", help="Catalog directory (default: settings/catalog)")
+    xsmom.add_argument("--start", help="UTC start (YYYY-MM-DD)")
+    xsmom.add_argument("--end", help="UTC end exclusive (YYYY-MM-DD)")
+    xsmom.add_argument("--folds", type=int, default=6, help="Rolling walk-forward folds")
+    xsmom.add_argument(
+        "--is-fraction", default="0.5", help="Share of history for the first selection block"
+    )
+    xsmom.add_argument("--lookbacks", default="14,30,60", help="Momentum lookbacks, in bars")
+    xsmom.add_argument("--top-n", default="2,3", help="Coins held, grid")
+    xsmom.add_argument("--rebalance", default="7", help="Rebalance period in bars, grid")
+    xsmom.add_argument(
+        "--no-positive-filter",
+        action="store_true",
+        help="Hold the top coins even when their own momentum is negative",
+    )
+    xsmom.add_argument(
+        "--inverse-vol", action="store_true", help="Weight holdings by inverse volatility"
+    )
+    xsmom.add_argument(
+        "--slippage-bps", default="5", help="Adverse slippage per fill, in basis points"
+    )
+    xsmom.add_argument(
+        "--metric",
+        choices=["pnl", "sharpe", "calmar"],
+        default="calmar",
+        help="In-sample selection metric (default: calmar)",
+    )
+    xsmom.add_argument(
+        "--pbo", action="store_true", help="Also run the PBO/DSR audit and the full gate"
+    )
+    xsmom.add_argument("--pbo-blocks", type=int, default=8, help="Blocks for the audit")
+
     sub.add_parser("live", help="Live trading (always fail closed)")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -388,6 +431,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_propose(cfg, args)
         if args.command == "ml":
             return _run_ml_train(cfg, args)
+        if args.command == "xsmom":
+            return _run_xsmom(cfg, args)
         if args.command == "live":
             require_simulated_mode(TradingMode.LIVE)
     except (
@@ -805,6 +850,7 @@ def _run_pbo(cfg: Settings, args: argparse.Namespace, robot: RobotName | None) -
         print(f"  [{index}] {label} :: {cells}")
     print(report.summary_line())
     print(report.deflated_sharpe.summary_line())
+    print(evaluate_gate(None, report).summary_line())
     if getattr(args, "notify", False):
         notifier(cfg).notify(f"Overfitting audit complete: {report.summary_line()}")
     if _journal_enabled(cfg, args):
@@ -1005,6 +1051,102 @@ def _record_journal(cfg: Settings, entry: JournalEntry) -> None:
     print(f"journal_row_appended={markdown_path}")
 
 
+def _int_list(raw: str) -> tuple[int, ...]:
+    values = tuple(int(item) for item in raw.split(",") if item.strip())
+    if not values:
+        raise ValueError(f"expected a comma-separated list of integers, got {raw!r}")
+    return values
+
+
+def _run_xsmom(cfg: Settings, args: argparse.Namespace) -> int:
+    """Walk-forward (and optionally PBO/DSR) for the basket rotation; prints the gate."""
+    from dataclasses import replace
+
+    from nautilus_lab.application.run_xsmom import (
+        XsMomGrid,
+        XsMomRequest,
+        run_xsmom_audit,
+        run_xsmom_walk_forward,
+    )
+    from nautilus_lab.domain.metrics import PERIODS_PER_YEAR, SelectionMetric
+    from nautilus_lab.domain.xsmom import Weighting
+    from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
+    from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
+    from nautilus_lab.interfaces.composition import research_feed
+
+    require_simulated_mode(cfg.trading_mode)
+    interval = args.interval or cfg.bar_interval
+    if interval != cfg.bar_interval:
+        cfg = cfg.model_copy(update={"bar_interval": interval})
+    symbols = [item.strip().upper() for item in args.symbols.split(",") if item.strip()]
+    if len(symbols) < 2:
+        raise ValueError("cross-sectional momentum needs at least two symbols")
+    instrument_ids = tuple(binance_symbol_to_instrument_id(symbol) for symbol in symbols)
+    base = research_request(
+        cfg,
+        bar_count=0,
+        source=BarOrigin.CATALOG,
+        start=parse_utc(args.start) if args.start else None,
+        end=parse_utc(args.end) if args.end else None,
+    )
+    feed_request = replace(
+        base,
+        instrument_id=instrument_ids[0],
+        instrument_ids=instrument_ids,
+        bar_type=nautilus_bar_type(instrument_ids[0], interval),
+    )
+    bars = research_feed(cfg).load_multi(feed_request)
+    empty = [key for key, series in bars.items() if not series]
+    if empty:
+        raise CatalogEmptyError(
+            f"no {interval} bars for {', '.join(empty)} in the catalog; ingest them first: "
+            f"uv run lab ingest --symbols {','.join(symbols)}"
+        )
+    request = XsMomRequest(
+        starting_equity=cfg.starting_equity,
+        fees=cfg.fee_schedule(),
+        slippage=Decimal(args.slippage_bps) / Decimal("10000"),
+        grid=XsMomGrid(
+            lookback_bars=_int_list(args.lookbacks),
+            top_n=_int_list(args.top_n),
+            rebalance_every=_int_list(args.rebalance),
+            require_positive=not args.no_positive_filter,
+            weighting=Weighting.INVERSE_VOL if args.inverse_vol else Weighting.EQUAL,
+        ),
+        folds=args.folds,
+        in_sample_fraction=Decimal(args.is_fraction),
+        embargo_bars=cfg.embargo_bars,
+        selection_metric=SelectionMetric(args.metric),
+        periods_per_year=PERIODS_PER_YEAR.get(interval),
+        pbo_blocks=args.pbo_blocks,
+    )
+    first = next(iter(bars.values()))
+    print(
+        f"xsmom basket={','.join(symbols)} interval={interval} bars={len(first)} "
+        f"window=[{first[0].ts_utc.isoformat()}, {first[-1].ts_utc.isoformat()}] "
+        f"grid={len(request.grid.candidates())} metric={request.selection_metric.value} "
+        "(portfolio simulator: decide on close, fill next open, taker fee + slippage)"
+    )
+    report = run_xsmom_walk_forward(bars, request)
+    for fold in report.folds:
+        window = fold.window
+        oos = fold.out_of_sample
+        print(
+            f"fold {fold.index} OOS=[{window.out_of_sample_start.isoformat()}, "
+            f"{window.out_of_sample_end.isoformat()}) trades={oos.trades} "
+            f"return={_pct(fold.oos_return)} basket={_pct(fold.buy_and_hold_return)} "
+            f"max_dd={_pct(oos.metrics.max_drawdown)} fees={oos.fees_paid:.2f} "
+            f"selected={fold.selected.label()}"
+        )
+    print(report.summary_line())
+    audit = run_xsmom_audit(bars, request) if args.pbo else None
+    if audit is not None:
+        print(audit.summary_line())
+        print(audit.deflated_sharpe.summary_line())
+    print(evaluate_gate(report, audit).summary_line())
+    return 0
+
+
 def parse_date(value: str) -> date:
     """YYYY-MM-DD for argparse; a bad value becomes a usage error, not a traceback."""
     return date.fromisoformat(value)
@@ -1062,6 +1204,8 @@ def _print_multi_window(report: MultiWindowReport) -> None:
     if breaches is not None:
         print(breaches)
     print(report.summary_line())
+    # Half the evidence: PBO/DSR come from `--pbo`, so this is INCOMPLETE at best.
+    print(evaluate_gate(report, None).summary_line())
 
 
 def _breach_suffix(line: str | None) -> str:

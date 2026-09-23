@@ -160,6 +160,19 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
                 key="USE_PROTECTIVE_STOP", label="Protective stop order", field_type="boolean"
             ),
             SettingField(
+                key="SELECTION_METRIC",
+                label="In-sample selection metric",
+                field_type="select",
+                options=["pnl", "sharpe", "calmar"],
+                description="What the parameter search maximises; pnl favours the riskiest.",
+            ),
+            SettingField(
+                key="DRAWDOWN_COOLDOWN_DAYS",
+                label="Drawdown breaker cool-down (days)",
+                field_type="number",
+                description="0 = a tripped drawdown breaker blocks entries for the whole run.",
+            ),
+            SettingField(
                 key="PAIRS_REFIT_EVERY", label="Pairs refit every N bars", field_type="number"
             ),
         ],

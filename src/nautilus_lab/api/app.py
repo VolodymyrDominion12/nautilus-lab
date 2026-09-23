@@ -6,6 +6,8 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
+from collections.abc import Awaitable, Callable
 from datetime import UTC
 from decimal import Decimal
 from pathlib import Path
@@ -13,8 +15,17 @@ from typing import Any
 
 import dotenv
 import yaml
-from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -40,6 +51,7 @@ from nautilus_lab.api.research_runner import (
     load_job_result,
     summary_from_result,
 )
+from nautilus_lab.api.security import TOKEN_HEADER, ApiSecurity
 from nautilus_lab.api.settings_schema import (
     mask_secret,
     settings_schema_payload,
@@ -74,10 +86,35 @@ os.makedirs(HYPOTHESES_DIR, exist_ok=True)
 app.mount("/static_reports", StaticFiles(directory=REPORTS_DIR), name="static_reports")
 app.mount("/static_hypotheses", StaticFiles(directory=HYPOTHESES_DIR), name="static_hypotheses")
 
+#: Read once at import: changing API_TOKEN / API_ALLOWED_ORIGINS needs a restart, which is
+#: the point — a request must not be able to relax the gate it is being checked by.
+SECURITY = ApiSecurity.from_values(
+    origins=settings().api_allowed_origins,
+    token=settings().api_token,
+)
+
+
+@app.middleware("http")
+async def _security_gate(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    reason = SECURITY.refusal(
+        method=request.method,
+        path=request.url.path,
+        origin=request.headers.get("origin"),
+        presented_token=request.headers.get(TOKEN_HEADER),
+    )
+    if reason is not None:
+        return JSONResponse(status_code=403, content={"detail": reason})
+    return await call_next(request)
+
+
+# Registered after the gate so it wraps it: a refusal to an allowed origin still carries
+# CORS headers and the dashboard can show the reason instead of a bare network error.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=list(SECURITY.allowed_origins),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -90,6 +127,45 @@ CURRENT_PAPER_PROCESS: subprocess.Popen[str] | None = None
 #: When each job was launched, so the dashboard can show elapsed time instead of a
 #: bare "running". Only read while the matching process handle is alive.
 JOB_STARTED: dict[str, datetime.datetime] = {}
+
+#: Jobs an endpoint has accepted whose process the background task has not finished
+#: with yet. The "already running?" check used to look only at the process handle,
+#: which the background task sets AFTER the response is sent: two quick clicks both
+#: passed the check, spawned two processes and truncated each other's log and result.
+#: A poll right after launch also saw "not running" and stopped. Reserving the slot
+#: under a lock, inside the request, closes both gaps.
+_JOB_LOCK = threading.Lock()
+JOBS_STARTING: set[str] = set()
+
+
+def _job_process(name: str) -> subprocess.Popen[str] | None:
+    return {
+        "research": CURRENT_RESEARCH_PROCESS,
+        "ingest": CURRENT_INGEST_PROCESS,
+        "ml_train": CURRENT_ML_PROCESS,
+        "paper": CURRENT_PAPER_PROCESS,
+    }[name]
+
+
+def _job_active(name: str) -> bool:
+    """Accepted and not finished: reserved, or its process is still alive."""
+    process = _job_process(name)
+    return name in JOBS_STARTING or (process is not None and process.poll() is None)
+
+
+def _reserve_job(name: str) -> bool:
+    """Claim the job slot atomically. False = another run of this job is active."""
+    with _JOB_LOCK:
+        if _job_active(name):
+            return False
+        JOBS_STARTING.add(name)
+        return True
+
+
+def _release_job(name: str) -> None:
+    with _JOB_LOCK:
+        JOBS_STARTING.discard(name)
+
 
 SECRET_SETTING_SUFFIXES = ("_TOKEN", "_SECRET", "_KEY", "_URL")
 
@@ -234,7 +310,7 @@ JOB_LABELS: dict[str, str] = {
 
 def _job_payload(name: str, process: subprocess.Popen[str] | None) -> dict[str, Any]:
     """One job's live state: running, when it started, and how long it has run."""
-    running = process is not None and process.poll() is None
+    running = name in JOBS_STARTING or (process is not None and process.poll() is None)
     started = JOB_STARTED.get(name)
     elapsed = None
     if running and started is not None:
@@ -423,6 +499,13 @@ def get_reports() -> dict[str, Any]:
 
 
 def run_research_subprocess(config: dict[str, Any]) -> None:
+    try:
+        _run_research(config)
+    finally:
+        _release_job("research")
+
+
+def _run_research(config: dict[str, Any]) -> None:
     global CURRENT_RESEARCH_PROCESS
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -464,8 +547,7 @@ def run_research_subprocess(config: dict[str, Any]) -> None:
 @app.post("/api/research")
 def run_research(background_tasks: BackgroundTasks, req: ResearchRunRequest) -> dict[str, Any]:
     global CURRENT_RESEARCH_PROCESS
-    res_proc = CURRENT_RESEARCH_PROCESS
-    if res_proc is not None and res_proc.poll() is None:
+    if _job_active("research"):
         return {"status": "error", "message": "Another research process is already running."}
 
     # Refuse impossible combinations here, before the job is spawned and before the previous
@@ -526,6 +608,8 @@ def run_research(background_tasks: BackgroundTasks, req: ResearchRunRequest) -> 
                 ),
             )
 
+    if not _reserve_job("research"):
+        return {"status": "error", "message": "Another research process is already running."}
     log_path = os.path.join(REPORTS_DIR, "last_run.log")
     json_path = os.path.join(REPORTS_DIR, "last_run.json")
     open(log_path, "w", encoding="utf-8").close()
@@ -596,8 +680,7 @@ def cancel_research() -> dict[str, Any]:
 @app.get("/api/research/log")
 def get_research_log() -> dict[str, Any]:
     global CURRENT_RESEARCH_PROCESS
-    res_proc = CURRENT_RESEARCH_PROCESS
-    is_running = res_proc is not None and res_proc.poll() is None
+    is_running = _job_active("research")
     log_path = os.path.join(REPORTS_DIR, "last_run.log")
     content = ""
     if os.path.exists(log_path):
@@ -692,6 +775,13 @@ def _catalog_arg(cmd: list[str]) -> str | None:
 
 
 def run_ingest_subprocess(cmd: list[str], log_path: str) -> None:
+    try:
+        _run_ingest(cmd, log_path)
+    finally:
+        _release_job("ingest")
+
+
+def _run_ingest(cmd: list[str], log_path: str) -> None:
     global CURRENT_INGEST_PROCESS
     with open(log_path, "w", encoding="utf-8") as f:
         f.write(f"Command: {' '.join(cmd)}\n")
@@ -737,8 +827,7 @@ WINDOWLESS_SERIES = frozenset({"depth"})
 @app.post("/api/catalog/ingest")
 def run_ingest(background_tasks: BackgroundTasks, req: IngestRunRequest) -> dict[str, Any]:
     global CURRENT_INGEST_PROCESS
-    ing_proc = CURRENT_INGEST_PROCESS
-    if ing_proc is not None and ing_proc.poll() is None:
+    if _job_active("ingest"):
         return {"status": "error", "message": "An ingest process is already running."}
 
     if req.series not in INGEST_SERIES_FLAGS:
@@ -794,6 +883,8 @@ def run_ingest(background_tasks: BackgroundTasks, req: IngestRunRequest) -> dict
     if req.incremental:
         cmd.append("--incremental")
 
+    if not _reserve_job("ingest"):
+        return {"status": "error", "message": "An ingest process is already running."}
     background_tasks.add_task(run_ingest_subprocess, cmd, log_path)
     JOB_STARTED["ingest"] = datetime.datetime.now(UTC)
     return {
@@ -820,8 +911,7 @@ def cancel_ingest() -> dict[str, Any]:
 @app.get("/api/catalog/ingest/log")
 def get_ingest_log() -> dict[str, Any]:
     global CURRENT_INGEST_PROCESS
-    ing_proc = CURRENT_INGEST_PROCESS
-    is_running = ing_proc is not None and ing_proc.poll() is None
+    is_running = _job_active("ingest")
     log_path = os.path.join(REPORTS_DIR, "ingest.log")
     content = ""
     if os.path.exists(log_path):
@@ -946,43 +1036,40 @@ def _run_subprocess_job(
 
 
 def run_ml_subprocess(config: dict[str, Any]) -> None:
-    _run_subprocess_job(
-        module="nautilus_lab.api.run_ml_job",
-        config=config,
-        log_name="ml_train.log",
-        json_name="ml_train.json",
-        process_attr="ml",
-    )
+    try:
+        _run_subprocess_job(
+            module="nautilus_lab.api.run_ml_job",
+            config=config,
+            log_name="ml_train.log",
+            json_name="ml_train.json",
+            process_attr="ml",
+        )
+    finally:
+        _release_job("ml_train")
 
 
 def run_paper_subprocess(config: dict[str, Any]) -> None:
-    _run_subprocess_job(
-        module="nautilus_lab.api.run_paper_job",
-        config=config,
-        log_name="paper.log",
-        json_name="paper.json",
-        process_attr="paper",
-    )
+    try:
+        _run_subprocess_job(
+            module="nautilus_lab.api.run_paper_job",
+            config=config,
+            log_name="paper.log",
+            json_name="paper.json",
+            process_attr="paper",
+        )
+    finally:
+        _release_job("paper")
 
 
 @app.get("/api/command-center")
 def get_command_center() -> dict[str, Any]:
-    global \
-        CURRENT_RESEARCH_PROCESS, \
-        CURRENT_INGEST_PROCESS, \
-        CURRENT_ML_PROCESS, \
-        CURRENT_PAPER_PROCESS
     return build_command_center(
         reports_dir=Path(REPORTS_DIR),
         catalog_dir=_default_catalog_dir(),
-        research_running=(
-            CURRENT_RESEARCH_PROCESS is not None and CURRENT_RESEARCH_PROCESS.poll() is None
-        ),
-        ingest_running=(
-            CURRENT_INGEST_PROCESS is not None and CURRENT_INGEST_PROCESS.poll() is None
-        ),
-        ml_running=(CURRENT_ML_PROCESS is not None and CURRENT_ML_PROCESS.poll() is None),
-        paper_running=(CURRENT_PAPER_PROCESS is not None and CURRENT_PAPER_PROCESS.poll() is None),
+        research_running=_job_active("research"),
+        ingest_running=_job_active("ingest"),
+        ml_running=_job_active("ml_train"),
+        paper_running=_job_active("paper"),
     )
 
 
@@ -1008,9 +1095,11 @@ def get_ml_models() -> dict[str, Any]:
 @app.post("/api/ml/train")
 def run_ml_train(background_tasks: BackgroundTasks, req: MLTrainRequest) -> dict[str, Any]:
     global CURRENT_ML_PROCESS
-    if CURRENT_ML_PROCESS is not None and CURRENT_ML_PROCESS.poll() is None:
+    if _job_active("ml_train"):
         return {"status": "error", "message": "Another ML training job is already running."}
     config = req.model_dump()
+    if not _reserve_job("ml_train"):
+        return {"status": "error", "message": "Another ML training job is already running."}
     background_tasks.add_task(run_ml_subprocess, config)
     JOB_STARTED["ml_train"] = datetime.datetime.now(UTC)
     return {
@@ -1036,7 +1125,7 @@ def cancel_ml_train() -> dict[str, Any]:
 @app.get("/api/ml/train/log")
 def get_ml_train_log() -> dict[str, Any]:
     global CURRENT_ML_PROCESS
-    is_running = CURRENT_ML_PROCESS is not None and CURRENT_ML_PROCESS.poll() is None
+    is_running = _job_active("ml_train")
     log_path = os.path.join(REPORTS_DIR, "ml_train.log")
     content = ""
     if os.path.exists(log_path):
@@ -1073,7 +1162,7 @@ def get_ml_train_log() -> dict[str, Any]:
 @app.post("/api/paper/run")
 def run_paper(background_tasks: BackgroundTasks, req: PaperRunRequest) -> dict[str, Any]:
     global CURRENT_PAPER_PROCESS
-    if CURRENT_PAPER_PROCESS is not None and CURRENT_PAPER_PROCESS.poll() is None:
+    if _job_active("paper"):
         return {"status": "error", "message": "Another paper simulation is already running."}
     try:
         robot = RobotName(req.robot)
@@ -1089,6 +1178,8 @@ def run_paper(background_tasks: BackgroundTasks, req: PaperRunRequest) -> dict[s
             ),
         )
     config = req.model_dump()
+    if not _reserve_job("paper"):
+        return {"status": "error", "message": "Another paper simulation is already running."}
     background_tasks.add_task(run_paper_subprocess, config)
     JOB_STARTED["paper"] = datetime.datetime.now(UTC)
     return {
@@ -1118,7 +1209,7 @@ def cancel_paper() -> dict[str, Any]:
 @app.get("/api/paper/log")
 def get_paper_log() -> dict[str, Any]:
     global CURRENT_PAPER_PROCESS
-    is_running = CURRENT_PAPER_PROCESS is not None and CURRENT_PAPER_PROCESS.poll() is None
+    is_running = _job_active("paper")
     log_path = os.path.join(REPORTS_DIR, "paper.log")
     content = ""
     if os.path.exists(log_path):
@@ -1150,6 +1241,10 @@ def get_paper_live_state() -> dict[str, Any]:
 
 @app.post("/api/paper/live/start")
 async def start_paper_live(req: PaperLiveStartRequest) -> dict[str, Any]:
+    # Robot parameters, fees and breakers come from the same Settings the research runs
+    # use, so the terminal rehearses the tested configuration rather than its own defaults.
+    cfg = settings()
+    fees = cfg.fee_schedule()
     config = LivePaperConfig(
         symbol=req.symbol,
         interval=req.interval,
@@ -1160,8 +1255,19 @@ async def start_paper_live(req: PaperLiveStartRequest) -> dict[str, Any]:
         take_profit_multiple=Decimal(req.take_profit_multiple),
         mode=req.mode,
         auto_trade=req.auto_trade,
+        maker_fee=fees.maker,
+        taker_fee=fees.taker,
+        fast_ema=cfg.fast_ema,
+        slow_ema=cfg.slow_ema,
+        regime=cfg.regime_params(),
+        adaptive=cfg.adaptive_ema_params(),
+        max_daily_loss=cfg.max_daily_loss,
+        max_drawdown=cfg.max_drawdown,
     )
-    await LIVE_PAPER_SESSION.start(config)
+    try:
+        await LIVE_PAPER_SESSION.start(config)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "started", "message": f"Started live paper session for {req.symbol}"}
 
 
@@ -1189,6 +1295,18 @@ async def update_paper_live_stops(req: PaperLiveStopsUpdateRequest) -> dict[str,
 
 @app.websocket("/api/paper/live-stream")
 async def paper_live_stream_ws(websocket: WebSocket) -> None:
+    # HTTP middleware never sees a WebSocket handshake, and CORS does not apply to one,
+    # so the same gate runs here. Browsers cannot set headers on a WebSocket: the token
+    # travels as `?token=`.
+    reason = SECURITY.refusal(
+        method="GET",
+        path=websocket.url.path,
+        origin=websocket.headers.get("origin"),
+        presented_token=websocket.query_params.get("token"),
+    )
+    if reason is not None:
+        await websocket.close(code=1008, reason=reason)
+        return
     await websocket.accept()
     LIVE_PAPER_SESSION.subscribers.add(websocket)
     try:

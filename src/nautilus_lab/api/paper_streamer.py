@@ -7,6 +7,16 @@ Coordinates:
 - Visualizing and executing Stop-Loss (SL) and Take-Profit (TP) triggers
 - Maintaining equity curve history and fills ledger
 - Broadcasting updates via FastAPI WebSockets to the frontend terminal
+
+Shared rules with the backtest (not a second, looser rulebook):
+- the robot is built from the same parameters the research runs use, and an unknown
+  robot name fails closed instead of silently becoming `regime`;
+- a signal is turned into exit/entry intent by `domain.position_plan`: an opposite or
+  FLAT signal always exits, and only the new entry goes through `evaluate_entry`;
+- equity for sizing and for the breakers is balance plus the open position marked at
+  the last price (`domain.marking`);
+- a closed candle is fed to the robot once, in order (`validate_bar`), and the robot is
+  warmed on recent closed history before it may trade.
 """
 
 from __future__ import annotations
@@ -15,7 +25,8 @@ import asyncio
 import json
 import logging
 import uuid
-from dataclasses import asdict, dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -23,18 +34,33 @@ from typing import Any
 from fastapi import WebSocket
 
 from nautilus_lab.application.risk import (
+    evaluate_entry,
     size_position,
 )
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRouter
-from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
+from nautilus_lab.domain.errors import InvalidBarError
+from nautilus_lab.domain.position_plan import Holding, plan_for_signal
 from nautilus_lab.domain.regime import RegimeParams
 from nautilus_lab.domain.regime_router import RegimeRouter
-from nautilus_lab.domain.signals import SignalSide
+from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
+from nautilus_lab.domain.signals import Signal, SignalSide
 
 logger = logging.getLogger(__name__)
 
 BINANCE_WS_STREAM_URL = "wss://stream.binance.com:9443/ws"
+
+#: Robots the live terminal can build. Anything else is refused: the terminal used to
+#: fall back to `regime` for an unknown name while the UI kept showing the name asked for.
+LIVE_PAPER_ROBOTS: frozenset[str] = frozenset({"regime", "ema", "adaptive_ema"})
+
+#: Closed candles replayed into the robot before a session may trade. Regime needs ~150
+#: bars before it emits anything; starting cold meant hours of silence on 1m bars.
+WARMUP_BARS = 300
+
+#: Loads recent closed bars for warm-up: (symbol, interval, count) -> bars, oldest first.
+HistoryLoader = Callable[[str, str, int], Awaitable[list[OhlcvBar]]]
 
 
 @dataclass
@@ -51,6 +77,14 @@ class LivePaperConfig:
     maker_fee: Decimal = Decimal("0.0002")
     taker_fee: Decimal = Decimal("0.0005")
     qty_step: Decimal = Decimal("0.001")
+    # Same parameters and breakers the research runs use; the API fills them from
+    # Settings so the terminal rehearses the configuration that was actually tested.
+    fast_ema: int = 10
+    slow_ema: int = 20
+    regime: RegimeParams = field(default_factory=RegimeParams)
+    adaptive: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
+    max_daily_loss: Decimal = Decimal("0.02")
+    max_drawdown: Decimal = Decimal("0.06")
 
 
 @dataclass
@@ -102,8 +136,19 @@ class LiveEquityPoint:
 class LivePaperSessionManager:
     """Manages an active real-time paper trading session."""
 
-    def __init__(self, config: LivePaperConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: LivePaperConfig | None = None,
+        *,
+        history_loader: HistoryLoader | None = None,
+    ) -> None:
         self.config = config or LivePaperConfig()
+        self._history_loader = history_loader
+        self._last_closed_ts: datetime | None = None
+        self._peak_equity = self.config.starting_equity
+        self._day_start_equity = self.config.starting_equity
+        self._day: object | None = None
+        self.risk_refusals: dict[str, int] = {}
         self.is_active = False
         self.starting_equity = self.config.starting_equity
         self.balance = self.config.starting_equity
@@ -128,22 +173,55 @@ class LivePaperSessionManager:
 
     def _init_robot(self) -> None:
         name = self.config.robot.lower()
+        if name not in LIVE_PAPER_ROBOTS:
+            supported = ", ".join(sorted(LIVE_PAPER_ROBOTS))
+            raise ValueError(
+                f"live paper cannot build robot {self.config.robot!r}; supported: {supported}. "
+                "Refusing rather than substituting a different robot."
+            )
         if name == "ema":
             self._robot_instance = EmaCrossover(
                 instrument_id=self.config.symbol,
-                fast_period=10,
-                slow_period=20,
+                fast_period=self.config.fast_ema,
+                slow_period=self.config.slow_ema,
             )
         elif name == "adaptive_ema":
             self._robot_instance = AdaptiveEmaRouter(
                 instrument_id=self.config.symbol,
-                params=AdaptiveEmaParams(),
+                params=self.config.adaptive,
             )
         else:
             self._robot_instance = RegimeRouter(
                 instrument_id=self.config.symbol,
-                params=RegimeParams(),
+                params=self.config.regime,
             )
+        self._last_closed_ts = None
+
+    def warm_up(self, bars: list[OhlcvBar]) -> int:
+        """Feed closed history to the robot without trading. Returns bars consumed."""
+        consumed = 0
+        for bar in bars:
+            if self._accept_closed_bar(bar):
+                self._robot_instance.on_bar(bar)
+                consumed += 1
+        return consumed
+
+    def _accept_closed_bar(self, bar: OhlcvBar) -> bool:
+        """True once per closed candle, in time order.
+
+        Binance re-sends the final `x=true` kline after a reconnect, and the warm-up
+        history overlaps the first live candles; feeding either twice would advance the
+        robot's indicators by a bar that did not happen.
+        """
+        if self._last_closed_ts is not None and bar.ts_utc <= self._last_closed_ts:
+            return False
+        try:
+            validate_bar(bar, previous_ts=self._last_closed_ts, now=bar.ts_utc)
+        except InvalidBarError as exc:
+            logger.warning("Dropping invalid closed bar %s: %s", bar.ts_utc, exc)
+            return False
+        self._last_closed_ts = bar.ts_utc
+        return True
 
     @property
     def current_equity(self) -> Decimal:
@@ -310,19 +388,67 @@ class LivePaperSessionManager:
             if len(self.equity_history) > 500:
                 self.equity_history.pop(0)
 
-            if self.is_active and self.config.auto_trade:
+            # The robot sees every closed candle exactly once, trading or not, so its
+            # indicators stay in step with the market while auto-trade is off.
+            if self._accept_closed_bar(bar_obj):
+                self._roll_equity_marks(bar_obj.ts_utc)
                 signal = self._robot_instance.on_bar(bar_obj)
-                if signal is not None:
-                    events.append(f"Robot signal: {signal.side.value}")
-                    if self.position is None:
-                        if signal.side is SignalSide.BUY:
-                            events.append(self._open_position_internal("LONG", close_price))
-                        elif signal.side is SignalSide.SELL:
-                            events.append(self._open_position_internal("SHORT", close_price))
-                    elif signal.side is SignalSide.FLAT:
-                        events.append(self._close_position_internal(close_price, "signal_exit"))
+                if signal is not None and self.is_active and self.config.auto_trade:
+                    events.extend(self._apply_signal(signal, close_price))
 
         return events
+
+    def _holding(self) -> Holding:
+        if self.position is None:
+            return Holding.FLAT
+        return Holding.LONG if self._pos_side == "LONG" else Holding.SHORT
+
+    def _apply_signal(self, signal: Signal, price: Decimal) -> list[str]:
+        """Exit first (never gated), then enter only if the risk gate allows it."""
+        events = [f"Robot signal: {signal.side.value}"]
+        plan = plan_for_signal(self._holding(), signal.side)
+        if plan.exit_position:
+            events.append(self._close_position_internal(price, "signal_exit"))
+        if plan.wants_entry:
+            refusal = self._entry_refusal()
+            if refusal is not None:
+                self.risk_refusals[refusal] = self.risk_refusals.get(refusal, 0) + 1
+                msg = f"Risk blocked entry: {refusal}"
+                self.status_message = msg
+                events.append(msg)
+            else:
+                side = "LONG" if signal.side is SignalSide.BUY else "SHORT"
+                events.append(self._open_position_internal(side, price))
+        return events
+
+    def _limits(self) -> RiskLimits:
+        return RiskLimits(
+            risk_per_trade=self.config.risk_per_trade,
+            stop_pct=self.config.stop_pct,
+            max_daily_loss=self.config.max_daily_loss,
+            max_drawdown=self.config.max_drawdown,
+        )
+
+    def _roll_equity_marks(self, ts: datetime) -> None:
+        equity = self.current_equity
+        day = ts.date()
+        if self._day != day:
+            self._day = day
+            self._day_start_equity = equity
+        self._peak_equity = max(self._peak_equity, equity)
+
+    def _entry_refusal(self) -> str | None:
+        equity = self.current_equity
+        decision = evaluate_entry(
+            AccountSnapshot(
+                equity=equity,
+                peak_equity=max(self._peak_equity, equity),
+                day_start_equity=self._day_start_equity,
+                open_positions=0,
+            ),
+            self._limits(),
+        )
+        return None if decision.allowed else decision.reason
 
     def _open_position_internal(self, side: str, price: Decimal) -> str:
         """Open a virtual position."""
@@ -337,7 +463,8 @@ class LivePaperSessionManager:
             stop_dist = price * Decimal("0.01")
 
         qty = size_position(
-            equity=self.balance,
+            # Marked equity, like the backtest: an open loss shrinks the next size.
+            equity=self.current_equity,
             price=price,
             stop_distance=stop_dist,
             risk_fraction=risk_fraction,
@@ -459,8 +586,14 @@ class LivePaperSessionManager:
         return msg
 
     async def start(self, config: LivePaperConfig) -> None:
-        """Start the live paper session."""
+        """Start the live paper session. Raises ValueError for a robot it cannot build."""
+        previous = self.config
         self.config = config
+        try:
+            self._init_robot()
+        except ValueError:
+            self.config = previous
+            raise
         self.is_active = True
         self.starting_equity = config.starting_equity
         self.balance = config.starting_equity
@@ -474,8 +607,11 @@ class LivePaperSessionManager:
         self._pos_tp = None
         self.fills.clear()
         self.equity_history.clear()
+        self.risk_refusals.clear()
+        self._peak_equity = config.starting_equity
+        self._day_start_equity = config.starting_equity
+        self._day = None
         self._stop_event.clear()
-        self._init_robot()
         self.status_message = f"Live Paper active ({config.symbol}, {config.robot})"
 
         # Start WebSocket receiver task
@@ -483,6 +619,16 @@ class LivePaperSessionManager:
             self._ws_task.cancel()
         self._ws_task = asyncio.create_task(self._run_binance_stream())
         await self.broadcast_state()
+
+    async def _warm_up_from_history(self) -> int:
+        if self._history_loader is None:
+            return 0
+        try:
+            bars = await self._history_loader(self.config.symbol, self.config.interval, WARMUP_BARS)
+        except Exception as exc:  # network, rate limit: a cold start, not a failure
+            logger.warning("Live paper warm-up failed, starting cold: %s", exc)
+            return 0
+        return self.warm_up(bars)
 
     async def stop(self) -> None:
         """Stop the live paper session."""
@@ -496,6 +642,16 @@ class LivePaperSessionManager:
     async def _run_binance_stream(self) -> None:
         """Connect to Binance public WebSocket stream and parse klines."""
         import websockets
+
+        # Warm the robot on recent closed candles first, inside the stream task so that
+        # starting a session never blocks the request on a REST call.
+        warmed = await self._warm_up_from_history()
+        if warmed:
+            self.status_message = (
+                f"Live Paper active ({self.config.symbol}, {self.config.robot}); "
+                f"robot warmed on {warmed} closed bars"
+            )
+            await self.broadcast_state()
 
         stream_name = f"{self.config.symbol.lower()}@kline_{self.config.interval}"
         url = f"{BINANCE_WS_STREAM_URL}/{stream_name}"
@@ -549,5 +705,40 @@ class LivePaperSessionManager:
                 backoff = min(backoff * 2, 30)
 
 
+_INTERVAL_SECONDS: dict[str, int] = {
+    "1m": 60,
+    "3m": 180,
+    "5m": 300,
+    "15m": 900,
+    "30m": 1800,
+    "1h": 3600,
+    "4h": 14400,
+    "1d": 86400,
+}
+
+
+async def binance_history_loader(symbol: str, interval: str, count: int) -> list[OhlcvBar]:
+    """Recent CLOSED klines from the public REST API, oldest first (no API keys)."""
+    from datetime import timedelta
+
+    from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
+    from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
+
+    seconds = _INTERVAL_SECONDS.get(interval)
+    if seconds is None:
+        return []
+    end = datetime.now(UTC)
+    start = end - timedelta(seconds=seconds * count)
+    feed = BinancePublicKlines(ResilientJsonClient())
+    return await asyncio.to_thread(
+        feed.fetch,
+        symbol=symbol,
+        interval=interval,
+        start=start,
+        end=end,
+        instrument_id=symbol,
+    )
+
+
 # Global singleton instance for the FastAPI application
-LIVE_PAPER_SESSION = LivePaperSessionManager()
+LIVE_PAPER_SESSION = LivePaperSessionManager(history_loader=binance_history_loader)

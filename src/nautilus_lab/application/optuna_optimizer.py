@@ -199,9 +199,15 @@ class OptunaParamOptimizer:
 
             candidate = apply_selected(request, params)
             report = run_is(candidate)
-            score = in_sample_score(report)
+            score = in_sample_score(
+                report, metric=request.selection_metric, starting_equity=request.starting_equity
+            )
 
-            if best_report is None or score > in_sample_score(best_report):
+            if best_report is None or score > in_sample_score(
+                best_report,
+                metric=request.selection_metric,
+                starting_equity=request.starting_equity,
+            ):
                 best_report = report
                 best_params = params
 

@@ -165,6 +165,15 @@ def _report(
     matrix: tuple[tuple[Decimal | None, ...], ...],
     block_count: int,
 ) -> OverfitAuditReport:
+    return audit_from_matrix(labels, matrix, block_count)
+
+
+def audit_from_matrix(
+    labels: tuple[str, ...],
+    matrix: tuple[tuple[Decimal | None, ...], ...],
+    block_count: int,
+) -> OverfitAuditReport:
+    """PBO + DSR from a `blocks x configurations` return matrix, whoever produced it."""
     numeric = _numeric_matrix(matrix)
     result = probability_of_backtest_overfitting(numeric)
     best = labels[index_of_best_configuration(matrix)]

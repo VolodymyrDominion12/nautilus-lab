@@ -26,6 +26,8 @@ class RiskOverlay:
     # On by default: without it `risk_per_trade` is a sizing assumption, not a cap —
     # nothing bounds the loss of a position the strategy never exits.
     use_protective_stop: bool = True
+    # Days after which a tripped max-drawdown breaker re-bases its peak (0 = never).
+    drawdown_cooldown_days: int = 0
 
     def __post_init__(self) -> None:
         if self.vol_scaling_target <= 0 or self.vol_scaling_target > 1:
@@ -36,6 +38,8 @@ class RiskOverlay:
             raise InvalidRiskError("kelly_min_trades must be >= 1")
         if self.max_cvar_99 <= 0 or self.max_cvar_99 > 1:
             raise InvalidRiskError("max_cvar_99 must be in (0, 1]")
+        if self.drawdown_cooldown_days < 0:
+            raise InvalidRiskError("drawdown_cooldown_days must be >= 0")
         if self.ratchet_arm_pct <= 0 or self.ratchet_arm_pct > 1:
             raise InvalidRiskError("ratchet_arm_pct must be in (0, 1]")
 

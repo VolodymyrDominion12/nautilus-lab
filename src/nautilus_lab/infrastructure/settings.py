@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.fees import FeeSchedule
+from nautilus_lab.domain.metrics import SelectionMetric
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
 from nautilus_lab.domain.risk import RiskLimits
@@ -21,6 +22,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     trading_mode: TradingMode = TradingMode.RESEARCH
+    # Dashboard API gate (api/security.py). Empty token = origin check only.
+    api_token: str = ""
+    # Empty = the defaults in api/security.py (Vite dev/preview and the API's own port).
+    api_allowed_origins: str = ""
     live_enabled: bool = False
     starting_equity: Decimal = Decimal("100000")
     risk_per_trade: Decimal = Decimal("0.005")
@@ -41,6 +46,8 @@ class Settings(BaseSettings):
     use_ratchet: bool = False
     ratchet_arm_pct: Decimal = Decimal("0.0125")
     use_protective_stop: bool = True
+    selection_metric: SelectionMetric = SelectionMetric.PNL
+    drawdown_cooldown_days: int = 0
     pairs_refit_every: int = 0
     # 0 disables the quantile gate and leaves the fixed `PairsParams.z_entry` in
     # charge, which is how every documented `pairs` run was measured. A plain
@@ -177,6 +184,7 @@ class Settings(BaseSettings):
             use_ratchet=self.use_ratchet,
             ratchet_arm_pct=self.ratchet_arm_pct,
             use_protective_stop=self.use_protective_stop,
+            drawdown_cooldown_days=self.drawdown_cooldown_days,
         )
 
     def pairs_params(self) -> PairsParams:

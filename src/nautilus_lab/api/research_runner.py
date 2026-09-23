@@ -15,6 +15,7 @@ from nautilus_lab.api.serializers import build_job_result, pct, serialize_backte
 from nautilus_lab.api.settings_coerce import apply_setting_overrides
 from nautilus_lab.application.dtos import BacktestReport, MultiWindowReport, WalkForwardReport
 from nautilus_lab.application.journal import JournalEntry, record_run
+from nautilus_lab.application.promotion_gate import evaluate_gate
 from nautilus_lab.application.run_walk_forward import window_return
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.errors import JournalFormatError
@@ -218,6 +219,7 @@ def _print_multi_window(report: MultiWindowReport) -> None:
         f"oos_fills={report.total_oos_fills}"
     )
     print(report.summary_line())
+    print(evaluate_gate(report, None).summary_line())
 
 
 def execute_research(

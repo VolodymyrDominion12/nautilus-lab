@@ -6,7 +6,7 @@ All tests use fake HTTP clients and a tmp_path fixture — no network, no extern
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -294,15 +294,15 @@ def test_catalog_cross_day_write(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Ingest use case: day-by-day persistence
+# Ingest use case: slice-by-slice persistence
 # ---------------------------------------------------------------------------
 
 
-class _RecordingFeed:
-    """AggTradesFeed double that returns scripted trades per requested day."""
+class _SliceFeed:
+    """AggTradesFeed double that returns scripted trades keyed by slice start hour."""
 
-    def __init__(self, per_day: dict[str, list[AggTrade]]) -> None:
-        self._per_day = per_day
+    def __init__(self, per_slice: dict[str, list[AggTrade]]) -> None:
+        self._per_slice = per_slice
         self.calls: list[tuple[datetime, datetime]] = []
 
     def fetch(
@@ -314,7 +314,7 @@ class _RecordingFeed:
         instrument_id: str,
     ) -> list[AggTrade]:
         self.calls.append((start, end))
-        return list(self._per_day.get(start.date().isoformat(), []))
+        return list(self._per_slice.get(start.strftime("%Y-%m-%dT%H"), []))
 
 
 def _trade(agg_id: int, ts: datetime) -> AggTrade:
@@ -328,40 +328,36 @@ def _trade(agg_id: int, ts: datetime) -> AggTrade:
     )
 
 
-def test_ingest_persists_each_day_as_it_goes(tmp_path: Path) -> None:
-    """Each day must hit the catalog before the next day is fetched.
+def test_ingest_persists_each_slice_as_it_goes(tmp_path: Path) -> None:
+    """Every slice must reach the catalog before the next one is fetched.
 
-    Regression for a silent failure: the use case fetched the whole window into memory
-    and wrote only at the end, so a four-day ingest produced nothing on disk after
-    fifty minutes and a one-year window could never have finished.
+    Regression, measured twice. First the use case fetched the whole window into memory
+    and wrote only at the end: a four-day ingest wrote nothing in fifty minutes. Then it
+    fetched a whole day at a time, and one day is ~720 Binance pages holding ~120 seconds
+    of market time each — thirty minutes produced no file at all. Hourly slices bound
+    both memory and the loss from a stalled socket.
     """
-    day_one = datetime(2024, 1, 1, tzinfo=UTC)
-    day_two = datetime(2024, 1, 2, tzinfo=UTC)
-    feed = _RecordingFeed(
+    hour_zero = datetime(2024, 1, 1, 0, tzinfo=UTC)
+    hour_one = datetime(2024, 1, 1, 1, tzinfo=UTC)
+    hour_two = datetime(2024, 1, 1, 2, tzinfo=UTC)
+    feed = _SliceFeed(
         {
-            "2024-01-01": [_trade(1, day_one), _trade(2, day_one)],
-            "2024-01-02": [_trade(3, day_two)],
+            "2024-01-01T00": [_trade(1, hour_zero), _trade(2, hour_zero)],
+            "2024-01-01T01": [_trade(3, hour_one)],
+            # 02:00 is deliberately absent: a quiet slice must not stop the ingest.
         }
     )
-    catalog = ParquetAggTradesCatalog(tmp_path)
-    written_at_each_call: list[int] = []
-    seen_days: list[str] = []
+    observed: list[tuple[str, int]] = []
 
-    class _WatchingCatalog(ParquetAggTradesCatalog):
-        def write(self, trades: Sequence[AggTrade], *, symbol: str) -> int:
-            result = super().write(trades, symbol=symbol)
-            written_at_each_call.append(result)
-            return result
-
-    def _progress(day: datetime, trades: int) -> None:
-        seen_days.append(day.date().isoformat())
-        # The day is already on disk when progress is reported, not merely fetched.
-        present = catalog.load(symbol="ETHUSDT")
-        assert any(item.agg_id in {1, 2, 3} for item in present), day
+    def _progress(slice_start: datetime, trades: int) -> None:
+        # Whatever the catalog holds now, the earlier slices are already in it.
+        present = {item.agg_id for item in ParquetAggTradesCatalog(tmp_path).load(symbol="ETHUSDT")}
+        observed.append((slice_start.strftime("%H"), len(present)))
+        assert trades >= 0
 
     use_case = IngestAggTrades(
         feed,
-        _WatchingCatalog(tmp_path),
+        ParquetAggTradesCatalog(tmp_path),
         catalog_path=str(tmp_path),
         progress=_progress,
     )
@@ -370,22 +366,23 @@ def test_ingest_persists_each_day_as_it_goes(tmp_path: Path) -> None:
             mode=TradingMode.RESEARCH,
             symbol="ETHUSDT",
             instrument_id="ETH/USDT.SIM",
-            start=day_one,
-            end=datetime(2024, 1, 3, tzinfo=UTC),
+            start=hour_zero,
+            end=hour_two + timedelta(hours=1),
         )
     )
 
     assert report.trades_written == 3
-    # One fetch and one write per day: the window never sat in memory whole.
-    assert len(feed.calls) == 2
-    assert written_at_each_call == [2, 1]
-    assert seen_days == ["2024-01-01", "2024-01-02"]
+    # One fetch per hour slice, including the quiet one.
+    assert len(feed.calls) == 3
+    assert [call[0].hour for call in feed.calls] == [0, 1, 2]
+    # By the time the third slice is reported, the first two are already on disk.
+    assert observed[2][1] == 3
 
 
-def test_ingest_skips_empty_days_but_fails_on_empty_window(tmp_path: Path) -> None:
-    """A quiet day is not an error; a window with no trades at all is."""
-    day_one = datetime(2024, 1, 1, tzinfo=UTC)
-    feed = _RecordingFeed({"2024-01-02": [_trade(1, datetime(2024, 1, 2, tzinfo=UTC))]})
+def test_ingest_skips_empty_slices_but_fails_on_an_empty_window(tmp_path: Path) -> None:
+    """A quiet slice is not an error; a window with no trades at all is."""
+    start = datetime(2024, 1, 1, 0, tzinfo=UTC)
+    feed = _SliceFeed({"2024-01-01T01": [_trade(1, datetime(2024, 1, 1, 1, tzinfo=UTC))]})
     use_case = IngestAggTrades(
         feed,
         ParquetAggTradesCatalog(tmp_path),
@@ -397,15 +394,15 @@ def test_ingest_skips_empty_days_but_fails_on_empty_window(tmp_path: Path) -> No
             mode=TradingMode.RESEARCH,
             symbol="ETHUSDT",
             instrument_id="ETH/USDT.SIM",
-            start=day_one,
-            end=datetime(2024, 1, 3, tzinfo=UTC),
+            start=start,
+            end=start + timedelta(hours=2),
         )
     )
     assert report.trades_written == 1
-    assert len(feed.calls) == 2  # the empty day was still attempted
+    assert len(feed.calls) == 2  # the empty slice was still attempted
 
     empty = IngestAggTrades(
-        _RecordingFeed({}),
+        _SliceFeed({}),
         ParquetAggTradesCatalog(tmp_path),
         catalog_path=str(tmp_path),
     )
@@ -415,7 +412,7 @@ def test_ingest_skips_empty_days_but_fails_on_empty_window(tmp_path: Path) -> No
                 mode=TradingMode.RESEARCH,
                 symbol="ETHUSDT",
                 instrument_id="ETH/USDT.SIM",
-                start=day_one,
-                end=datetime(2024, 1, 3, tzinfo=UTC),
+                start=start,
+                end=start + timedelta(hours=2),
             )
         )

@@ -13,7 +13,7 @@ from nautilus_lab.application.dtos import (
     OverfitAuditRequest,
     WalkForwardRequest,
 )
-from nautilus_lab.application.ingest_agg_trades import DayProgress, IngestAggTrades
+from nautilus_lab.application.ingest_agg_trades import IngestAggTrades, SliceProgress
 from nautilus_lab.application.ingest_funding_history import IngestFundingHistory
 from nautilus_lab.application.ingest_historical_bars import IngestHistoricalBars
 from nautilus_lab.application.ingest_orderbook import IngestOrderBook
@@ -407,7 +407,7 @@ def ingest_funding_use_case(cfg: Settings | None = None) -> IngestFundingHistory
 def ingest_agg_trades_use_case(
     cfg: Settings | None = None,
     *,
-    progress: DayProgress | None = None,
+    progress: SliceProgress | None = None,
 ) -> IngestAggTrades:
     resolved = cfg or settings()
     store = ParquetAggTradesCatalog(Path(resolved.catalog_path))

@@ -1,12 +1,20 @@
 """Ingest aggregated trades (Binance public ticks) into the Parquet catalog.
 
-Day by day, and each day is written as soon as it is fetched. That is not a detail:
-an earlier version pulled the whole requested window into memory and persisted only
-after the final page, so a four-day window produced nothing on disk after fifty
-minutes of fetching, and a one-year window could never have finished at all. Writing
-per day also makes the job resumable (a restart re-fetches days, and the catalog
-deduplicates by `agg_id`) and bounded in memory, which is the difference between a
-slow ingest and an impossible one.
+Slice by slice — one hour by default — and every slice is written as soon as it is
+fetched. That is not a detail, it is the whole difference between a usable command and
+a decorative one:
+
+* an earlier version pulled the entire requested window into memory and persisted only
+  after the final page, so a four-day window wrote nothing in fifty minutes and a
+  one-year window could never have finished;
+* a day-at-a-time version was still too coarse. Measured 2026-09-23: one Binance
+  `aggTrades` page is 1000 trades covering ~120 seconds of ETHUSDT market time, so a
+  day is ~720 pages and the whole day sat in RAM until page 720. A 30-minute run of
+  one day produced no file at all.
+
+Hourly slices bound memory, make progress observable, survive a kill (the catalog
+deduplicates by `agg_id`, so a restart simply re-fetches the current slice), and keep
+each fetch short enough that one stalled socket does not cost an entire day.
 """
 
 from __future__ import annotations
@@ -19,8 +27,8 @@ from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.domain.errors import CatalogEmptyError
 from nautilus_lab.domain.ports import AggTradesCatalog, AggTradesFeed
 
-# Called after each stored day with the day's start and how many trades it held.
-DayProgress = Callable[[datetime, int], None]
+# Called after each stored slice with the slice start and how many trades it held.
+SliceProgress = Callable[[datetime, int], None]
 
 
 class IngestAggTrades:
@@ -32,7 +40,7 @@ class IngestAggTrades:
         catalog: AggTradesCatalog,
         *,
         catalog_path: str = "",
-        progress: DayProgress | None = None,
+        progress: SliceProgress | None = None,
     ) -> None:
         self._feed = feed
         self._catalog = catalog
@@ -47,25 +55,25 @@ class IngestAggTrades:
         written = 0
         first_ts: datetime | None = None
         last_ts: datetime | None = None
-        for day_start, day_end in utc_days(request.start, request.end):
+        for slice_start, slice_end in utc_slices(request.start, request.end):
             trades = self._feed.fetch(
                 symbol=request.symbol,
-                start=day_start,
-                end=day_end,
+                start=slice_start,
+                end=slice_end,
                 instrument_id=request.instrument_id,
             )
             if not trades:
-                # A quiet day is not a failure: Binance has days with no prints for
+                # A quiet slice is not a failure: Binance has minutes with no prints for
                 # thin symbols, and stopping the whole window over one of them would
                 # make an otherwise good ingest look broken.
                 if self._progress is not None:
-                    self._progress(day_start, 0)
+                    self._progress(slice_start, 0)
                 continue
             written += self._catalog.write(trades, symbol=request.symbol)
             first_ts = trades[0].ts_utc if first_ts is None else first_ts
             last_ts = trades[-1].ts_utc
             if self._progress is not None:
-                self._progress(day_start, len(trades))
+                self._progress(slice_start, len(trades))
 
         if first_ts is None or last_ts is None:
             raise CatalogEmptyError(
@@ -84,20 +92,29 @@ class IngestAggTrades:
         )
 
 
-def utc_days(start: datetime, end: datetime) -> Iterator[tuple[datetime, datetime]]:
-    """Yield `[day_start, day_end)` slices of `[start, end)`, cut on UTC midnight.
+def utc_slices(
+    start: datetime,
+    end: datetime,
+    *,
+    step: timedelta = timedelta(hours=1),
+) -> Iterator[tuple[datetime, datetime]]:
+    """Yield `[slice_start, slice_end)` pieces of `[start, end)`, `step` long.
 
-    The first and last slices are clipped to the request, so a window that starts at
-    15:00 fetches from 15:00, not from midnight — the caller asked for a window, not
-    for whole days.
+    Slices are aligned to `step` boundaries (hourly by default) and the last one is
+    clipped to `end`, so a window that ends mid-hour fetches up to `end` and not past
+    it. The caller gets exactly the window it asked for, in pieces small enough to
+    persist as they arrive.
     """
     if start >= end:
         raise ValueError("start must be before end")
+    if step <= timedelta(0):
+        raise ValueError("step must be positive")
+    midnight = datetime.combine(start.date(), datetime.min.time(), tzinfo=UTC)
+    steps_elapsed = (start - midnight) // step
+    boundary = midnight + (steps_elapsed + 1) * step
     cursor = start
     while cursor < end:
-        midnight = datetime.combine(
-            (cursor + timedelta(days=1)).date(), datetime.min.time(), tzinfo=UTC
-        )
-        slice_end = min(midnight, end)
+        slice_end = min(boundary, end)
         yield cursor, slice_end
         cursor = slice_end
+        boundary += step

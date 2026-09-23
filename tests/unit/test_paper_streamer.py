@@ -170,7 +170,7 @@ def _bars(count: int) -> list[OhlcvBar]:
 
 def test_unknown_robot_fails_closed_instead_of_becoming_regime() -> None:
     with pytest.raises(ValueError, match="cannot build robot"):
-        LivePaperSessionManager(LivePaperConfig(robot="vpin_momentum"))
+        LivePaperSessionManager(LivePaperConfig(robot="definitely_not_a_robot"))
 
 
 def test_start_with_unknown_robot_keeps_the_previous_session_config() -> None:
@@ -222,3 +222,36 @@ def test_warm_up_failure_is_a_cold_start_not_a_crash() -> None:
 
     manager = LivePaperSessionManager(LivePaperConfig(), history_loader=failing)
     assert asyncio.run(manager._warm_up_from_history()) == 0
+
+
+# --- new robot coverage: vpin_momentum and formulaic_lgbm -------------------------
+
+
+def test_vpin_momentum_init_robot_creates_correct_instance() -> None:
+    """vpin_momentum must wire a VpinMomentum instance, not fall back to regime."""
+    from nautilus_lab.domain.vpin_momentum import VpinMomentum
+
+    manager = LivePaperSessionManager(LivePaperConfig(robot="vpin_momentum"))
+    assert isinstance(manager._robot_instance, VpinMomentum)
+
+
+def test_formulaic_lgbm_init_robot_creates_correct_instance() -> None:
+    """formulaic_lgbm must wire a FormulaicLgbmStrategy with the heuristic classifier."""
+    from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
+
+    manager = LivePaperSessionManager(LivePaperConfig(robot="formulaic_lgbm"))
+    assert isinstance(manager._robot_instance, FormulaicLgbmStrategy)
+
+
+def test_vpin_momentum_processes_bar_without_error() -> None:
+    """Closed bar fed to vpin_momentum robot must not raise."""
+    manager = LivePaperSessionManager(LivePaperConfig(robot="vpin_momentum", symbol="BTCUSDT"))
+    bar = _bars(1)[0]
+    manager.warm_up([bar])  # must not raise
+
+
+def test_formulaic_lgbm_processes_bar_without_error() -> None:
+    """Closed bar fed to formulaic_lgbm robot must not raise."""
+    manager = LivePaperSessionManager(LivePaperConfig(robot="formulaic_lgbm", symbol="BTCUSDT"))
+    bars = _bars(60)  # formulaic needs a warm-up window
+    manager.warm_up(bars)  # must not raise

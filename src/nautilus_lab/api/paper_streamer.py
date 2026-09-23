@@ -41,11 +41,15 @@ from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRoute
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.errors import InvalidBarError
+from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
 from nautilus_lab.domain.position_plan import Holding, plan_for_signal
 from nautilus_lab.domain.regime import RegimeParams
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.signals import Signal, SignalSide
+from nautilus_lab.domain.vpin import BarVpin
+from nautilus_lab.domain.vpin_momentum import VpinMomentum
+from nautilus_lab.infrastructure.lightgbm_classifier import HeuristicDirectionClassifier
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +57,9 @@ BINANCE_WS_STREAM_URL = "wss://stream.binance.com:9443/ws"
 
 #: Robots the live terminal can build. Anything else is refused: the terminal used to
 #: fall back to `regime` for an unknown name while the UI kept showing the name asked for.
-LIVE_PAPER_ROBOTS: frozenset[str] = frozenset({"regime", "ema", "adaptive_ema"})
+LIVE_PAPER_ROBOTS: frozenset[str] = frozenset(
+    {"regime", "ema", "adaptive_ema", "vpin_momentum", "formulaic_lgbm"}
+)
 
 #: Closed candles replayed into the robot before a session may trade. Regime needs ~150
 #: bars before it emits anything; starting cold meant hours of silence on 1m bars.
@@ -190,7 +196,27 @@ class LivePaperSessionManager:
                 instrument_id=self.config.symbol,
                 params=self.config.adaptive,
             )
-        else:
+        elif name == "vpin_momentum":
+            vpin = BarVpin(
+                bucket_volume=Decimal("1000"),
+                toxic_threshold=Decimal("0.7"),
+            )
+            self._robot_instance = VpinMomentum(
+                instrument_id=self.config.symbol,
+                vpin=vpin,
+                ema_period=20,
+                atr_multiple=Decimal("1.5"),
+            )
+        elif name == "formulaic_lgbm":
+            # Paper mode uses the heuristic classifier (rule-based fallback) because
+            # training a LightGBM model on live data is an offline step. The heuristic
+            # still exercises the full signal path: features → threshold gate → entry.
+            self._robot_instance = FormulaicLgbmStrategy(
+                instrument_id=self.config.symbol,
+                classifier=HeuristicDirectionClassifier(),
+                threshold=Decimal("0.55"),
+            )
+        else:  # "regime" and any future additions that default to regime logic
             self._robot_instance = RegimeRouter(
                 instrument_id=self.config.symbol,
                 params=self.config.regime,

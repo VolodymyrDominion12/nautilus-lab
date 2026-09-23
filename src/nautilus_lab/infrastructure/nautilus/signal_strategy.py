@@ -8,7 +8,7 @@ from typing import Protocol
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar, BarType, OrderBookDepth10, TradeTick
-from nautilus_trader.model.enums import AggressorSide, OrderSide, PositionSide
+from nautilus_trader.model.enums import AggressorSide, OrderSide
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.strategy import Strategy
@@ -166,6 +166,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         # Resting reduce-only stop for the open position, and the distance the next
         # entry was sized against (consumed when that entry's position opens).
         self._stop_order_id: object | None = None
+        self._entry_order_id: object | None = None
         self._pending_stop_distance: Decimal | None = None
         self._trade_stats = TradeStats()
         self._breaches = RiskBreachTally()
@@ -256,27 +257,37 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._track_equity(snapshot.ts_utc)
         self._process_signal(signal, mid_price)
 
-    def on_position_opened(self, event: object) -> None:
-        """Place the protective stop once the entry has actually filled."""
+    def _place_protective_stop(self, entry_order: object) -> None:
+        """Rest a reduce-only stop behind a fully filled entry order.
+
+        Driven by the entry's own fill, not by `PositionOpened`: on a NETTING account a
+        re-entry after a stop-out reuses the closed position and arrives as
+        `PositionChanged`, so a stop hung on `PositionOpened` protected only the first
+        trade of a run (the integration test caught a -5,689 USDT open loss that way).
+        The order also carries its side, quantity and average fill price, so the
+        position cache does not have to be up to date when this runs.
+        """
         distance = self._pending_stop_distance
         self._pending_stop_distance = None
         if not self._overlay.use_protective_stop or distance is None or distance <= 0:
             return
-        if getattr(event, "instrument_id", None) != self.config.instrument_id:
-            return
         instrument = self.cache.instrument(self.config.instrument_id)
         if instrument is None:
             return
-        entry_price = _as_decimal(getattr(event, "avg_px_open", 0))
-        is_long = getattr(event, "side", None) == PositionSide.LONG
+        entry_price = _as_decimal(getattr(entry_order, "avg_px", 0))
+        quantity = getattr(entry_order, "filled_qty", None)
+        if entry_price <= 0 or quantity is None or _as_decimal(quantity) <= 0:
+            return
+        is_long = getattr(entry_order, "side", None) == OrderSide.BUY
         trigger = entry_price - distance if is_long else entry_price + distance
         if trigger <= 0:
             self.log.warning(f"Protective stop skipped: trigger {trigger} is not a price")
             return
+        self._cancel_protective_stop()
         stop = self.order_factory.stop_market(
             instrument_id=self.config.instrument_id,
             order_side=OrderSide.SELL if is_long else OrderSide.BUY,
-            quantity=event.quantity,  # type: ignore[attr-defined]
+            quantity=quantity,
             trigger_price=instrument.make_price(trigger),
             reduce_only=True,
         )
@@ -294,12 +305,18 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._cancel_protective_stop()
 
     def on_order_filled(self, event: object) -> None:
-        if (
-            self._stop_order_id is not None
-            and getattr(event, "client_order_id", None) == self._stop_order_id
-        ):
+        client_order_id = getattr(event, "client_order_id", None)
+        if self._stop_order_id is not None and client_order_id == self._stop_order_id:
             self._stop_order_id = None
             self.log.info("Protective stop filled; position closed at the stop")
+            return
+        if self._entry_order_id is None or client_order_id != self._entry_order_id:
+            return
+        order = self.cache.order(client_order_id)
+        if order is None or not order.is_closed:
+            return  # partial fill: wait for the rest, then protect the whole size
+        self._entry_order_id = None
+        self._place_protective_stop(order)
 
     def _warming_up(self, ts_event_ns: int) -> bool:
         start = self.config.trade_start_ns
@@ -350,6 +367,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             instrument.make_qty(qty),
         )
         self._pending_stop_distance = distance
+        self._entry_order_id = order.client_order_id
         self.submit_order(order)
         self._turnover += current_price * qty
         self._arm_ratchet(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
@@ -424,6 +442,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         """Cancel resting orders (the protective stop among them), then close."""
         self._ratchet = None
         self._pending_stop_distance = None
+        self._entry_order_id = None
         self._cancel_protective_stop()
         if not self._is_flat():
             self.close_all_positions(self.config.instrument_id)

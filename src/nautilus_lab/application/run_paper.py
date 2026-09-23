@@ -31,13 +31,18 @@ from nautilus_lab.application.risk import (
     stop_distance,
 )
 from nautilus_lab.application.run_research_backtest import minimum_bars
+from nautilus_lab.domain.adaptive_ema import AdaptiveEmaRouter
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
+from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
 from nautilus_lab.domain.regime import RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot
 from nautilus_lab.domain.signals import SignalSide
+from nautilus_lab.domain.vpin import BarVpin
+from nautilus_lab.domain.vpin_momentum import VpinMomentum
 from nautilus_lab.domain.windowing import warmup_tail
+from nautilus_lab.infrastructure.lightgbm_classifier import HeuristicDirectionClassifier
 from nautilus_lab.infrastructure.paper_trading import PaperTradingLogger
 
 #: Robots a paper session can actually build, mirroring the engine's `_build_robot`.
@@ -181,14 +186,55 @@ class RunPaperResearch:
         return self._logger
 
 
-def _build_robot(request: BacktestRequest) -> EmaCrossover | RegimeRouter:
+def _build_robot(
+    request: BacktestRequest,
+) -> EmaCrossover | RegimeRouter | VpinMomentum | FormulaicLgbmStrategy | AdaptiveEmaRouter:
+    """Build the domain robot for a dry-run paper preview.
+
+    Each branch is an explicit mapping so that a new `PAPER_SUPPORTED_ROBOTS` entry
+    cannot silently fall through to `regime` and hide a missing implementation.
+    `RunPaperSession` uses the Nautilus engine instead and has its own `_build_robot`
+    there; this function is only for `RunPaperResearch`.
+    """
     if request.robot is RobotName.EMA:
         return EmaCrossover(
             instrument_id=request.instrument_id,
             fast_period=request.fast_ema,
             slow_period=request.slow_ema,
         )
-    return RegimeRouter(
-        instrument_id=request.instrument_id,
-        params=request.regime,
+    if request.robot is RobotName.ADAPTIVE_EMA:
+        return AdaptiveEmaRouter(
+            instrument_id=request.instrument_id,
+            params=request.adaptive_params,
+        )
+    if request.robot is RobotName.VPIN_MOMENTUM:
+        vpin = BarVpin(
+            bucket_volume=request.vpin_bucket_volume,
+            toxic_threshold=request.vpin_toxic_threshold,
+        )
+        return VpinMomentum(
+            instrument_id=request.instrument_id,
+            vpin=vpin,
+            ema_period=request.vpin_momentum_ema_period,
+            atr_multiple=request.vpin_momentum_atr_multiple,
+        )
+    if request.robot is RobotName.FORMULAIC_LGBM:
+        # Dry-run preview uses the heuristic classifier: the offline-trained model is only
+        # required for the Nautilus engine run (RunPaperSession), not for signal counting.
+        classifier = HeuristicDirectionClassifier()
+        return FormulaicLgbmStrategy(
+            instrument_id=request.instrument_id,
+            classifier=classifier,
+            threshold=request.formulaic_threshold,
+        )
+    if request.robot is RobotName.REGIME:
+        return RegimeRouter(
+            instrument_id=request.instrument_id,
+            params=request.regime,
+        )
+    # All remaining PAPER_SUPPORTED_ROBOTS (pairs, meta_label, ml_obi) run through
+    # RunPaperSession/the engine and cannot produce a dry-run signal count here.
+    raise NotImplementedError(
+        f"robot {request.robot.value!r} has no dry-run path in RunPaperResearch; "
+        "use RunPaperSession for a full paper session with this robot."
     )

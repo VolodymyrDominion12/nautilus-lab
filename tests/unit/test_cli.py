@@ -23,7 +23,9 @@ def test_cli_live_fails_closed() -> None:
 
 
 def test_cli_paper_logs_hypothetical_orders() -> None:
-    assert main(["paper", "--bars", "200"]) == 0
+    # Use synthetic bars: without a populated catalog the taker-flow Parquet may have
+    # taker_buy_base_volume > bar.volume which causes validate_bar to raise.
+    assert main(["paper", "--bars", "200", "--source", "synthetic"]) == 0
 
 
 def test_research_request_uses_settings_risk() -> None:

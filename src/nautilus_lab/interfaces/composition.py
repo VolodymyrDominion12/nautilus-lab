@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from nautilus_lab.application.collect_live_agg_trades import CollectLiveAggTrades, CollectProgress
 from nautilus_lab.application.dtos import (
     BacktestRequest,
     FundingIngestRequest,
@@ -36,7 +37,7 @@ from nautilus_lab.infrastructure.alerts import AlertNotifier, build_notifier
 from nautilus_lab.infrastructure.binance_agg_trades import BinancePublicAggTrades
 from nautilus_lab.infrastructure.binance_funding import BinancePublicFunding
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
-from nautilus_lab.infrastructure.binance_ws import BinanceKlineStream
+from nautilus_lab.infrastructure.binance_ws import BinanceAggTradeStream, BinanceKlineStream
 from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
 from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
 from nautilus_lab.infrastructure.live_bar_feed import LiveBarCollector, SeededLiveBarFeed
@@ -401,6 +402,31 @@ def ingest_funding_use_case(cfg: Settings | None = None) -> IngestFundingHistory
         BinancePublicFunding(ResilientJsonClient()),
         store,
         catalog_path=str(store.path),
+    )
+
+
+def collect_live_agg_trades_use_case(
+    cfg: Settings | None = None,
+    *,
+    symbol: str | None = None,
+    batch_size: int = 5000,
+    progress: CollectProgress | None = None,
+) -> CollectLiveAggTrades:
+    """Live tick collection: public WebSocket in, Parquet catalog out.
+
+    The REST history path cannot deliver tick history at research scale (measured in
+    docs/24 §5.2), while the socket pushes every trade as it prints. Same catalog, so
+    the tick filters cannot tell which route filled it.
+    """
+    resolved = cfg or settings()
+    store = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    return CollectLiveAggTrades(
+        BinanceAggTradeStream(symbol or resolved.binance_symbol),
+        store,
+        symbol=(symbol or resolved.binance_symbol).upper(),
+        catalog_path=str(store.path),
+        batch_size=batch_size,
+        progress=progress,
     )
 
 

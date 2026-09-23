@@ -40,6 +40,7 @@ from websockets.sync.client import connect
 
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.errors import InvalidBarError
+from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
 
 BINANCE_WS_BASE_URL = "wss://stream.binance.com:9443/ws"
@@ -478,11 +479,201 @@ def _summarise(payload: object) -> str:
 
 __all__ = [
     "BINANCE_WS_BASE_URL",
+    "BinanceAggTradeStream",
     "BinanceKlineStream",
     "KlinePayloadError",
     "KlineStreamUnavailableError",
     "ReconnectPolicy",
     "SocketLike",
+    "agg_trade_stream_url",
     "binance_stream_url",
+    "parse_agg_trade_message",
     "parse_kline_message",
 ]
+
+# ---------------------------------------------------------------------------
+# Aggregated trades (ticks)
+# ---------------------------------------------------------------------------
+
+
+def agg_trade_stream_url(symbol: str, *, base_url: str = BINANCE_WS_BASE_URL) -> str:
+    """Public aggTrade stream URL for one symbol, e.g. `.../ws/ethusdt@aggTrade`."""
+    return f"{base_url}/{symbol.strip().lower()}@aggTrade"
+
+
+def parse_agg_trade_message(payload: object) -> AggTrade:
+    """Map one raw `@aggTrade` frame to a domain trade.
+
+    Unlike klines there is no closure flag to honour: every aggTrade frame *is* a
+    completed trade when it is sent, so there is no "still forming" state and no
+    lookahead question here. What this does have to get right is the maker flag,
+    because `is_buyer_maker` is the whole directional content of the event.
+
+    Binance aggTrade fields: `a` aggregate id, `p` price, `q` quantity, `T` trade
+    time (ms), `m` is-buyer-maker, `s` symbol (absent on some frames, hence the
+    caller's fallback).
+
+    Malformed frames raise `KlinePayloadError` — the same error type the kline path
+    uses for a structurally broken message, so the socket loop has one thing to catch.
+    """
+    message = _as_message(payload)
+    if message.get("e") not in (None, "aggTrade"):
+        raise KlinePayloadError(f"not an aggTrade event: {_summarise(message)}")
+
+    symbol = message.get("s")
+    if not isinstance(symbol, str) or not symbol:
+        raise KlinePayloadError(f"aggTrade payload carries no symbol: {_summarise(message)}")
+    try:
+        instrument_id = binance_symbol_to_instrument_id(symbol.upper())
+    except ValueError as exc:
+        raise KlinePayloadError(f"unsupported binance symbol {symbol!r}: {exc}") from exc
+
+    buyer_is_maker = message.get("m")
+    if not isinstance(buyer_is_maker, bool):
+        # Direction is the point of the event; guessing it would silently invert flow.
+        raise KlinePayloadError(f"aggTrade field 'm' must be a boolean, got {buyer_is_maker!r}")
+
+    return AggTrade(
+        instrument_id=instrument_id,
+        ts_utc=_ms_to_utc(_int_field(message, "T")),
+        agg_id=_int_field(message, "a"),
+        price=_raw_text_field(message, "p"),
+        qty=_raw_text_field(message, "q"),
+        is_buyer_maker=buyer_is_maker,
+    )
+
+
+def _raw_text_field(message: Mapping[str, object], name: str) -> str:
+    """Binance sends price/quantity as decimal strings; keep them exactly as sent."""
+    if name not in message:
+        raise KlinePayloadError(f"aggTrade payload is missing required field {name!r}")
+    return str(message[name])
+
+
+class BinanceAggTradeStream:
+    """Yields live aggregated trades from Binance's public spot WebSocket.
+
+    Same shape as `BinanceKlineStream` on purpose: one reconnect policy, one stop
+    discipline, one injectable connector — so a collector can be tested without a
+    socket and a live run behaves like the bar feed it sits beside.
+    """
+
+    def __init__(
+        self,
+        symbol: str,
+        *,
+        base_url: str = BINANCE_WS_BASE_URL,
+        policy: ReconnectPolicy | None = None,
+        connect_fn: ConnectFn = connect,
+        sleep: Callable[[float], None] = time.sleep,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        normalised = symbol.strip().upper()
+        self._instrument_id = binance_symbol_to_instrument_id(normalised)
+        self._symbol = normalised
+        self._url = agg_trade_stream_url(normalised, base_url=base_url)
+        self._policy = policy or ReconnectPolicy()
+        self._connect = connect_fn
+        self._sleep = sleep
+        self._logger = logger or logging.getLogger(type(self).__name__)
+        self._stopped = False
+        self._socket: SocketLike | None = None
+
+    @property
+    def symbol(self) -> str:
+        return self._symbol
+
+    @property
+    def instrument_id(self) -> str:
+        return self._instrument_id
+
+    @property
+    def stream_url(self) -> str:
+        return self._url
+
+    def trades(self) -> Iterator[AggTrade]:
+        """Yield trades, reconnecting on transport failure until `stop()`.
+
+        `agg_id` must strictly increase: a replayed id means the socket resent a trade
+        (or the stream rewound on reconnect), and counting it twice would double the
+        flow that VPIN measures.
+        """
+        failures = 0
+        last_id: int | None = None
+        while not self._stopped:
+            try:
+                with self._connect(self._url) as socket:
+                    self._socket = socket
+                    self._logger.info("connected to %s", self._url)
+                    while not self._stopped:
+                        trade = self._next_trade(socket)
+                        if trade is None:
+                            continue
+                        if last_id is not None and trade.agg_id <= last_id:
+                            self._logger.warning(
+                                "skipping non-increasing agg_id %d (last %d) on %s",
+                                trade.agg_id,
+                                last_id,
+                                self._url,
+                            )
+                            continue
+                        failures = 0
+                        last_id = trade.agg_id
+                        yield trade
+            except _RETRYABLE_ERRORS as exc:
+                if self._stopped:
+                    break
+                failures += 1
+                if failures > self._policy.max_consecutive_failures:
+                    raise KlineStreamUnavailableError(
+                        f"{self._url}: {failures} consecutive failures, last: {exc}. "
+                        "Fail closed: a silent retry loop with no trades looks alive."
+                    ) from exc
+                delay = self._policy.delay_seconds(failures)
+                self._logger.warning(
+                    "stream %s dropped (%s); retry %d/%d in %.1fs",
+                    self._url,
+                    exc,
+                    failures,
+                    self._policy.max_consecutive_failures,
+                    delay,
+                )
+                self._sleep(delay)
+            finally:
+                self._socket = None
+
+    def stop(self) -> None:
+        """End `trades()` and unblock a `recv()` that is already waiting."""
+        self._stopped = True
+        socket, self._socket = self._socket, None
+        if socket is None:
+            return
+        try:
+            socket.close()
+        except (OSError, WebSocketException) as exc:
+            self._logger.debug("closing %s raised %s (already gone)", self._url, exc)
+
+    def __enter__(self) -> BinanceAggTradeStream:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.stop()
+
+    def _next_trade(self, socket: SocketLike) -> AggTrade | None:
+        """Read and parse one frame; an unusable frame is logged, not fatal."""
+        raw = socket.recv()
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            self._logger.warning("skipping non-JSON frame from %s: %s", self._url, exc)
+            return None
+        try:
+            return parse_agg_trade_message(payload)
+        except KlinePayloadError as exc:
+            self._logger.warning("skipping unusable aggTrade frame from %s: %s", self._url, exc)
+            return None

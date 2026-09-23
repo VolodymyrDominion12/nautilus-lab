@@ -38,6 +38,7 @@ from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.infrastructure.paper_sessions import append_session
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.composition import (
+    collect_live_agg_trades_use_case,
     funding_ingest_request,
     ingest_agg_trades_request,
     ingest_agg_trades_use_case,
@@ -100,6 +101,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Ingest aggregated trades (ticks) instead of klines "
             "(stored under catalog/data/agg_trade/). "
             "Enables real VPIN and Hawkes computation without a bar-volume proxy."
+        ),
+    )
+    ingest.add_argument(
+        "--live-ticks",
+        type=float,
+        default=None,
+        metavar="MINUTES",
+        help=(
+            "Collect live aggTrades from the public WebSocket for this many minutes "
+            "instead of walking REST history. Use it when the REST path cannot deliver "
+            "the window in reasonable time (see docs/24 section 5.2)"
         ),
     )
     ingest.add_argument(
@@ -402,6 +414,9 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
     if getattr(args, "funding", False):
         return _run_ingest_funding(cfg, symbols=symbols, start=default_start, end=end)
     if getattr(args, "trades", False):
+        minutes = getattr(args, "live_ticks", None)
+        if minutes is not None:
+            return _run_collect_live_ticks(cfg, symbols=symbols, minutes=minutes)
         return _run_ingest_agg_trades(cfg, symbols=symbols, start=default_start, end=end)
     if getattr(args, "depth", False):
         return _run_ingest_depth(cfg, symbols=symbols)
@@ -435,6 +450,33 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
             f"first={report.first_ts.isoformat()} last={report.last_ts.isoformat()} "
             f"catalog={report.catalog_path}"
         )
+    return 0
+
+
+def _run_collect_live_ticks(
+    cfg: Settings,
+    *,
+    symbols: list[str],
+    minutes: float,
+) -> int:
+    """Collect live aggTrades from the public WebSocket for a bounded time.
+
+    Bounded on purpose: an unbounded collector is a process nobody dares stop. The
+    deadline is checked against the wall clock, so a dead market ends the run instead
+    of idling forever, and whatever arrived before it is already on disk.
+    """
+    if minutes <= 0:
+        raise ValueError("--live-ticks must be a positive number of minutes")
+    duration = timedelta(minutes=minutes)
+    for symbol in symbols:
+
+        def _progress(written: int, last_ts: datetime | None, _symbol: str = symbol) -> None:
+            stamp = "n/a" if last_ts is None else last_ts.isoformat()
+            print(f"  {_symbol} trades={written} last={stamp}", flush=True)
+
+        use_case = collect_live_agg_trades_use_case(cfg, symbol=symbol, progress=_progress)
+        report = use_case.execute(duration=duration)
+        print(report.summary_line())
     return 0
 
 

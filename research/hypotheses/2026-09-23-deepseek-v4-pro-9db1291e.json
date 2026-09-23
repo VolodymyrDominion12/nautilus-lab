@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "created_at": "2026-09-23T10:21:27.182304+00:00",
+  "model": "deepseek-v4-pro",
+  "endpoint_host": "api.deepseek.com",
+  "as_of": "2026-09-23",
+  "prompt_file": "research/prompts/01-generate-alphas.md",
+  "prompt_sha256": "9db1291e33c9e3e0169c82a47fa65f8af6b1598c9a86c8a7443b7e45840d91e6",
+  "feature_contract": [
+    "ret",
+    "ret_5",
+    "vol_10",
+    "volume_ratio",
+    "close_loc",
+    "momentum_10",
+    "reversal_3",
+    "vol_of_vol",
+    "trend_er",
+    "range_pct",
+    "high_low_spread",
+    "vol_20"
+  ],
+  "count_requested": 5,
+  "count_parsed": 5,
+  "count_flagged": 0,
+  "hypotheses": [
+    {
+      "name": "trend_eff_volume_cont",
+      "formula": "zscore(trend_er) * sign(momentum_10) * zscore(volume_ratio)",
+      "mechanism": "Високий trend_er вказує, що рух не розсіюється, а підвищений обсяг підтверджує інформований потік. Контртрендові ліквідні постачальники, які фейдять такий рух, систематично помиляються, бо реагують повільніше за ефективний тренд.",
+      "horizon_bars": 24,
+      "expected_sign": 1,
+      "kill_condition": "На OOS для верхнього квінтилю trend_er і volume_ratio середній подальший рух у напрямку sign(momentum_10) є від'ємним двічі поспіль.",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "vol_compress_close_breakout",
+      "formula": "(1 - zscore(vol_20)) * (close_loc - 0.5) * zscore(volume_ratio)",
+      "mechanism": "Після стиснення волатильності позиції учасників легкі; розташування закриття разом зі сплеском обсягу вказує, хто поглинає ліквідність. Пасивні контртрендові заявки проти пробою системно програють, коли пробій реалізується.",
+      "horizon_bars": 20,
+      "expected_sign": 1,
+      "kill_condition": "На OOS при vol_20 нижчій за медіану та volume_ratio у верхньому терцилі середній наступний рух у бік close_loc-0.5 не є додатним двічі поспіль.",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "volume_range_reversal",
+      "formula": "-zscore(reversal_3) * zscore(volume_ratio) * zscore(range_pct)",
+      "mechanism": "Широкий діапазон і високий обсяг після короткого імпульсу часто є кульмінаційним викидом. Пізні імпульсні трейдери, які заходять у напрямку цього викиду, системно платять, коли рух втрачає паливо й повертається.",
+      "horizon_bars": 5,
+      "expected_sign": 1,
+      "kill_condition": "На OOS після верхнього децилю range_pct і volume_ratio середній наступний 5-барний рух зберігає знак reversal_3 замість протилежного двічі поспіль.",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "close_extreme_spread_fade",
+      "formula": "-zscore(close_loc) * zscore(high_low_spread)",
+      "mechanism": "Закриття на екстремумі при широкому high-low діапазоні свідчить про пізнє агресивне виконання. Емоційні переслідувачі руху платять маркет-мейкерам, які надають ліквідність і очікують відкат від екстремуму.",
+      "horizon_bars": 6,
+      "expected_sign": 1,
+      "kill_condition": "На OOS при high_low_spread у верхньому квінтилі та close_loc у верхньому або нижньому децилі середній наступний рух не є протилежним до close_loc-екстремуму двічі поспіль.",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "vol_of_vol_noise_fade",
+      "formula": "-zscore(vol_of_vol) * sign(ret_5)",
+      "mechanism": "Висока волатильність волатильності означає нестабільний режим і шумові рухи. Неінформовані роздрібні учасники реагують на короткий тренд, а ліквідні постачальники отримують перевагу на поверненні до локальної рівноваги.",
+      "horizon_bars": 8,
+      "expected_sign": 1,
+      "kill_condition": "На OOS у верхньому терцилі vol_of_vol середня подальша дохідність у напрямку ret_5, а не проти нього, спостерігається двічі підряд.",
+      "unknown_identifiers": []
+    }
+  ],
+  "raw_response": "[\n  {\n    \"name\": \"trend_eff_volume_cont\",\n    \"formula\": \"zscore(trend_er) * sign(momentum_10) * zscore(volume_ratio)\",\n    \"mechanism\": \"Високий trend_er вказує, що рух не розсіюється, а підвищений обсяг підтверджує інформований потік. Контртрендові ліквідні постачальники, які фейдять такий рух, систематично помиляються, бо реагують повільніше за ефективний тренд.\",\n    \"horizon_bars\": 24,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"На OOS для верхнього квінтилю trend_er і volume_ratio середній подальший рух у напрямку sign(momentum_10) є від'ємним двічі поспіль.\"\n  },\n  {\n    \"name\": \"vol_compress_close_breakout\",\n    \"formula\": \"(1 - zscore(vol_20)) * (close_loc - 0.5) * zscore(volume_ratio)\",\n    \"mechanism\": \"Після стиснення волатильності позиції учасників легкі; розташування закриття разом зі сплеском обсягу вказує, хто поглинає ліквідність. Пасивні контртрендові заявки проти пробою системно програють, коли пробій реалізується.\",\n    \"horizon_bars\": 20,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"На OOS при vol_20 нижчій за медіану та volume_ratio у верхньому терцилі середній наступний рух у бік close_loc-0.5 не є додатним двічі поспіль.\"\n  },\n  {\n    \"name\": \"volume_range_reversal\",\n    \"formula\": \"-zscore(reversal_3) * zscore(volume_ratio) * zscore(range_pct)\",\n    \"mechanism\": \"Широкий діапазон і високий обсяг після короткого імпульсу часто є кульмінаційним викидом. Пізні імпульсні трейдери, які заходять у напрямку цього викиду, системно платять, коли рух втрачає паливо й повертається.\",\n    \"horizon_bars\": 5,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"На OOS після верхнього децилю range_pct і volume_ratio середній наступний 5-барний рух зберігає знак reversal_3 замість протилежного двічі поспіль.\"\n  },\n  {\n    \"name\": \"close_extreme_spread_fade\",\n    \"formula\": \"-zscore(close_loc) * zscore(high_low_spread)\",\n    \"mechanism\": \"Закриття на екстремумі при широкому high-low діапазоні свідчить про пізнє агресивне виконання. Емоційні переслідувачі руху платять маркет-мейкерам, які надають ліквідність і очікують відкат від екстремуму.\",\n    \"horizon_bars\": 6,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"На OOS при high_low_spread у верхньому квінтилі та close_loc у верхньому або нижньому децилі середній наступний рух не є протилежним до close_loc-екстремуму двічі поспіль.\"\n  },\n  {\n    \"name\": \"vol_of_vol_noise_fade\",\n    \"formula\": \"-zscore(vol_of_vol) * sign(ret_5)\",\n    \"mechanism\": \"Висока волатильність волатильності означає нестабільний режим і шумові рухи. Неінформовані роздрібні учасники реагують на короткий тренд, а ліквідні постачальники отримують перевагу на поверненні до локальної рівноваги.\",\n    \"horizon_bars\": 8,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"На OOS у верхньому терцилі vol_of_vol середня подальша дохідність у напрямку ret_5, а не проти нього, спостерігається двічі підряд.\"\n  }\n]",
+  "review": {
+    "status": "pending",
+    "note": "",
+    "gates": {
+      "purged_cv": null,
+      "walk_forward_oos": null,
+      "buy_and_hold_oos": null
+    }
+  }
+}

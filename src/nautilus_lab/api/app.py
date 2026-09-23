@@ -7,12 +7,13 @@ import os
 import subprocess
 import tempfile
 from datetime import UTC
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import dotenv
 import yaml
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -33,6 +34,7 @@ from nautilus_lab.api.data_health import (
 from nautilus_lab.api.experiment_history import list_history, load_history_entry
 from nautilus_lab.api.journal_service import list_journal_entries, update_journal_decision
 from nautilus_lab.api.ml_runner import list_models
+from nautilus_lab.api.paper_streamer import LIVE_PAPER_SESSION, LivePaperConfig
 from nautilus_lab.api.research_runner import (
     default_tearsheet_path,
     load_job_result,
@@ -157,6 +159,23 @@ class PaperRunRequest(BaseModel):
     robot: str = "regime"
     bars: int = 2000
     source: str = "catalog"
+
+
+class PaperLiveStartRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    interval: str = "1m"
+    robot: str = "regime"
+    starting_equity: str = "10000"
+    risk_per_trade: str = "0.01"
+    stop_pct: str = "0.015"
+    take_profit_multiple: str = "2.0"
+    mode: str = "paper"
+    auto_trade: bool = True
+
+
+class PaperLiveStopsUpdateRequest(BaseModel):
+    stop_loss: str | None = None
+    take_profit: str | None = None
 
 
 class JournalPatchRequest(BaseModel):
@@ -1122,6 +1141,71 @@ def get_paper_log() -> dict[str, Any]:
     if is_running:
         summary["is_finished"] = False
     return {"is_running": is_running, "log": content, "summary": summary, "result": result}
+
+
+@app.get("/api/paper/live/state")
+def get_paper_live_state() -> dict[str, Any]:
+    return LIVE_PAPER_SESSION.to_state_dict()
+
+
+@app.post("/api/paper/live/start")
+async def start_paper_live(req: PaperLiveStartRequest) -> dict[str, Any]:
+    config = LivePaperConfig(
+        symbol=req.symbol,
+        interval=req.interval,
+        robot=req.robot,
+        starting_equity=Decimal(req.starting_equity),
+        risk_per_trade=Decimal(req.risk_per_trade),
+        stop_pct=Decimal(req.stop_pct),
+        take_profit_multiple=Decimal(req.take_profit_multiple),
+        mode=req.mode,
+        auto_trade=req.auto_trade,
+    )
+    await LIVE_PAPER_SESSION.start(config)
+    return {"status": "started", "message": f"Started live paper session for {req.symbol}"}
+
+
+@app.post("/api/paper/live/stop")
+async def stop_paper_live() -> dict[str, Any]:
+    await LIVE_PAPER_SESSION.stop()
+    return {"status": "stopped", "message": "Live paper session stopped"}
+
+
+@app.post("/api/paper/live/close-position")
+async def close_paper_live_position() -> dict[str, Any]:
+    msg = LIVE_PAPER_SESSION.close_position_manual()
+    await LIVE_PAPER_SESSION.broadcast_state()
+    return {"status": "ok", "message": msg}
+
+
+@app.post("/api/paper/live/update-stops")
+async def update_paper_live_stops(req: PaperLiveStopsUpdateRequest) -> dict[str, Any]:
+    sl = Decimal(req.stop_loss) if req.stop_loss else None
+    tp = Decimal(req.take_profit) if req.take_profit else None
+    msg = LIVE_PAPER_SESSION.update_stops(sl, tp)
+    await LIVE_PAPER_SESSION.broadcast_state()
+    return {"status": "ok", "message": msg}
+
+
+@app.websocket("/api/paper/live-stream")
+async def paper_live_stream_ws(websocket: WebSocket) -> None:
+    await websocket.accept()
+    LIVE_PAPER_SESSION.subscribers.add(websocket)
+    try:
+        # Send initial state immediately upon connection
+        await websocket.send_text(
+            json.dumps({"type": "INIT_STATE", "data": LIVE_PAPER_SESSION.to_state_dict()})
+        )
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        LIVE_PAPER_SESSION.subscribers.discard(websocket)
 
 
 @app.post("/api/scan/triangular")

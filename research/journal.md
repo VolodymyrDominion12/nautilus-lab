@@ -11,6 +11,7 @@
 <!-- journal:rows:start -->
 | 2026-09-15 10:00 | _приклад_ | `pairs` ETH/BTC | walk-forward, refit 24 | -0.70% | +2.44% | ❌ rejected | планку buy&hold не подолано, 356 угод при комісії 0.1% |
 | 2026-09-17 08:42 | lab api research | regime BTC/USDT.SIM | walk-forward catalog folds=2 | -4.45% | -3.79% | ⏳ pending | auto: profitable 0/2 folds |
+| 2026-09-23 10:21 | lab api research | formulaic_lgbm BTC/USDT.SIM | PBO/CSCV blocks=8 configurations=3 | n/a | n/a | ⏳ pending | PBO undefined: 3 configurations x 8 blocks (need >= 2 configurations) |
 <!-- journal:rows:end -->
 
 **Як це працює.** Рядки між маркерами `journal:rows:start` і `journal:rows:end`

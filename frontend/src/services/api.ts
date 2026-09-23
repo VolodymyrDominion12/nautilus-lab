@@ -751,6 +751,128 @@ export async function fetchPaperLog(): Promise<PaperLogResponse> {
   return parseJson(await fetch(apiUrl('/api/paper/log')));
 }
 
+export interface LivePaperConfig {
+  symbol: string;
+  interval: string;
+  robot: string;
+  starting_equity: string;
+  risk_per_trade: string;
+  stop_pct: string;
+  take_profit_multiple: string;
+  auto_trade: boolean;
+}
+
+export interface LivePosition {
+  symbol: string;
+  side: string;
+  qty: string;
+  entry_price: string;
+  entry_time: string;
+  mark_price: string;
+  unrealized_pnl: string;
+  unrealized_pnl_pct: string;
+  stop_loss: string | null;
+  take_profit: string | null;
+}
+
+export interface LiveFill {
+  id: string;
+  ts: string;
+  symbol: string;
+  side: string;
+  qty: string;
+  price: string;
+  fee: string;
+  realized_pnl: string;
+  reason: string;
+}
+
+export interface LiveBar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  is_closed: boolean;
+}
+
+export interface LiveEquityPoint {
+  time: number;
+  equity: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+}
+
+export interface LivePaperState {
+  is_active: boolean;
+  mode: string;
+  config: LivePaperConfig;
+  starting_equity: string;
+  current_balance: string;
+  current_equity: string;
+  realized_pnl: string;
+  unrealized_pnl: string;
+  fees_paid: string;
+  position: LivePosition | null;
+  fills: LiveFill[];
+  equity_history: LiveEquityPoint[];
+  recent_bars: LiveBar[];
+  last_price: string | null;
+  last_update_ts: string;
+  status_message: string;
+}
+
+export async function fetchLivePaperState(): Promise<LivePaperState> {
+  return parseJson(await fetch(apiUrl('/api/paper/live/state')));
+}
+
+export async function startLivePaper(
+  params: Partial<LivePaperConfig> & { mode?: string },
+): Promise<ActionResult> {
+  return parseJson(
+    await fetch(apiUrl('/api/paper/live/start'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    }),
+  );
+}
+
+export async function stopLivePaper(): Promise<ActionResult> {
+  return parseJson(
+    await fetch(apiUrl('/api/paper/live/stop'), {
+      method: 'POST',
+    }),
+  );
+}
+
+export async function closeLivePosition(): Promise<ActionResult> {
+  return parseJson(
+    await fetch(apiUrl('/api/paper/live/close-position'), {
+      method: 'POST',
+    }),
+  );
+}
+
+export async function updateLiveStops(params: {
+  stop_loss?: string | null;
+  take_profit?: string | null;
+}): Promise<ActionResult> {
+  return parseJson(
+    await fetch(apiUrl('/api/paper/live/update-stops'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    }),
+  );
+}
+
+export function getLivePaperWsUrl(): string {
+  const base = apiUrl('/api/paper/live-stream');
+  return base.replace(/^http/, 'ws');
+}
+
 export async function scanTriangular() {
   return parseJson(
     await fetch(apiUrl('/api/scan/triangular'), {

@@ -270,6 +270,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Embargo gap between the selection window and the session window",
     )
     paper.add_argument(
+        "--tick-vpin",
+        action="store_true",
+        help=(
+            "Enable the tick-level VPIN filter (needs an aggTrades series in the "
+            "catalog: 'lab ingest --trades')"
+        ),
+    )
+    paper.add_argument(
+        "--hawkes",
+        action="store_true",
+        help="Enable the tick-level Hawkes filter (needs an aggTrades series)",
+    )
+    paper.add_argument(
         "--journal",
         action="store_true",
         help="Append this session to reports/paper/sessions.jsonl",

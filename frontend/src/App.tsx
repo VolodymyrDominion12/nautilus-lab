@@ -6,7 +6,6 @@ import {
   Brain,
   Cpu,
   Database,
-  FlaskConical,
   Layers,
   LayoutDashboard,
   Search,
@@ -14,6 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
   WifiOff,
+  Zap,
 } from 'lucide-react';
 import { getSelectedCatalogPath, setSelectedCatalogPath } from './catalogSelection';
 import { fetchCatalog, fetchCatalogs, fetchStatus, fetchStrategies } from './services/api';
@@ -247,8 +247,8 @@ function AppContent() {
           {navButton('journal', 'Experiment Journal', <BookOpen className="w-4 h-4" />)}
           {navButton(
             'paper',
-            'Paper Simulator',
-            <FlaskConical className="w-4 h-4" />,
+            'Trading Terminal',
+            <Zap className="w-4 h-4" />,
             status?.jobs?.paper.running ? (
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
             ) : undefined,

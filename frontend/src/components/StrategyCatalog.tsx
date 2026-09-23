@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { CheckCircle, ChevronDown, ChevronUp, Cpu, Play, XCircle } from 'lucide-react';
+import { Tooltip } from './Tooltip';
+import { InfoTooltip } from './InfoTooltip';
 import type { StrategySpec } from '../services/api';
 
 interface StrategyCatalogProps {
@@ -41,6 +43,7 @@ export const StrategyCatalog: React.FC<StrategyCatalogProps> = ({
         <div className="flex items-center gap-2">
           <Cpu className="w-6 h-6 text-purple-400" />
           <h2 className="text-xl font-bold text-gray-100">Strategy &amp; robot directory</h2>
+          <InfoTooltip term="strategy_specs" size="sm" />
         </div>
         <p className="text-sm text-gray-400">
           Read from <code className="text-gray-300">specs/strategies/*.yaml</code> and validated
@@ -71,15 +74,26 @@ export const StrategyCatalog: React.FC<StrategyCatalogProps> = ({
             <div className="flex flex-col gap-3">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-lg font-bold text-gray-100 font-mono">{strat.name}</h3>
-                <span
-                  className={`px-2.5 py-0.5 text-xs font-mono rounded-full border shrink-0 ${
+                <Tooltip
+                  title={strat.wired_in_backtest ? 'Підключено до бектесту' : 'Заблоковано (Fail Closed)'}
+                  content={
                     strat.wired_in_backtest
-                      ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/50'
-                      : 'bg-red-950/60 text-red-400 border-red-800/50'
-                  }`}
+                      ? 'Робот реалізований у backtest engine та готовий до симуляції.'
+                      : 'Робот присутній у специфікаціях, але ще не має адаптера виконання в бектесті. Запуск викликає блокування.'
+                  }
+                  badgeTone={strat.wired_in_backtest ? 'emerald' : 'red'}
+                  position="left"
                 >
-                  {strat.wired_in_backtest ? 'wired' : 'fail closed'}
-                </span>
+                  <span
+                    className={`px-2.5 py-0.5 text-xs font-mono rounded-full border shrink-0 cursor-help ${
+                      strat.wired_in_backtest
+                        ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/50'
+                        : 'bg-red-950/60 text-red-400 border-red-800/50'
+                    }`}
+                  >
+                    {strat.wired_in_backtest ? 'wired' : 'fail closed'}
+                  </span>
+                </Tooltip>
               </div>
 
               <p className="text-xs text-gray-400 leading-relaxed">
@@ -99,24 +113,42 @@ export const StrategyCatalog: React.FC<StrategyCatalogProps> = ({
                 </div>
                 <div className="flex justify-between gap-2 text-gray-500">
                   <span>Grid:</span>
-                  <span
-                    title={
+                  <Tooltip
+                    title="Джерело сітки параметрів"
+                    content={
                       strat.grid_source === 'explicit'
-                        ? 'Has its own branch in application/param_grid.py'
-                        : 'No branch of its own: the regime grid applies'
+                        ? 'Має власну гілку конфігурації сітки в application/param_grid.py'
+                        : 'Немає власної гілки: тихо позичає сітку від regime, що спотворює оптимізацію!'
                     }
-                    className={`truncate ${
-                      strat.grid_source === 'explicit' ? 'text-gray-300' : 'text-amber-400'
-                    }`}
+                    badgeTone={strat.grid_source === 'explicit' ? 'gray' : 'amber'}
+                    position="top"
                   >
-                    {strat.grid_source ?? 'default_branch'}
-                  </span>
+                    <span
+                      className={`truncate cursor-help ${
+                        strat.grid_source === 'explicit' ? 'text-gray-300' : 'text-amber-400'
+                      }`}
+                    >
+                      {strat.grid_source ?? 'default_branch'}
+                    </span>
+                  </Tooltip>
                 </div>
                 <div className="flex justify-between text-gray-500">
                   <span>Status:</span>
-                  <span className={`font-semibold ${STATUS_STYLE[strat.status] ?? 'text-gray-300'}`}>
-                    {strat.status}
-                  </span>
+                  <Tooltip
+                    title={`Статус готовності: ${strat.status}`}
+                    content={
+                      strat.status === 'validated'
+                        ? 'Стратегія має доведену статистичну перевагу над Buy&Hold на Out-of-Sample.'
+                        : strat.status === 'candidate'
+                          ? 'Кандидат на дослідження: статистична перевага ще не підтверджена.'
+                          : 'Відхилена: експерименти довели відсутність переваги або високу ймовірність перенавчання.'
+                    }
+                    position="top"
+                  >
+                    <span className={`font-semibold cursor-help ${STATUS_STYLE[strat.status] ?? 'text-gray-300'}`}>
+                      {strat.status}
+                    </span>
+                  </Tooltip>
                 </div>
                 {strat.params?.length > 0 && (
                   <div className="flex justify-between text-gray-500">

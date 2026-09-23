@@ -14,6 +14,7 @@ import {
 import { fetchCommandCenter } from '../services/api';
 import type { CommandCenterResponse } from '../services/api';
 import { MetricCard } from './MetricCard';
+import { InfoTooltip } from './InfoTooltip';
 import {
   describeStaleness,
   formatBps,
@@ -94,6 +95,7 @@ export const CommandCenter: React.FC = () => {
           <span className="text-emerald-600/80 font-mono">
             {data?.safety?.live_enabled ? 'live flag set (ignored)' : 'live disabled'}
           </span>
+          <InfoTooltip term="fail_closed" size="xs" />
         </div>
       </div>
 
@@ -142,6 +144,11 @@ export const CommandCenter: React.FC = () => {
         <div className="flex items-center gap-2 flex-wrap">
           <Gauge className="w-5 h-5 text-blue-400" />
           <h3 className="font-semibold text-gray-100">Last measured result</h3>
+          <InfoTooltip
+            title="Останній виміряний результат"
+            content="Зведення останнього завершеного бектесту. Для перегляду детального графіку кривої капіталу (Equity Curve) відкрийте вкладку Research & Backtest."
+            size="xs"
+          />
           {last?.robot && (
             <span className="text-[11px] font-mono px-2 py-0.5 rounded-full border bg-gray-950 text-gray-300 border-gray-800">
               {last.robot} · {last.run_type}

@@ -38,6 +38,7 @@ import { ExperimentHistory } from './ExperimentHistory';
 import { RunsCompare } from './RunsCompare';
 import { VerdictPanel } from './VerdictPanel';
 import { FoldBreakdown } from './FoldBreakdown';
+import { InfoTooltip } from './InfoTooltip';
 import { PboPanel } from './PboPanel';
 import { LogPanel } from './LogPanel';
 import { ResearchPresets } from './ResearchPresets';
@@ -738,7 +739,14 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 items-end">
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-gray-300">Robot</label>
+            <div className="flex items-center gap-1">
+              <label className="text-xs font-medium text-gray-300">Robot</label>
+              <InfoTooltip
+                title="Торговий робот (Стратегія)"
+                content="Алгоритмічна модель, що генерує торгові сигнали. Роботи з позначкою fail-closed блокуються, якщо вони не реалізовані для бектесту."
+                size="xs"
+              />
+            </div>
             <select
               value={robot}
               onChange={(e) => setRobot(e.target.value)}
@@ -754,9 +762,16 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
 
           {source === 'catalog' ? (
             <div className="flex flex-col gap-1.5 xl:col-span-2">
-              <label className="text-xs font-medium text-gray-300">
-                Instrument {catalogInstruments.length > 1 && `(${catalogInstruments.length} in catalog)`}
-              </label>
+              <div className="flex items-center gap-1">
+                <label className="text-xs font-medium text-gray-300">
+                  Instrument {catalogInstruments.length > 1 && `(${catalogInstruments.length} in catalog)`}
+                </label>
+                <InfoTooltip
+                  title="Торговий інструмент"
+                  content="Історичні дані з локального Parquet-каталогу. Для додавання нових пар запустіть ingest у вкладці Parquet Catalog."
+                  size="xs"
+                />
+              </div>
               {catalogInstruments.length === 0 ? (
                 // A disabled select with a single "no instruments" option is a dead control:
                 // it opens nothing and explains nothing. Say what to do instead.
@@ -785,7 +800,15 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
             </div>
           ) : (
             <div className="flex flex-col gap-1.5 xl:col-span-2">
-              <label className="text-xs font-medium text-gray-300">Synthetic bars</label>
+              <div className="flex items-center gap-1">
+                <label className="text-xs font-medium text-gray-300">Synthetic bars</label>
+                <InfoTooltip
+                  title="Синтетичні дані (Smoke test)"
+                  content="Штучно згенеровані бари. Використовуються ВИКЛЮЧНО для швидкої перевірки коду на помилки (smoke test). Дохідність на синтетиці є фіктивною."
+                  badge="Smoke Only"
+                  size="xs"
+                />
+              </div>
               <input
                 type="number"
                 value={bars}
@@ -796,7 +819,10 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           )}
 
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-gray-300">Fold{source === 'catalog' && `s`}</label>
+            <div className="flex items-center gap-1">
+              <label className="text-xs font-medium text-gray-300">Fold{source === 'catalog' && `s`}</label>
+              <InfoTooltip term="folds" size="xs" />
+            </div>
             <select
               value={folds}
               onChange={(e) => setFolds(Number(e.target.value))}
@@ -812,9 +838,12 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-gray-300">
-              IS fraction ({(isFraction * 100).toFixed(0)}% / {((1 - isFraction) * 100).toFixed(0)}%)
-            </label>
+            <div className="flex items-center gap-1">
+              <label className="text-xs font-medium text-gray-300">
+                IS fraction ({(isFraction * 100).toFixed(0)}% / {((1 - isFraction) * 100).toFixed(0)}%)
+              </label>
+              <InfoTooltip term="is_fraction" size="xs" />
+            </div>
             <input
               type="number"
               step="0.05"
@@ -1007,15 +1036,18 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           {showAdvanced && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 mt-2 border-t border-gray-800/80">
               <div className="flex flex-col gap-2">
-                <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={useOptuna}
-                    onChange={(e) => setUseOptuna(e.target.checked)}
-                    className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-                  />
-                  Bayesian selection (Optuna TPE)
-                </label>
+                <div className="flex items-center gap-1.5">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={useOptuna}
+                      onChange={(e) => setUseOptuna(e.target.checked)}
+                      className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+                    />
+                    Bayesian selection (Optuna TPE)
+                  </label>
+                  <InfoTooltip term="optuna_trials" size="xs" />
+                </div>
                 {useOptuna && (
                   <div className="flex items-center gap-2 pl-5">
                     <span className="text-[11px] text-gray-400">Trials:</span>
@@ -1035,15 +1067,18 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={usePbo}
-                    onChange={(e) => setUsePbo(e.target.checked)}
-                    className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-                  />
-                  Overfitting audit (PBO / CSCV)
-                </label>
+                <div className="flex items-center gap-1.5">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={usePbo}
+                      onChange={(e) => setUsePbo(e.target.checked)}
+                      className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+                    />
+                    Overfitting audit (PBO / CSCV)
+                  </label>
+                  <InfoTooltip term="pbo" size="xs" />
+                </div>
                 {usePbo && (
                   <div className="flex items-center gap-2 pl-5">
                     <span className="text-[11px] text-gray-400">Blocks:</span>
@@ -1063,7 +1098,10 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
               </div>
 
               <div className="flex flex-col gap-1">
-                <span className="text-[11px] text-gray-400">Purged embargo bars</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-gray-400">Purged embargo bars</span>
+                  <InfoTooltip term="embargo_bars" size="xs" />
+                </div>
                 <input
                   type="number"
                   value={embargoBars}

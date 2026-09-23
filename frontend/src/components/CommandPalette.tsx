@@ -21,6 +21,7 @@ export interface CommandPaletteProps {
   onClose: () => void;
   onNavigateTab: (tabId: string) => void;
   onSelectStrategy: (robotName: string) => void;
+  onOpenGuide?: () => void;
   strategies: StrategySpec[];
 }
 
@@ -39,6 +40,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onClose,
   onNavigateTab,
   onSelectStrategy,
+  onOpenGuide,
   strategies,
 }) => {
   const [query, setQuery] = useState('');
@@ -166,6 +168,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           onClose();
         },
       },
+      {
+        id: 'action-guide',
+        category: 'Actions',
+        title: 'Interface & Methodology Guide',
+        subtitle: 'Повний довідник по метриках, розрахунках, правилах та роботі модулів',
+        icon: <BookOpen className="w-4 h-4 text-blue-400" />,
+        action: () => {
+          onClose();
+          onOpenGuide?.();
+        },
+      },
     ];
 
     // Strategies
@@ -211,7 +224,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
 
     return list;
-  }, [strategies, onNavigateTab, onSelectStrategy, onClose]);
+  }, [strategies, onNavigateTab, onSelectStrategy, onClose, onOpenGuide]);
 
   const filteredItems = useMemo(() => {
     if (!query.trim()) return items;

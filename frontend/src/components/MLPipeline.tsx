@@ -3,6 +3,7 @@ import { AlertTriangle, Brain, Play, RefreshCw, Square, Terminal } from 'lucide-
 import { cancelMlTrain, fetchMlModels, fetchMlTrainLog, runMlTrain } from '../services/api';
 import type { MlModelInfo, MlTrainSummary } from '../services/api';
 import { formatDateTime } from '../lib/format';
+import { InfoTooltip } from './InfoTooltip';
 
 export const MLPipeline: React.FC<{ selectedCatalogPath?: string }> = ({ selectedCatalogPath }) => {
   const [modelType, setModelType] = useState<'formulaic' | 'meta_label'>('formulaic');
@@ -122,7 +123,14 @@ export const MLPipeline: React.FC<{ selectedCatalogPath?: string }> = ({ selecte
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-4">
           <h3 className="font-semibold text-gray-100">Training config</h3>
-          <label className="block text-xs text-gray-400">Model type</label>
+          <div className="flex items-center gap-1.5">
+            <label className="block text-xs text-gray-400">Model type</label>
+            <InfoTooltip
+              title="Тип ML-моделі"
+              content="Formulaic LGBM: регресія/класифікація на базі мікроструктурних та технічних ознак. Meta-label: вторинна модель для фільтрації сигналів базової стратегії методом потрійного бар'єру (Triple Barrier)."
+              size="xs"
+            />
+          </div>
           <select
             value={modelType}
             onChange={(e) => setModelType(e.target.value as 'formulaic' | 'meta_label')}
@@ -134,7 +142,10 @@ export const MLPipeline: React.FC<{ selectedCatalogPath?: string }> = ({ selecte
 
           <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="text-xs text-gray-400">Folds</label>
+              <div className="flex items-center gap-1">
+                <label className="text-xs text-gray-400">Folds</label>
+                <InfoTooltip term="folds" size="xs" />
+              </div>
               <input
                 type="number"
                 value={folds}
@@ -143,7 +154,10 @@ export const MLPipeline: React.FC<{ selectedCatalogPath?: string }> = ({ selecte
               />
             </div>
             <div>
-              <label className="text-xs text-gray-400">Embargo</label>
+              <div className="flex items-center gap-1">
+                <label className="text-xs text-gray-400">Embargo</label>
+                <InfoTooltip term="embargo_bars" size="xs" />
+              </div>
               <input
                 type="number"
                 value={embargo}
@@ -152,7 +166,14 @@ export const MLPipeline: React.FC<{ selectedCatalogPath?: string }> = ({ selecte
               />
             </div>
             <div>
-              <label className="text-xs text-gray-400">Horizon</label>
+              <div className="flex items-center gap-1">
+                <label className="text-xs text-gray-400">Horizon</label>
+                <InfoTooltip
+                  title="Prediction Horizon (Горизонт прогнозу)"
+                  content="Кількість барів уперед (наприклад, 5 барів), на яку модель оцінює ціновий рух для генерації таргета."
+                  size="xs"
+                />
+              </div>
               <input
                 type="number"
                 value={horizon}

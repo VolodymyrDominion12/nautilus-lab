@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, Grid3x3, Percent } from 'lucide-react';
 import { MetricCard } from './MetricCard';
+import { InfoTooltip } from './InfoTooltip';
 import { toNumber } from '../lib/format';
 import type { PboSummary } from '../services/api';
 
@@ -53,6 +54,7 @@ export const PboPanel: React.FC<PboPanelProps> = ({ pbo }) => {
       <div className="flex items-center gap-2 flex-wrap">
         <Percent className="w-4 h-4 text-purple-400" />
         <h3 className="text-sm font-bold text-gray-100">Overfitting audit (PBO / CSCV)</h3>
+        <InfoTooltip term="pbo" size="sm" />
         <span className="text-[11px] font-mono px-2 py-0.5 rounded-full border bg-purple-950/60 text-purple-300 border-purple-800/50">
           measures the selection, not the PnL
         </span>
@@ -119,6 +121,13 @@ export const PboPanel: React.FC<PboPanelProps> = ({ pbo }) => {
             <h4 className="text-xs font-semibold text-gray-200">
               Block returns — {matrix.length} blocks × {labels.length} configurations
             </h4>
+            <InfoTooltip
+              title="Матриця повернень блоків (Block Returns Matrix)"
+              subtitle="Візуалізація стійкості конфігурацій"
+              content="Кожен рядок — це окремий неперервний часовий блок (block), а кожен стовпчик — протестована конфігурація параметрів сітки (#0, #1...). Зірочкою (★) позначена конфігурація, яка перемогла на In-Sample."
+              interpretation="Якщо найкраща колонка має багато червоних клітинок на інших блоках, вона не є універсальною та має високий ризик перенавчання."
+              size="xs"
+            />
           </div>
           <p className="text-[11px] text-gray-500">
             One row per contiguous block, one column per grid configuration. Grey means the engine

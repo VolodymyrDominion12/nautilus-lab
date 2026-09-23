@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { MetricCard } from './MetricCard';
 import { EquityCurveChart } from './EquityCurveChart';
+import { Tooltip } from './Tooltip';
+import { InfoTooltip } from './InfoTooltip';
 import { TONE_TEXT, formatBps, formatDateTime, formatPct, toNumber } from '../lib/format';
 import type { Tone } from '../lib/format';
 import type { ResearchSummary } from '../services/api';
@@ -106,6 +108,14 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
         <div className="flex items-center gap-2">
           <Info className="w-4 h-4 text-blue-400" />
           <h3 className="text-sm font-bold text-gray-100">Verdict</h3>
+          <InfoTooltip
+            title="Аналіз достовірності бектесту (Verdict)"
+            subtitle="Чесна оцінка результатів без самообману"
+            content="Оцінює, чи був бектест проведений на Out-of-Sample (поза вибіркою), чи перевершив він базовий ринок (Buy & Hold), на скількох фолдах зберігся прибуток, та чи витримує стратегія реальні комісії біржі."
+            interpretation="Будь-який результат без OOS є лише внутрішньою підгонкою параметрів (низька достовірність)."
+            badge="Methodology"
+            size="sm"
+          />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button
@@ -126,9 +136,23 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
             <Download className="w-3.5 h-3.5 text-blue-400" />
             <span>JSON</span>
           </button>
-          <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${verdict.badge.className}`}>
-            {verdict.badge.label}
-          </span>
+          <Tooltip
+            title="Рівень достовірності (Evidence Level)"
+            content={verdict.badge.detail}
+            subtitle={verdict.badge.label}
+            interpretation={
+              verdict.badge.label.includes('OOS')
+                ? 'Найвищий рівень доказовості: перевірено на незалежних часових вікнах.'
+                : 'Увага: цей прогін не підтверджує генералізацію на майбутнє.'
+            }
+            position="bottom"
+          >
+            <span
+              className={`text-[11px] font-mono px-2 py-0.5 rounded-full border cursor-help ${verdict.badge.className}`}
+            >
+              {verdict.badge.label}
+            </span>
+          </Tooltip>
           {summary.robot && (
             <span className="text-[11px] font-mono px-2 py-0.5 rounded-full border bg-gray-950 text-gray-400 border-gray-800">
               {summary.robot}

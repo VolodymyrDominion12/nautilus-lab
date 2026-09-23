@@ -6,6 +6,7 @@ import {
   Brain,
   Cpu,
   Database,
+  HelpCircle,
   Layers,
   LayoutDashboard,
   Search,
@@ -29,6 +30,7 @@ import { PaperSimulator } from './components/PaperSimulator';
 import { ScanTab } from './components/ScanTab';
 import { AlphaIdeasTab } from './components/AlphaIdeasTab';
 import { CommandPalette } from './components/CommandPalette';
+import { InterfaceGuideModal } from './components/InterfaceGuideModal';
 import { ToastProvider } from './components/Toast';
 import { useToast } from './components/toastContext';
 import { formatElapsed } from './lib/format';
@@ -63,6 +65,7 @@ function AppContent() {
   const [selectedRobot, setSelectedRobot] = useState('regime');
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [selectedCatalogPath, setSelectedCatalogPathState] = useState(
     () => getSelectedCatalogPath() || 'catalog',
   );
@@ -103,12 +106,18 @@ function AppContent() {
       .catch((err: unknown) => console.error(err));
   }, [selectedCatalogPath]);
 
-  // Keyboard shortcut: Cmd+K / Ctrl+K opens CommandPalette
+  // Keyboard shortcut: Cmd+K / Ctrl+K opens CommandPalette; ? opens Guide
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const targetTag = (e.target as HTMLElement)?.tagName;
+      const isInput = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT';
+
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         setIsPaletteOpen((prev) => !prev);
+      } else if (e.key === '?' && !isInput && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setIsGuideOpen((prev) => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -186,6 +195,7 @@ function AppContent() {
         onClose={() => setIsPaletteOpen(false)}
         onNavigateTab={(tab) => setActiveTab(tab as TabId)}
         onSelectStrategy={handleSelectStrategy}
+        onOpenGuide={() => setIsGuideOpen(true)}
         strategies={strategies}
       />
 
@@ -262,6 +272,18 @@ function AppContent() {
           <div className="my-0.5 border-t border-gray-800/60" />
 
           {navButton('settings', 'Settings', <ShieldAlert className="w-4 h-4" />)}
+
+          <button
+            type="button"
+            onClick={() => setIsGuideOpen(true)}
+            className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors text-blue-400/90 hover:bg-blue-600/10 hover:text-blue-300 border border-blue-500/20"
+          >
+            <HelpCircle className="w-4 h-4 text-blue-400" />
+            <span className="flex-1 text-left">Guide &amp; Docs</span>
+            <kbd className="px-1.5 py-0.5 text-[9px] font-mono text-blue-300 bg-blue-950 rounded border border-blue-800/50">
+              ?
+            </kbd>
+          </button>
         </nav>
 
         {runningJobs.length > 0 && (
@@ -361,6 +383,11 @@ function AppContent() {
         {activeTab === 'alpha' && <AlphaIdeasTab onTestInResearch={handleTestHypothesis} />}
         {activeTab === 'settings' && <SettingsTab />}
       </main>
+
+      <InterfaceGuideModal
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+      />
     </div>
   );
 }

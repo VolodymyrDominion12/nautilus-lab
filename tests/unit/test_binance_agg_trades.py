@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
+from nautilus_lab.application.dtos import IngestAggTradesRequest
+from nautilus_lab.application.ingest_agg_trades import IngestAggTrades
+from nautilus_lab.domain.errors import CatalogEmptyError
 from nautilus_lab.domain.ticks import AggTrade
+from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.binance_agg_trades import (
     BinancePublicAggTrades,
@@ -287,3 +291,131 @@ def test_catalog_cross_day_write(tmp_path: Path) -> None:
 
     loaded = cat.load(symbol="ETHUSDT")
     assert len(loaded) == 2
+
+
+# ---------------------------------------------------------------------------
+# Ingest use case: day-by-day persistence
+# ---------------------------------------------------------------------------
+
+
+class _RecordingFeed:
+    """AggTradesFeed double that returns scripted trades per requested day."""
+
+    def __init__(self, per_day: dict[str, list[AggTrade]]) -> None:
+        self._per_day = per_day
+        self.calls: list[tuple[datetime, datetime]] = []
+
+    def fetch(
+        self,
+        *,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+        instrument_id: str,
+    ) -> list[AggTrade]:
+        self.calls.append((start, end))
+        return list(self._per_day.get(start.date().isoformat(), []))
+
+
+def _trade(agg_id: int, ts: datetime) -> AggTrade:
+    return AggTrade(
+        agg_id=agg_id,
+        instrument_id="ETH/USDT.SIM",
+        ts_utc=ts,
+        price="2200",
+        qty="1",
+        is_buyer_maker=False,
+    )
+
+
+def test_ingest_persists_each_day_as_it_goes(tmp_path: Path) -> None:
+    """Each day must hit the catalog before the next day is fetched.
+
+    Regression for a silent failure: the use case fetched the whole window into memory
+    and wrote only at the end, so a four-day ingest produced nothing on disk after
+    fifty minutes and a one-year window could never have finished.
+    """
+    day_one = datetime(2024, 1, 1, tzinfo=UTC)
+    day_two = datetime(2024, 1, 2, tzinfo=UTC)
+    feed = _RecordingFeed(
+        {
+            "2024-01-01": [_trade(1, day_one), _trade(2, day_one)],
+            "2024-01-02": [_trade(3, day_two)],
+        }
+    )
+    catalog = ParquetAggTradesCatalog(tmp_path)
+    written_at_each_call: list[int] = []
+    seen_days: list[str] = []
+
+    class _WatchingCatalog(ParquetAggTradesCatalog):
+        def write(self, trades: Sequence[AggTrade], *, symbol: str) -> int:
+            result = super().write(trades, symbol=symbol)
+            written_at_each_call.append(result)
+            return result
+
+    def _progress(day: datetime, trades: int) -> None:
+        seen_days.append(day.date().isoformat())
+        # The day is already on disk when progress is reported, not merely fetched.
+        present = catalog.load(symbol="ETHUSDT")
+        assert any(item.agg_id in {1, 2, 3} for item in present), day
+
+    use_case = IngestAggTrades(
+        feed,
+        _WatchingCatalog(tmp_path),
+        catalog_path=str(tmp_path),
+        progress=_progress,
+    )
+    report = use_case.execute(
+        IngestAggTradesRequest(
+            mode=TradingMode.RESEARCH,
+            symbol="ETHUSDT",
+            instrument_id="ETH/USDT.SIM",
+            start=day_one,
+            end=datetime(2024, 1, 3, tzinfo=UTC),
+        )
+    )
+
+    assert report.trades_written == 3
+    # One fetch and one write per day: the window never sat in memory whole.
+    assert len(feed.calls) == 2
+    assert written_at_each_call == [2, 1]
+    assert seen_days == ["2024-01-01", "2024-01-02"]
+
+
+def test_ingest_skips_empty_days_but_fails_on_empty_window(tmp_path: Path) -> None:
+    """A quiet day is not an error; a window with no trades at all is."""
+    day_one = datetime(2024, 1, 1, tzinfo=UTC)
+    feed = _RecordingFeed({"2024-01-02": [_trade(1, datetime(2024, 1, 2, tzinfo=UTC))]})
+    use_case = IngestAggTrades(
+        feed,
+        ParquetAggTradesCatalog(tmp_path),
+        catalog_path=str(tmp_path),
+    )
+
+    report = use_case.execute(
+        IngestAggTradesRequest(
+            mode=TradingMode.RESEARCH,
+            symbol="ETHUSDT",
+            instrument_id="ETH/USDT.SIM",
+            start=day_one,
+            end=datetime(2024, 1, 3, tzinfo=UTC),
+        )
+    )
+    assert report.trades_written == 1
+    assert len(feed.calls) == 2  # the empty day was still attempted
+
+    empty = IngestAggTrades(
+        _RecordingFeed({}),
+        ParquetAggTradesCatalog(tmp_path),
+        catalog_path=str(tmp_path),
+    )
+    with pytest.raises(CatalogEmptyError):
+        empty.execute(
+            IngestAggTradesRequest(
+                mode=TradingMode.RESEARCH,
+                symbol="ETHUSDT",
+                instrument_id="ETH/USDT.SIM",
+                start=day_one,
+                end=datetime(2024, 1, 3, tzinfo=UTC),
+            )
+        )

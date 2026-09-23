@@ -6,7 +6,7 @@
 # =============================================================================
 kind: component
 name: agg-trades-catalog
-version: "1.0"
+version: "1.1"
 status: active
 title: "Parquet-каталог aggTrades: публічний REST Binance, day-sharded, без API-ключів"
 
@@ -55,6 +55,22 @@ invariants_enforced:
       перетину вікон на стороні caller.
     enforced_by: src/nautilus_lab/infrastructure/agg_trades_catalog.py
     verified_by: tests/unit/test_binance_agg_trades.py::test_catalog_write_deduplicates_by_agg_id
+
+  - statement: >
+      Заливання йде **доба за добою**, і кожна доба лягає на диск одразу після
+      завантаження. Раніша версія тягнула все вікно в пам'ять і писала лише
+      в кінці: виміряно 2026-09-23 — `lab ingest --trades --start 2026-09-15
+      --end 2026-09-19` за 50 хвилин не записав **жодного** дня, бо писати мав
+      аж після останньої сторінки. Для року історії це не «повільно», а
+      неможливо: у RAM мав би вміститися весь рік тіків.
+    enforced_by: src/nautilus_lab/application/ingest_agg_trades.py
+    verified_by: tests/unit/test_binance_agg_trades.py::test_ingest_persists_each_day_as_it_goes
+
+  - statement: >
+      Доба, у якій не було жодної угоди, не вважається помилкою і не перериває
+      заливання; вікно, у якому не було угод узагалі, дає `CatalogEmptyError`.
+    enforced_by: src/nautilus_lab/application/ingest_agg_trades.py
+    verified_by: tests/unit/test_binance_agg_trades.py::test_ingest_skips_empty_days_but_fails_on_empty_window
 
   - statement: >
       Торги, що перетинають два UTC-дні, розкладаються у два окремих Parquet-файли

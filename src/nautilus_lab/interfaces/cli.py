@@ -436,8 +436,18 @@ def _run_ingest_agg_trades(
 
     Data is stored under ``catalog/data/agg_trade/<SYMBOL>/``, one Parquet file per
     UTC day.  No API keys required — this is a public Binance endpoint.
+
+    Progress is printed per day. A tick window is measured in hours of downloading,
+    and the earlier silent version could not be told apart from a hung one.
     """
-    use_case = ingest_agg_trades_use_case(cfg)
+
+    def _progress(day: datetime, trades: int) -> None:
+        print(
+            f"  {day.date().isoformat()} trades={trades}",
+            flush=True,
+        )
+
+    use_case = ingest_agg_trades_use_case(cfg, progress=_progress)
     for symbol in symbols:
         report = use_case.execute(
             ingest_agg_trades_request(cfg, start=start, end=end, symbol=symbol)

@@ -6,7 +6,7 @@
 # =============================================================================
 kind: component
 name: agg-trades-catalog
-version: "1.1"
+version: "1.2"
 status: active
 title: "Parquet-каталог aggTrades: публічний REST Binance, day-sharded, без API-ключів"
 
@@ -20,7 +20,8 @@ hypothesis: >
   що несе сигнал.
 
 invariants:
-  public_endpoints_only: true      # /api/v3/aggTrades, без підпису
+  public_endpoints_only: true
+  live_collection_bounded: true   # a live run always has a deadline or a trade cap      # /api/v3/aggTrades, без підпису
   agg_id_monotonic: true           # sorted by agg_id, dedup on write
   half_open_time_window: true      # [start, end), matches kline convention
   day_sharded_parquet: true        # one file per UTC day per symbol
@@ -72,6 +73,31 @@ invariants_enforced:
       заливання; вікно, у якому не було угод узагалі, дає `CatalogEmptyError`.
     enforced_by: src/nautilus_lab/application/ingest_agg_trades.py
     verified_by: tests/unit/test_binance_agg_trades.py::test_ingest_skips_empty_slices_but_fails_on_an_empty_window
+
+  - statement: >
+      Тіки можна збирати **живим потоком** з публічного WS
+      (`wss://stream.binance.com:9443/ws/<symbol>@aggTrade`), без ключів, і писати
+      в той самий каталог. Це не альтернатива історії, а єдиний робочий шлях:
+      REST-історія не віддає тіки в дослідницькому масштабі (docs/24 §5.2).
+      Напрямок угоди (`m`) не вгадується: якщо поле відсутнє або не boolean —
+      помилка, бо саме воно і є змістом події.
+    enforced_by: src/nautilus_lab/infrastructure/binance_ws.py
+    verified_by: tests/unit/test_binance_ws_agg_trades.py::test_parse_agg_trade_refuses_to_guess_direction
+
+  - statement: >
+      Живий збір завжди обмежений: дедлайн за часом, стеля за кількістю угод, або
+      обидва. Необмежений збір — це процес, який ніхто не наважиться зупинити, і
+      виклик без жодного ліміту падає явно. Запис іде батчами, тож пам'ять
+      обмежена, а вбитий процес зберігає вже зібране.
+    enforced_by: src/nautilus_lab/application/collect_live_agg_trades.py
+    verified_by: tests/unit/test_collect_live_agg_trades.py::test_collector_refuses_an_unbounded_run
+
+  - statement: >
+      Порожній збір не видається за успішний: якщо за вікно не прийшло жодної
+      угоди, виклик падає, а не пише порожню серію, яку потім можна прийняти за
+      зібрану.
+    enforced_by: src/nautilus_lab/application/collect_live_agg_trades.py
+    verified_by: tests/unit/test_collect_live_agg_trades.py::test_collector_reports_an_empty_stream_instead_of_writing_nothing
 
   - statement: >
       Торги, що перетинають два UTC-дні, розкладаються у два окремих Parquet-файли

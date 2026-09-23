@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 
 from nautilus_trader.model.data import Bar, BarType, BookOrder, OrderBookDepth10, TradeTick
 from nautilus_trader.model.enums import AggressorSide, OrderSide
+from nautilus_trader.model.identifiers import TradeId
 from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.objects import Price, Quantity
 
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.order_book import BookLevel, OrderBookSnapshot
 from nautilus_lab.domain.ticks import AggTrade
+
+_log = logging.getLogger(__name__)
 
 
 def datetime_to_nanos(ts: datetime) -> int:
@@ -68,18 +72,49 @@ def to_engine_ticks(
     *,
     instrument: CurrencyPair,
 ) -> list[TradeTick]:
-    return [
-        TradeTick(
-            instrument_id=instrument.id,
-            price=Price(trade.price, precision=instrument.price_precision),
-            size=Quantity(trade.qty, precision=instrument.size_precision),
-            aggressor_side=AggressorSide.SELLER if trade.is_buyer_maker else AggressorSide.BUYER,
-            trade_id=str(trade.agg_id),
-            ts_event=datetime_to_nanos(trade.ts_utc),
-            ts_init=datetime_to_nanos(trade.ts_utc),
+    """Convert domain trades into engine ticks, dropping sizes the venue cannot carry.
+
+    `AggTrade` keeps price and quantity as the exact strings Binance sent (see
+    `domain/ticks.py`), while Nautilus requires a real number, and its `trade_id` must
+    be a `TradeId` rather than a `str`. Both mistakes were in this one function, so
+    every tick-filtered run failed on the first trade — and nothing caught it earlier
+    because no tick series existed in the catalog to feed it.
+
+    A third, subtler case: many ETHUSDT prints are smaller than the instrument's 0.001
+    size increment, so `Quantity` rounds them to zero and `TradeTick` refuses them
+    outright with "'size' not a positive integer, was 0". One such print used to abort
+    the whole run. They are skipped and counted out loud, because dropping volume
+    silently would quietly bias the flow features built on top of them.
+    """
+    ticks: list[TradeTick] = []
+    dropped = 0
+    for trade in trades:
+        size = Quantity(_as_decimal(trade.qty), precision=instrument.size_precision)
+        if _as_decimal(size) <= 0:
+            dropped += 1
+            continue
+        ticks.append(
+            TradeTick(
+                instrument_id=instrument.id,
+                price=Price(_as_decimal(trade.price), precision=instrument.price_precision),
+                size=size,
+                aggressor_side=(
+                    AggressorSide.SELLER if trade.is_buyer_maker else AggressorSide.BUYER
+                ),
+                trade_id=TradeId(str(trade.agg_id)),
+                ts_event=datetime_to_nanos(trade.ts_utc),
+                ts_init=datetime_to_nanos(trade.ts_utc),
+            )
         )
-        for trade in trades
-    ]
+    if dropped:
+        _log.warning(
+            "dropped %d of %d ticks below the %s size increment; they carry no "
+            "representable volume rather than zero",
+            dropped,
+            len(trades),
+            instrument.size_increment,
+        )
+    return ticks
 
 
 #: `OrderBookDepth10` is a fixed ten-level container. Binance snapshots arrive with up

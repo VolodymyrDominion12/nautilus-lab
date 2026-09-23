@@ -108,3 +108,87 @@ def test_nautilus_bar_type_maps_hour_interval() -> None:
 def test_nautilus_bar_type_rejects_unknown_interval() -> None:
     with pytest.raises(ValueError, match="unsupported"):
         nautilus_bar_type("ETH/USDT.SIM", "3h")
+
+
+def test_fetch_drops_the_still_forming_candle_instead_of_failing() -> None:
+    """An ingest may run at any minute of the hour, not only just after a boundary.
+
+    REST returns the in-progress candle as its last row, and the domain's lookahead
+    guard rightly refuses a bar whose close time is in the future. Before this, the
+    whole ingest died with "bar timestamp is in the future" whenever it was run
+    mid-hour — the exact moment `--incremental` catch-up is normally used.
+    """
+    closed = [
+        1_704_067_200_000,
+        "2200.00",
+        "2210.00",
+        "2190.00",
+        "2205.50",
+        "15.5",
+        1_704_070_799_999,
+    ]
+    # The candle that opened at 01:00 and closes at 01:59:59.999 — while the injected
+    # clock still reads 01:30, i.e. it has not closed yet.
+    forming = [
+        1_704_070_800_000,
+        "2205.50",
+        "2230.00",
+        "2200.00",
+        "2222.00",
+        "9.0",
+        1_704_074_399_999,
+    ]
+
+    class FakeHttp:
+        def __init__(self) -> None:
+            self.pages: list[object] = [[closed, forming], []]
+
+        def get_json(self, url: str, params: Mapping[str, str]) -> object:
+            assert "api.binance.com" in url
+            return self.pages.pop(0)
+
+    feed = BinancePublicKlines(FakeHttp(), now=datetime(2024, 1, 1, 1, 30, tzinfo=UTC))
+
+    bars = feed.fetch(
+        symbol="ETHUSDT",
+        interval="1h",
+        start=datetime(2024, 1, 1, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 2, 0, tzinfo=UTC),
+        instrument_id="ETH/USDT.SIM",
+    )
+
+    assert [bar.ts_utc for bar in bars] == [datetime(2024, 1, 1, 0, 59, 59, 999000, tzinfo=UTC)]
+    assert bars[0].close == Decimal("2205.50")
+
+
+def test_fetch_keeps_the_candle_once_the_clock_passes_its_close() -> None:
+    """The same row is data as soon as it has closed; dropping must not be permanent."""
+    forming = [
+        1_704_070_800_000,
+        "2205.50",
+        "2230.00",
+        "2200.00",
+        "2222.00",
+        "9.0",
+        1_704_074_399_999,
+    ]
+
+    class FakeHttp:
+        def __init__(self) -> None:
+            self.pages: list[object] = [[forming], []]
+
+        def get_json(self, url: str, params: Mapping[str, str]) -> object:
+            return self.pages.pop(0)
+
+    feed = BinancePublicKlines(FakeHttp(), now=datetime(2024, 1, 1, 2, 0, tzinfo=UTC))
+
+    bars = feed.fetch(
+        symbol="ETHUSDT",
+        interval="1h",
+        start=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 2, 0, tzinfo=UTC),
+        instrument_id="ETH/USDT.SIM",
+    )
+
+    assert len(bars) == 1
+    assert bars[0].close == Decimal("2222.00")

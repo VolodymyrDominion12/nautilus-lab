@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from nautilus_trader.model.enums import AggressorSide
 
 from nautilus_lab.application.run_overfitting_audit import _block_ranges
 from nautilus_lab.application.run_paper import RunPaperResearch
@@ -16,11 +17,13 @@ from nautilus_lab.domain.order_book import BookLevel, OrderBookSnapshot
 from nautilus_lab.domain.ports import JsonHttpClient
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.signals import LegIntent, QuoteIntent, Signal, SignalSide, SpreadSignal
+from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
 from nautilus_lab.infrastructure.nautilus.bar_convert import (
     datetime_to_nanos,
     to_domain_snapshot,
     to_engine_books,
+    to_engine_ticks,
 )
 from nautilus_lab.infrastructure.nautilus.instrument import (
     binance_symbol_to_instrument_id,
@@ -423,3 +426,34 @@ def test_order_book_conversion_truncates_to_the_engine_depth() -> None:
     assert restored.bids[0].price == snapshot.bids[0].price
     assert restored.asks[0].price == snapshot.asks[0].price
     restored.validate()
+
+
+def test_tick_conversion_accepts_binance_decimal_strings() -> None:
+    """Domain trades keep Binance's exact strings; the engine needs real numbers.
+
+    Regression: `to_engine_ticks` passed `AggTrade.price` (a `str`) into Nautilus
+    `Price`, raising `TypeError: must be real number, not str` and killing every
+    `--tick-vpin` / `--hawkes` run. No test covered it because no tick series existed
+    in the catalog to exercise the path.
+    """
+    cfg = Settings()
+    request = research_request(cfg, bar_count=100)
+    instrument = resolve_instrument(request.instrument_id, fees=cfg.fee_schedule())
+    trade = AggTrade(
+        instrument_id=request.instrument_id,
+        ts_utc=datetime(2024, 1, 1, tzinfo=UTC),
+        agg_id=42,
+        price="2733.63000000",
+        qty="1.25000000",
+        is_buyer_maker=False,
+    )
+
+    ticks = to_engine_ticks([trade], instrument=instrument)
+
+    assert len(ticks) == 1
+    tick = ticks[0]
+    assert str(tick.price) == "2733.63"
+    assert str(tick.size) == "1.250"
+    assert str(tick.trade_id) == "42"
+    # A taker buy lifted the ask, so the aggressor is the buyer.
+    assert tick.aggressor_side == AggressorSide.BUYER

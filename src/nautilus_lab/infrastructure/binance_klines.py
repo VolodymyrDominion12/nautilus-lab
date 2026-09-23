@@ -75,6 +75,14 @@ class BinancePublicKlines:
                 last_open_ms = int(str(row[0]))
                 if bar.ts_utc < start or bar.ts_utc >= end:
                     continue
+                if bar.ts_utc > clock:
+                    # REST returns the candle that is still forming as its last row.
+                    # It is not closed, so it is not data yet: dropping it keeps the
+                    # domain's lookahead guard intact and lets an ingest run at any
+                    # minute of the hour, instead of failing with "bar timestamp is in
+                    # the future" until the clock happens to pass the boundary. The
+                    # next ingest picks the candle up once it has closed.
+                    continue
                 validate_bar(bar, previous_ts=previous_ts, now=clock)
                 bars.append(bar)
                 previous_ts = bar.ts_utc

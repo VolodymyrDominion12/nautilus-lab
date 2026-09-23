@@ -23,10 +23,12 @@ from nautilus_lab.application.dtos import (
     PaperSessionReport,
 )
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.marking import OpenLot, unrealized_pnl
 from nautilus_lab.domain.metrics import compute_metrics
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.ticks import AggTrade
+from nautilus_lab.domain.windowing import within_bars
 from nautilus_lab.infrastructure.nautilus.bar_convert import datetime_to_nanos, to_engine_bars
 from nautilus_lab.infrastructure.nautilus.instrument import resolve_instrument
 from nautilus_lab.infrastructure.nautilus.signal_strategy import SignalRobot, SignalRobotConfig
@@ -59,6 +61,8 @@ class _RunSpec:
     instruments: list[Instrument]
     data: list[Bar]
     strategy: SignalRobot | SpreadRobot
+    # Last close per instrument id: what a position still open at the end is worth.
+    marks: dict[str, Decimal]
 
 
 class NautilusResearchBacktest:
@@ -163,7 +167,9 @@ class NautilusResearchBacktest:
             fills_report = engine.trader.generate_order_fills_report()
             positions = engine.trader.generate_positions_report()
             account = engine.trader.generate_account_report(venue=Venue("SIM"))
-            ending = _ending_balance(account)
+            realized = _ending_balance(account)
+            open_pnl = unrealized_pnl(_open_lots(positions), spec.marks)
+            ending = None if realized is None else realized + open_pnl
             fees_paid = _fees_paid(fills_report)
             equity_curve = tuple(getattr(strategy, "equity_curve", ()))
             turnover = getattr(strategy, "turnover", Decimal("0"))
@@ -193,6 +199,8 @@ class NautilusResearchBacktest:
                 metrics=metrics,
                 tearsheet_path=saved_tearsheet,
                 risk_breaches=risk_breaches,
+                realized_balance=realized,
+                unrealized_pnl=open_pnl,
             )
             ledger = _Ledger(
                 fills_report=fills_report,
@@ -204,6 +212,27 @@ class NautilusResearchBacktest:
             return report, ledger
         finally:
             engine.dispose()
+
+
+def _open_lots(positions_report: object) -> list[OpenLot]:
+    """Positions still open when the data ran out, as lots `domain.marking` can value."""
+    lots: list[OpenLot] = []
+    for position in _positions_from_report(positions_report):
+        if not position.is_open or position.qty == 0:
+            continue
+        sign = Decimal("1") if position.side.startswith("L") else Decimal("-1")
+        lots.append(
+            OpenLot(
+                instrument_id=position.instrument_id,
+                signed_qty=abs(position.qty) * sign,
+                avg_price=position.entry_price,
+            )
+        )
+    return lots
+
+
+def _last_closes(bars_by_instrument: dict[str, list[OhlcvBar]]) -> dict[str, Decimal]:
+    return {key: bars[-1].close for key, bars in bars_by_instrument.items() if bars}
 
 
 def _ending_balance(account_report: object) -> Decimal | None:
@@ -323,10 +352,8 @@ def _paper_report(
     """Assemble the paper ledger, marking any still-open position against the last close."""
     positions = _positions_from_report(ledger.positions_report)
     open_position = next((position for position in positions if position.is_open), None)
-    unrealized = Decimal("0")
-    if open_position is not None and mark_price is not None:
-        direction = Decimal("1") if open_position.side.upper().startswith("L") else Decimal("-1")
-        unrealized = (mark_price - open_position.entry_price) * open_position.qty * direction
+    # Every open leg is marked (a pairs session ends holding two), not just the first.
+    unrealized = report.unrealized_pnl
     return PaperSessionReport(
         robot=request.robot,
         instrument_id=request.instrument_id,
@@ -336,7 +363,9 @@ def _paper_report(
         window_start=window_start,
         window_end=window_end,
         starting_equity=request.starting_equity,
-        ending_equity=report.ending_balance,
+        # The paper ledger shows the realized balance and the open PnL side by side;
+        # `report.ending_balance` already adds them, so it would count the mark twice.
+        ending_equity=report.realized_balance,
         equity_curve=ledger.equity_curve,
         fills=_fills_from_report(ledger.fills_report),
         positions=positions,
@@ -521,9 +550,25 @@ def _single_run(
             max_cvar_99=request.risk_overlay.max_cvar_99,
             use_ratchet=request.risk_overlay.use_ratchet,
             ratchet_arm_pct=request.risk_overlay.ratchet_arm_pct,
+            use_protective_stop=request.risk_overlay.use_protective_stop,
+            # Tick-level filters: before these three lines existed `--tick-vpin` and
+            # `--hawkes` loaded the tick series and then built the robot without them.
+            use_tick_vpin=request.use_tick_vpin,
+            use_hawkes=request.use_hawkes,
+            hawkes_baseline=request.hawkes_baseline,
+            hawkes_alpha=request.hawkes_alpha,
+            hawkes_beta=request.hawkes_beta,
+            hawkes_toxic_threshold=request.hawkes_toxic_threshold,
+            ml_obi_model_path=request.ml_obi_model_path,
+            ml_obi_threshold=request.ml_obi_threshold,
         ),
         taker_buy_base_volume_by_ns=taker_buy_by_ns or None,
     )
+
+    # Every caller loads the whole tick/book series; only the part the bars cover may
+    # reach the engine (an in-sample run must not see out-of-sample ticks).
+    ticks = within_bars(ticks, bars) if ticks else None
+    books = within_bars(books, bars) if books else None
 
     engine_ticks = []
     if ticks:
@@ -542,6 +587,7 @@ def _single_run(
         instruments=[instrument],
         data=[*engine_bars, *engine_ticks, *engine_books],
         strategy=strategy,
+        marks=_last_closes({str(instrument.id): bars}),
     )
 
 
@@ -590,4 +636,5 @@ def _spread_run(
         instruments=[instrument_a, instrument_b],
         data=[*data_a, *data_b],
         strategy=strategy,
+        marks=_last_closes({str(instrument_a.id): bars_a, str(instrument_b.id): bars_b}),
     )

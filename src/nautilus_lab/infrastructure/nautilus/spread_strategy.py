@@ -19,8 +19,14 @@ from nautilus_lab.application.risk import (
 )
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
+from nautilus_lab.domain.marking import OpenLot, marked_equity
 from nautilus_lab.domain.pairs.pairs_trading import PairsTrading
 from nautilus_lab.domain.pairs.params import PairsParams
+from nautilus_lab.domain.position_plan import (
+    Holding,
+    holding_from_signed_qty,
+    plan_for_signal,
+)
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.signals import SignalSide
@@ -127,23 +133,18 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
 
         if signal is None:
             return
-        if signal.leg_a.side is SignalSide.FLAT:
-            self._flatten_both(equity)
+        # Leg A's direction is the spread's direction; leg B always takes the other side.
+        # Exit is decided before — and independently of — the risk gate: a refused
+        # entry must not keep the opposite spread open (see domain/position_plan.py).
+        plan = plan_for_signal(self._holding_a(), signal.leg_a.side)
+        if plan.is_noop:
             return
-
-        if equity is None:
-            self.log.error("No account equity; skip spread order")
-            return
-        snapshot = AccountSnapshot(
-            equity=equity,
-            peak_equity=self._peak_equity or equity,
-            day_start_equity=self._day_start_equity or equity,
-            open_positions=self._open_legs(),
-            recent_returns=tuple(self._returns[-30:]),
+        entry_allowed = plan.wants_entry and self._entry_allowed(
+            equity, reversing=plan.exit_position
         )
-        decision = evaluate_entry(snapshot, self._limits, self._overlay)
-        if not decision.allowed:
-            self.log.warning(f"Risk blocked spread entry: {decision.reason}")
+        if plan.exit_position:
+            self._flatten_both(equity)
+        if not entry_allowed or equity is None:
             return
 
         risk_fraction = resolve_risk_fraction(
@@ -151,7 +152,6 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             self._overlay,
             stats=self._trade_stats,
         )
-        self._flatten_both(equity)
         self._submit_leg(
             self.config.leg_a_id,
             signal.leg_a.side,
@@ -174,6 +174,47 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
 
     def on_stop(self) -> None:
         self._flatten_both(self._equity())
+
+    def _entry_allowed(self, equity: Decimal | None, *, reversing: bool) -> bool:
+        if equity is None:
+            self.log.error("No account equity; skip spread order")
+            return False
+        snapshot = AccountSnapshot(
+            equity=equity,
+            peak_equity=self._peak_equity or equity,
+            day_start_equity=self._day_start_equity or equity,
+            open_positions=0 if reversing else self._open_legs(),
+            recent_returns=tuple(self._returns[-30:]),
+        )
+        decision = evaluate_entry(snapshot, self._limits, self._overlay)
+        if not decision.allowed:
+            self.log.warning(f"Risk blocked spread entry: {decision.reason}")
+            return False
+        return True
+
+    def _holding_a(self) -> Holding:
+        signed = sum(
+            (
+                lot.signed_qty
+                for lot in self._open_lots()
+                if lot.instrument_id == str(self.config.leg_a_id)
+            ),
+            Decimal("0"),
+        )
+        return holding_from_signed_qty(signed)
+
+    def _open_lots(self) -> list[OpenLot]:
+        lots: list[OpenLot] = []
+        for leg in (self.config.leg_a_id, self.config.leg_b_id):
+            for position in self.cache.positions_open(instrument_id=leg):
+                lots.append(
+                    OpenLot(
+                        instrument_id=str(leg),
+                        signed_qty=_as_decimal(position.signed_qty),
+                        avg_price=_as_decimal(position.avg_px_open),
+                    )
+                )
+        return lots
 
     @property
     def equity_curve(self) -> tuple[Decimal, ...]:
@@ -234,7 +275,14 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         total = account.balance_total(quote)
         if total is None:
             return None
-        return _as_decimal(total)
+        # Balance moves on realized PnL only (MARGIN account); both open legs are marked
+        # at their last close so the curve and the breakers see open losses.
+        marks: dict[str, Decimal] = {}
+        if self._last_a is not None:
+            marks[str(self.config.leg_a_id)] = self._last_a.close
+        if self._last_b is not None:
+            marks[str(self.config.leg_b_id)] = self._last_b.close
+        return marked_equity(_as_decimal(total), self._open_lots(), marks)
 
     def _update_equity_path(self, ts_utc: datetime, equity: Decimal) -> None:
         day = ts_utc.date()

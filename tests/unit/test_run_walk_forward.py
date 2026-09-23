@@ -253,3 +253,73 @@ def test_execute_multi_rejects_an_explicit_window() -> None:
     )
     with pytest.raises(InvalidWindowError, match="derive their own windows"):
         use_case.execute_multi(request)
+
+
+def test_ml_obi_walk_forward_hands_books_to_every_run_and_loads_them_once() -> None:
+    """Before: walk-forward never loaded the book series, so ml_obi could not trade."""
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=600, seed=5)
+    received: list[list[OrderBookSnapshot] | None] = []
+
+    class BookEngine(_WindowEngine):
+        def run(
+            self,
+            request: BacktestRequest,
+            folded: list[OhlcvBar],
+            ticks: list[AggTrade] | None = None,
+            books: list[OrderBookSnapshot] | None = None,
+        ) -> BacktestReport:
+            received.append(books)
+            return super().run(request, folded, ticks, books)
+
+    class Feed:
+        def load(self, request: BacktestRequest) -> list[OhlcvBar]:
+            return bars
+
+        def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
+            return {request.instrument_id: bars}
+
+    book_series: list[OrderBookSnapshot] = []
+
+    class BookFeed:
+        loads = 0
+
+        def load(self, request: BacktestRequest) -> list[OrderBookSnapshot]:
+            BookFeed.loads += 1
+            return book_series
+
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=600,
+        starting_equity=Decimal("100000"),
+        risk=_limits(),
+        robot=RobotName.ML_OBI,
+    )
+    use_case = RunWalkForward(BookEngine(), Feed(), book_feed=BookFeed())
+    use_case.execute_multi(WalkForwardRequest(backtest=request, folds=2))
+
+    assert received
+    assert all(books is book_series for books in received)
+    assert BookFeed.loads == 1
+
+
+def test_ml_obi_walk_forward_without_book_feed_fails_closed() -> None:
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=600, seed=5)
+
+    class Feed:
+        def load(self, request: BacktestRequest) -> list[OhlcvBar]:
+            return bars
+
+        def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
+            return {request.instrument_id: bars}
+
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=600,
+        starting_equity=Decimal("100000"),
+        risk=_limits(),
+        robot=RobotName.ML_OBI,
+    )
+    with pytest.raises(ValueError, match="OrderBook feed"):
+        RunWalkForward(_WindowEngine(), Feed()).execute(WalkForwardRequest(backtest=request))

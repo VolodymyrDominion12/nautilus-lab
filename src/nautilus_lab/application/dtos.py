@@ -59,6 +59,8 @@ class BacktestRequest:
     formulaic_threshold: Decimal = Decimal("0.55")
     meta_label_model_path: str | None = None
     meta_label_threshold: Decimal = Decimal("0.55")
+    ml_obi_model_path: str | None = None
+    ml_obi_threshold: Decimal = Decimal("0.55")
     adaptive_params: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
     tearsheet_path: str | None = None
 
@@ -67,10 +69,18 @@ class BacktestRequest:
 class BacktestReport:
     fills: int
     positions: int
+    # Marked equity at the last bar: realized balance plus any position still open,
+    # valued at that bar's close. Every OOS return, score and PBO block reads this, so
+    # it must not drop a position the run ended holding (the close `on_stop` sends is
+    # never filled once the data is exhausted).
     ending_balance: Decimal | None
     notes: str
     metrics: BacktestMetrics | None = None
     tearsheet_path: str | None = None
+    # The two parts of `ending_balance`, kept apart for the paper ledger and for audit.
+    # `realized_balance` None = the engine reported no account (then neither is known).
+    realized_balance: Decimal | None = None
+    unrealized_pnl: Decimal = Decimal("0")
     # (reason, count) per circuit breaker that refused at least one entry, in the
     # order each first fired. Empty means no entry was ever blocked — which is
     # itself information, and different from "we did not look".

@@ -22,6 +22,10 @@ class RiskOverlay:
     max_cvar_99: Decimal = Decimal("0.05")
     use_ratchet: bool = False
     ratchet_arm_pct: Decimal = Decimal("0.0125")
+    # A resting reduce-only stop at the same distance `size_position` sized against.
+    # On by default: without it `risk_per_trade` is a sizing assumption, not a cap —
+    # nothing bounds the loss of a position the strategy never exits.
+    use_protective_stop: bool = True
 
     def __post_init__(self) -> None:
         if self.vol_scaling_target <= 0 or self.vol_scaling_target > 1:

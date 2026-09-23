@@ -8,7 +8,7 @@ from typing import Protocol
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar, BarType, OrderBookDepth10, TradeTick
-from nautilus_trader.model.enums import AggressorSide, OrderSide
+from nautilus_trader.model.enums import AggressorSide, OrderSide, PositionSide
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.strategy import Strategy
@@ -26,8 +26,14 @@ from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
+from nautilus_lab.domain.marking import OpenLot, marked_equity
 from nautilus_lab.domain.meta_label_strategy import MetaLabelStrategy
 from nautilus_lab.domain.ml_obi_strategy import MlObiStrategy
+from nautilus_lab.domain.position_plan import (
+    Holding,
+    holding_from_signed_qty,
+    plan_for_signal,
+)
 from nautilus_lab.domain.ratchet_stop import RatchetState, initial_ratchet, step_ratchet
 from nautilus_lab.domain.regime import RegimeParams, RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
@@ -103,6 +109,7 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     max_cvar_99: Decimal = Decimal("0.05")
     use_ratchet: bool = False
     ratchet_arm_pct: Decimal = Decimal("0.0125")
+    use_protective_stop: bool = True
     ml_obi_model_path: str | None = None
     ml_obi_threshold: Decimal = Decimal("0.55")
 
@@ -136,6 +143,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             max_cvar_99=config.max_cvar_99,
             use_ratchet=config.use_ratchet,
             ratchet_arm_pct=config.ratchet_arm_pct,
+            use_protective_stop=config.use_protective_stop,
         )
         self._previous_ts: datetime | None = None
         self._day_start_equity: Decimal | None = None
@@ -145,7 +153,13 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._turnover: Decimal = Decimal("0")
         self._returns: list[Decimal] = []
         self._previous_equity: Decimal | None = None
-        self._entry_equity: Decimal | None = None
+        # Last price the strategy saw (bar close, or book mid). Open positions are
+        # marked against it, so equity includes what they are worth right now.
+        self._last_mark: Decimal | None = None
+        # Resting reduce-only stop for the open position, and the distance the next
+        # entry was sized against (consumed when that entry's position opens).
+        self._stop_order_id: object | None = None
+        self._pending_stop_distance: Decimal | None = None
         self._trade_stats = TradeStats()
         self._breaches = RiskBreachTally()
         self._atr = AverageTrueRange(14)
@@ -210,9 +224,10 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._previous_close = domain_bar.close
 
         signal = self._robot.on_bar(domain_bar)
+        self._last_mark = domain_bar.close
         self._track_equity(domain_bar.ts_utc)
 
-        if self._apply_ratchet(domain_bar, self._equity()):
+        if self._apply_ratchet(domain_bar):
             return
 
         self._process_signal(signal, domain_bar.close)
@@ -223,13 +238,57 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         snapshot = to_domain_snapshot(depth, str(self.config.instrument_id))
         signal = self._robot.on_book(snapshot)
 
-        self._track_equity(snapshot.ts_utc)
-
-        # If we had a bar we could apply ratchet, but we don't have an OhlcvBar here.
-        # It's fine to skip ratchet for book updates, or we can mock a bar. We'll skip for now.
-
+        # Book robots have no OhlcvBar, so the ratchet overlay is not applied here; the
+        # protective stop still is (it rests on the venue, not in this callback).
         mid_price = (snapshot.bids[0].price + snapshot.asks[0].price) / Decimal("2")
+        self._last_mark = mid_price
+        self._track_equity(snapshot.ts_utc)
         self._process_signal(signal, mid_price)
+
+    def on_position_opened(self, event: object) -> None:
+        """Place the protective stop once the entry has actually filled."""
+        distance = self._pending_stop_distance
+        self._pending_stop_distance = None
+        if not self._overlay.use_protective_stop or distance is None or distance <= 0:
+            return
+        if getattr(event, "instrument_id", None) != self.config.instrument_id:
+            return
+        instrument = self.cache.instrument(self.config.instrument_id)
+        if instrument is None:
+            return
+        entry_price = _as_decimal(getattr(event, "avg_px_open", 0))
+        is_long = getattr(event, "side", None) == PositionSide.LONG
+        trigger = entry_price - distance if is_long else entry_price + distance
+        if trigger <= 0:
+            self.log.warning(f"Protective stop skipped: trigger {trigger} is not a price")
+            return
+        stop = self.order_factory.stop_market(
+            instrument_id=self.config.instrument_id,
+            order_side=OrderSide.SELL if is_long else OrderSide.BUY,
+            quantity=event.quantity,  # type: ignore[attr-defined]
+            trigger_price=instrument.make_price(trigger),
+            reduce_only=True,
+        )
+        self.submit_order(stop)
+        self._stop_order_id = stop.client_order_id
+
+    def on_position_closed(self, event: object) -> None:
+        """Book the trade for the Kelly stats, whoever closed it (signal, ratchet, stop)."""
+        if getattr(event, "instrument_id", None) != self.config.instrument_id:
+            return
+        realized = getattr(event, "realized_pnl", None)
+        if realized is not None:
+            self._trade_stats.record(_as_decimal(realized))
+        # Not the ratchet: on a reversal this event lands after the new entry armed it.
+        self._cancel_protective_stop()
+
+    def on_order_filled(self, event: object) -> None:
+        if (
+            self._stop_order_id is not None
+            and getattr(event, "client_order_id", None) == self._stop_order_id
+        ):
+            self._stop_order_id = None
+            self.log.info("Protective stop filled; position closed at the stop")
 
     def _track_equity(self, ts_utc: datetime) -> None:
         equity = self._equity()
@@ -241,51 +300,80 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             self._previous_equity = equity
 
     def _process_signal(self, signal: Signal | None, current_price: Decimal) -> None:
-        equity = self._equity()
+        """Exit first (never gated by risk), then — only if allowed — enter.
+
+        The risk layer guards new exposure. An opposite or FLAT signal closes what we
+        hold even when every breaker is tripped; see `domain/position_plan.py` for why
+        the old "gate first, return on refusal" order froze losing positions.
+        """
         if signal is None:
             return
-        if signal.side is SignalSide.FLAT:
-            self._flatten(equity)
+        plan = plan_for_signal(self._holding(), signal.side)
+        if plan.is_noop:
             return
 
+        # Gate the entry BEFORE the exit is submitted: the exit's own close order would
+        # otherwise count as "an order already working" and block the entry it precedes.
+        entry: tuple[Decimal, Decimal] | None = None
+        if plan.wants_entry:
+            entry = self._entry_allowed(current_price, reversing=plan.exit_position)
+
+        if plan.exit_position:
+            self._flatten()
+
+        if entry is None:
+            return
+        qty, distance = entry
+        instrument = self.cache.instrument(self.config.instrument_id)
+        if instrument is None:
+            self.log.error("Instrument missing from cache; skip order")
+            return
+        desired_buy = signal.side is SignalSide.BUY
+        order = self.order_factory.market(
+            self.config.instrument_id,
+            OrderSide.BUY if desired_buy else OrderSide.SELL,
+            instrument.make_qty(qty),
+        )
+        self._pending_stop_distance = distance
+        self.submit_order(order)
+        self._turnover += current_price * qty
+        self._arm_ratchet(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
+
+    def _entry_allowed(
+        self, current_price: Decimal, *, reversing: bool
+    ) -> tuple[Decimal, Decimal] | None:
+        """(qty, stop distance) for a new entry, or None with the refusal recorded."""
+        equity = self._equity()
         if equity is None:
-            self.log.error("No account equity; skip order (fail closed)")
-            return
-
+            self.log.error("No account equity; skip entry (fail closed)")
+            return None
         snapshot = AccountSnapshot(
             equity=equity,
             peak_equity=self._peak_equity or equity,
             day_start_equity=self._day_start_equity or equity,
-            open_positions=0 if self._is_flat() else 1,
+            # A reversal exits first, so the entry lands on a flat book.
+            open_positions=0 if reversing or self._is_flat() else 1,
             recent_returns=tuple(self._returns[-30:]),
         )
         decision = evaluate_entry(snapshot, self._limits, self._overlay)
         if not decision.allowed:
             self._breaches.record(decision.reason)
             self.log.warning(f"Risk blocked entry: {decision.reason}")
-            return
+            return None
 
-        # An order that is accepted but not yet filled leaves the portfolio flat, so
-        # `is_net_long`/`is_net_short` below say "no position" and the next signal
-        # stacks another entry on top of the pending one. On book-driven robots that
-        # ran a 1x-capped size up to ~4x notional (ml_obi), because book updates arrive
-        # far faster than the 50ms fill latency. One live order at a time, then.
+        # An order that is accepted but not yet filled leaves the portfolio flat, so the
+        # next signal would stack another entry on top of the pending one. On book-driven
+        # robots that ran a 1x-capped size up to ~4x notional (ml_obi), because book
+        # updates arrive far faster than the 50ms fill latency. One live entry at a time.
         if self._has_working_order():
             self._breaches.record("order already working")
-            return
-
-        desired_buy = signal.side is SignalSide.BUY
-        if desired_buy and self.portfolio.is_net_long(self.config.instrument_id):
-            return
-        if not desired_buy and self.portfolio.is_net_short(self.config.instrument_id):
-            return
+            return None
 
         distance = stop_distance(current_price, self._limits, atr=self._atr.value)
         risk_fraction = resolve_risk_fraction(
             self._limits,
             self._overlay,
             stats=self._trade_stats,
-            # vol_forecast will just be whatever the last closed bar gave us
             forecast_vol=self._last_vol_forecast,
         )
         qty = size_position(
@@ -297,33 +385,11 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         if qty <= 0:
             self.log.warning("Sized quantity is 0; skip order")
-            return
-
-        instrument = self.cache.instrument(self.config.instrument_id)
-        if instrument is None:
-            self.log.error("Instrument missing from cache; skip order")
-            return
-
-        if not self._is_flat():
-            self._flatten(equity)
-
-        side = OrderSide.BUY if desired_buy else OrderSide.SELL
-        order = self.order_factory.market(
-            self.config.instrument_id,
-            side,
-            instrument.make_qty(qty),
-        )
-        self.submit_order(order)
-        self._turnover += current_price * qty
-        self._entry_equity = equity
-        # For ratchet we need an OhlcvBar which we don't strictly have in on_book.
-        # But for OBI we don't use ratchet anyway. I will just pass a dummy if called from book,
-        # but _arm_ratchet only needs the close price. Wait, _arm_ratchet takes OhlcvBar.
-        # I'll modify _arm_ratchet to take price directly.
-        self._arm_ratchet(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
+            return None
+        return qty, distance
 
     def on_stop(self) -> None:
-        self._flatten(self._equity())
+        self._flatten()
 
     @property
     def equity_curve(self) -> tuple[Decimal, ...]:
@@ -338,15 +404,24 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         """Circuit-breaker refusals by reason, in the order they first fired."""
         return self._breaches.summary()
 
-    def _flatten(self, equity: Decimal | None) -> None:
+    def _flatten(self) -> None:
+        """Cancel resting orders (the protective stop among them), then close."""
         self._ratchet = None
+        self._pending_stop_distance = None
+        self._cancel_protective_stop()
         if not self._is_flat():
-            if equity is not None and self._entry_equity is not None:
-                self._trade_stats.record(equity - self._entry_equity)
-                self._entry_equity = None
             self.close_all_positions(self.config.instrument_id)
 
-    def _apply_ratchet(self, bar: OhlcvBar, equity: Decimal | None) -> bool:
+    def _cancel_protective_stop(self) -> None:
+        stop_id = self._stop_order_id
+        self._stop_order_id = None
+        if stop_id is None:
+            return
+        order = self.cache.order(stop_id)
+        if order is not None and not order.is_closed:
+            self.cancel_order(order)
+
+    def _apply_ratchet(self, bar: OhlcvBar) -> bool:
         """Run the overlay stop. True = flattened this bar; skip the robot's action."""
         if not self._overlay.use_ratchet:
             return False
@@ -357,7 +432,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._ratchet, hit = step_ratchet(self._ratchet, bar, params)
         if not hit:
             return False
-        self._flatten(equity)
+        self._flatten()
         return True
 
     def _arm_ratchet(self, entry_price: Decimal, side: SignalSide) -> None:
@@ -373,8 +448,24 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     def _is_flat(self) -> bool:
         return bool(self.portfolio.is_flat(self.config.instrument_id))
 
+    def _open_lots(self) -> list[OpenLot]:
+        instrument_id = str(self.config.instrument_id)
+        return [
+            OpenLot(
+                instrument_id=instrument_id,
+                signed_qty=_as_decimal(position.signed_qty),
+                avg_price=_as_decimal(position.avg_px_open),
+            )
+            for position in self.cache.positions_open(instrument_id=self.config.instrument_id)
+        ]
+
+    def _holding(self) -> Holding:
+        return holding_from_signed_qty(
+            sum((lot.signed_qty for lot in self._open_lots()), Decimal("0"))
+        )
+
     def _has_working_order(self) -> bool:
-        """True while an order for this instrument is submitted but not yet closed.
+        """True while a non-stop order for this instrument is submitted but not closed.
 
         `cache.orders_open()` alone is not enough: in a backtest an order is INFLIGHT
         (sitting in the risk/exec engine) well before it is OPEN, and `Portfolio` only
@@ -382,13 +473,24 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         latency the strategy saw `flat=True` while two of its own orders were still in
         flight and stacked thirteen entries into one second — roughly 4x the 1x notional
         cap that `size_position` is supposed to enforce.
+
+        The resting protective stop is open for the whole life of a position; counting
+        it would block every reversal, so it is excluded by id.
         """
         instrument_id = self.config.instrument_id
-        if self.cache.orders_open(instrument_id=instrument_id):
-            return True
-        return bool(self.cache.client_order_ids_inflight(instrument_id=instrument_id))
+        stop_id = self._stop_order_id
+        for order in self.cache.orders_open(instrument_id=instrument_id):
+            if order.client_order_id != stop_id:
+                return True
+        inflight = self.cache.client_order_ids_inflight(instrument_id=instrument_id)
+        return any(client_order_id != stop_id for client_order_id in inflight)
 
     def _equity(self) -> Decimal | None:
+        """Account balance plus open positions marked at the last price seen.
+
+        On a MARGIN account `balance_total` moves only on realized PnL and fees, so on
+        its own it hides every open loss from the curve and from the breakers.
+        """
         quote = Currency.from_str(self.config.quote_currency)
         account = self.cache.account_for_venue(self.config.instrument_id.venue)
         if account is None:
@@ -396,7 +498,14 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         total = account.balance_total(quote)
         if total is None:
             return None
-        return _as_decimal(total)
+        balance = _as_decimal(total)
+        if self._last_mark is None:
+            return balance
+        return marked_equity(
+            balance,
+            self._open_lots(),
+            {str(self.config.instrument_id): self._last_mark},
+        )
 
     def _update_equity_path(self, ts_utc: datetime, equity: Decimal) -> None:
         day = ts_utc.date()

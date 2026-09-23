@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     max_cvar_99: Decimal = Decimal("0.05")
     use_ratchet: bool = False
     ratchet_arm_pct: Decimal = Decimal("0.0125")
+    use_protective_stop: bool = True
     pairs_refit_every: int = 0
     # 0 disables the quantile gate and leaves the fixed `PairsParams.z_entry` in
     # charge, which is how every documented `pairs` run was measured. A plain
@@ -175,6 +176,7 @@ class Settings(BaseSettings):
             max_cvar_99=self.max_cvar_99,
             use_ratchet=self.use_ratchet,
             ratchet_arm_pct=self.ratchet_arm_pct,
+            use_protective_stop=self.use_protective_stop,
         )
 
     def pairs_params(self) -> PairsParams:

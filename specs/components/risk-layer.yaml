@@ -68,9 +68,47 @@ invariants_enforced:
       останнього тесту запобіжник можна було б «полагодити» в завжди-закритий і
       назвати це обережністю. У прогні це виглядає як `max_dd`, що впирається в
       `MAX_DRAWDOWN`, і менше входів: послаблювати ліміт, щоб «заторгувало», — саме
-      та помилка, від якої цей інваріант захищає. Відкрита позиція при цьому не
-      закривається автоматично — її закриває сама стратегія своїм `FLAT` або
-      завершення прогону, і це задокументовано.
+      та помилка, від якої цей інваріант захищає. Запобіжник не закриває позицію
+      сам — але й не заважає її закрити: вихід (FLAT або зустрічний сигнал) ніколи
+      не проходить через `evaluate_entry` (див. інваріант нижче), а збиток відкритої
+      позиції обмежує захисний стоп-ордер.
+
+  - statement: >
+      Вихід ніколи не блокується ризик-шаром: зустрічний або FLAT-сигнал закриває
+      наявну позицію навіть тоді, коли кожен запобіжник спрацював; через
+      `evaluate_entry` проходить лише нова експозиція.
+    enforced_by: src/nautilus_lab/domain/position_plan.py
+    verified_by: tests/unit/test_position_plan.py::test_opposite_signal_exits_even_when_the_entry_will_be_refused
+    note: >
+      До 2026-09-23 адаптери питали ризик першими й виходили з `return` на відмові,
+      тож зустрічний сигнал губився разом із входом. У paper-сесії ema це тримало
+      шорт від 1897 до 2612 (−18 909 USDT нереалізованого) під 946 відмовами
+      «max drawdown circuit breaker». Таблиця рішень —
+      tests/unit/test_position_plan.py::test_plan_for_signal_truth_table.
+
+  - statement: >
+      Капітал, який бачать крива, метрики й запобіжники, — це баланс плюс відкриті
+      позиції за останньою ціною, а не лише реалізований баланс MARGIN-рахунку.
+    enforced_by: src/nautilus_lab/domain/marking.py
+    verified_by: tests/unit/test_marking.py::test_short_under_water_reduces_equity
+    note: >
+      `balance_total` на MARGIN-рахунку рухається лише на реалізованому PnL і
+      комісіях, тому до виправлення `max_dd`, Sharpe, VaR/CVaR і денний/просадковий
+      ліміти не бачили відкритих збитків. Той самий розрахунок додає відкриту в
+      кінці вікна позицію до `BacktestReport.ending_balance` (OOS-дохідність,
+      оцінка in-sample, блоки PBO), а `realized_balance` і `unrealized_pnl`
+      лишаються в звіті окремо.
+
+  - statement: >
+      Після кожного входу SignalRobot ставить reduce-only стоп-ордер на тій самій
+      відстані, від якої рахувався розмір (`STOP_PCT` або 2×ATR), тож
+      `risk_per_trade` — це межа збитку, а не лише припущення для розміру.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/signal_strategy.py
+    test_missing_reason: >
+      Потрібен інтеграційний прогін рушія Nautilus (гепи проти позиції → збиток
+      ≈ risk_per_trade); у середовищі, де писалась правка, nautilus_trader не
+      встановлювався. Вимикається `USE_PROTECTIVE_STOP=false`. SpreadRobot (pairs)
+      стопа поки не має.
 
   - statement: >
       Грошова арифметика ведеться в `Decimal` із квантуванням, а не у `float`: сума

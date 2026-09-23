@@ -278,6 +278,8 @@ def research_request(
         formulaic_threshold=cfg.formulaic_threshold,
         meta_label_model_path=cfg.meta_label_model_path,
         meta_label_threshold=cfg.meta_label_threshold,
+        ml_obi_model_path=cfg.ml_obi_model_path,
+        ml_obi_threshold=cfg.ml_obi_threshold,
         adaptive_params=cfg.adaptive_ema_params(),
         tearsheet_path=tearsheet_path,
     )

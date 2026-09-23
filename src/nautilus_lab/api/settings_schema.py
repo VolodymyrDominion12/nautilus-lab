@@ -157,6 +157,9 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
             SettingField(key="USE_RATCHET", label="Profit ratchet", field_type="boolean"),
             SettingField(key="RATCHET_ARM_PCT", label="Ratchet arm %", field_type="number"),
             SettingField(
+                key="USE_PROTECTIVE_STOP", label="Protective stop order", field_type="boolean"
+            ),
+            SettingField(
                 key="PAIRS_REFIT_EVERY", label="Pairs refit every N bars", field_type="number"
             ),
         ],

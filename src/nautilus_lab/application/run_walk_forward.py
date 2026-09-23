@@ -25,7 +25,9 @@ from nautilus_lab.domain.align import split_aligned_by_window
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import InvalidWindowError
 from nautilus_lab.domain.metrics import buy_and_hold_return
+from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.regime import RobotName, require_backtest_support
+from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.domain.walk_forward import (
     WalkForwardWindow,
     anchored_window,
@@ -67,18 +69,40 @@ class RunWalkForward:
         folds = split_by_window(bars, window)
         _require_warmup(request.backtest.robot, len(folds.in_sample), "in-sample")
         _require_warmup(request.backtest.robot, len(folds.out_of_sample), "out-of-sample")
-        ticks = None
-        if request.backtest.use_tick_vpin or request.backtest.use_hawkes:
-            if self._tick_feed is None:
-                raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
-            ticks = self._tick_feed.load(request.backtest)
+        ticks, books = self._load_events(request.backtest)
 
         return self._select_and_evaluate(
             request,
             window,
-            run_is=lambda candidate: self._engine.run(candidate, list(folds.in_sample), ticks),
-            run_oos=lambda candidate: self._engine.run(candidate, list(folds.out_of_sample), ticks),
+            run_is=lambda candidate: self._engine.run(
+                candidate, list(folds.in_sample), ticks, books
+            ),
+            run_oos=lambda candidate: self._engine.run(
+                candidate, list(folds.out_of_sample), ticks, books
+            ),
         )
+
+    def _load_events(
+        self, request: BacktestRequest
+    ) -> tuple[list[AggTrade] | None, list[OrderBookSnapshot] | None]:
+        """Tick and book series the robot needs, loaded once for all folds.
+
+        The engine cuts them to each run's bar span, so handing the whole series to
+        every fold is safe; loading it per fold only re-read the same parquet files.
+        Without the book series `ml_obi` never receives a depth update and a
+        walk-forward over it reported zero trades as if that were a result.
+        """
+        ticks = None
+        if request.use_tick_vpin or request.use_hawkes:
+            if self._tick_feed is None:
+                raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
+            ticks = self._tick_feed.load(request)
+        books = None
+        if request.robot is RobotName.ML_OBI:
+            if self._book_feed is None:
+                raise ValueError("OrderBook feed must be provided to use ML_OBI")
+            books = self._book_feed.load(request)
+        return ticks, books
 
     def _execute_pairs(self, request: WalkForwardRequest, embargo: int) -> WalkForwardReport:
         all_bars = self._feed.load_multi(request.backtest)
@@ -140,8 +164,9 @@ class RunWalkForward:
             in_sample_fraction=request.in_sample_fraction,
             embargo_bars=embargo,
         )
+        ticks, books = self._load_events(request.backtest)
         folds = [
-            self._evaluate_single_fold(request, index, bars, window)
+            self._evaluate_single_fold(request, index, bars, window, ticks, books)
             for index, window in enumerate(windows)
         ]
         return _multi_report(request, folds, len(windows))
@@ -152,24 +177,24 @@ class RunWalkForward:
         index: int,
         bars: Sequence[OhlcvBar],
         window: WalkForwardWindow,
+        ticks: list[AggTrade] | None,
+        books: list[OrderBookSnapshot] | None,
     ) -> WalkForwardFold:
         split = split_by_window(bars, window)
         _require_warmup(request.backtest.robot, len(split.in_sample), f"fold {index} in-sample")
         _require_warmup(
             request.backtest.robot, len(split.out_of_sample), f"fold {index} out-of-sample"
         )
-        ticks = None
-        if request.backtest.use_tick_vpin or request.backtest.use_hawkes:
-            if self._tick_feed is None:
-                raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
-            ticks = self._tick_feed.load(request.backtest)
-
         return self._run_fold(
             request,
             index,
             window,
-            run_is=lambda candidate: self._engine.run(candidate, list(split.in_sample), ticks),
-            run_oos=lambda candidate: self._engine.run(candidate, list(split.out_of_sample), ticks),
+            run_is=lambda candidate: self._engine.run(
+                candidate, list(split.in_sample), ticks, books
+            ),
+            run_oos=lambda candidate: self._engine.run(
+                candidate, list(split.out_of_sample), ticks, books
+            ),
             oos_reference=split.out_of_sample,
         )
 

@@ -7,11 +7,19 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from nautilus_lab.application.catalog_queries import incremental_ingest_start
-from nautilus_lab.application.dtos import BacktestReport, MultiWindowReport, WalkForwardReport
+from nautilus_lab.application.dtos import (
+    BacktestReport,
+    MultiWindowReport,
+    PaperSessionReport,
+    WalkForwardReport,
+)
 from nautilus_lab.application.journal import JournalEntry, record_run
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
-from nautilus_lab.application.run_paper import RunPaperResearch
+from nautilus_lab.application.run_paper import (
+    PAPER_SUPPORTED_ROBOTS,
+    require_paper_support,
+)
 from nautilus_lab.application.run_walk_forward import window_return
 from nautilus_lab.application.scan_triangular import scan_triangular_opportunities
 from nautilus_lab.domain.bars import BarOrigin
@@ -26,6 +34,7 @@ from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
+from nautilus_lab.infrastructure.paper_sessions import append_session
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.interfaces.composition import (
     funding_ingest_request,
@@ -39,6 +48,8 @@ from nautilus_lab.interfaces.composition import (
     notifier,
     overfit_audit_request,
     overfit_audit_use_case,
+    paper_request,
+    paper_use_case,
     research_request,
     research_use_case,
     settings,
@@ -206,12 +217,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Append a row for this run to the research journal (table + journal.jsonl)",
     )
 
-    paper = sub.add_parser("paper", help="Paper trading: log hypothetical orders only")
-    paper.add_argument("--bars", type=int, default=500, help="Synthetic bar count")
+    paper = sub.add_parser(
+        "paper",
+        help="Paper session: run a frozen robot forward, full ledger, no orders sent",
+    )
+    paper.add_argument("--bars", type=int, default=2000, help="Bars in the session window")
     paper.add_argument(
         "--robot",
-        choices=("regime", "ema"),
+        choices=sorted(item.value for item in PAPER_SUPPORTED_ROBOTS),
         default="regime",
+    )
+    paper.add_argument(
+        "--source",
+        choices=("catalog", "synthetic"),
+        default="catalog",
+        help="Where the closed bars come from (catalog = real history)",
+    )
+    paper.add_argument(
+        "--journal",
+        action="store_true",
+        help="Append this session to reports/paper/sessions.jsonl",
     )
 
     scan = sub.add_parser("scan", help="Research scanners (no orders)")
@@ -696,22 +721,68 @@ def _run_pbo(cfg: Settings, args: argparse.Namespace, robot: RobotName | None) -
 
 
 def _run_paper(cfg: Settings, args: argparse.Namespace) -> int:
+    """Run a paper session: real ledger, real fees, and no exchange submission.
+
+    This is not a backtest report and not an out-of-sample result: no parameter is
+    selected here. The configuration is taken as given and run forward, which is why
+    the printed line says `paper` rather than reporting a return anyone could mistake
+    for evidence of edge.
+    """
     require_simulated_mode(TradingMode.PAPER)
-    request = research_request(
-        cfg,
-        bar_count=args.bars,
-        robot=RobotName(args.robot),
-        source=BarOrigin.SYNTHETIC,
-    )
-    bars = research_use_case(cfg)._feed.load(request)
-    logger = RunPaperResearch().execute(request, bars)
-    print(f"paper_orders={len(logger.orders)} (no exchange submission)")
-    for order in logger.orders[:10]:
-        print(
-            f"{order.ts_utc.isoformat()} {order.instrument_id} "
-            f"{order.side} qty={order.qty} reason={order.description}"
-        )
+    robot = RobotName(args.robot)
+    require_paper_support(robot)
+    source = BarOrigin.SYNTHETIC if args.source == "synthetic" else BarOrigin.CATALOG
+    request = paper_request(cfg, bar_count=args.bars, robot=robot, source=source)
+    report = paper_use_case(cfg).execute(request)
+    _print_paper_session(report)
+    if args.journal:
+        path = append_session(report, created_at=datetime.now(UTC).isoformat())
+        print(f"paper_session_appended={path}")
     return 0
+
+
+def _print_paper_session(report: PaperSessionReport) -> None:
+    def percent(value: Decimal | None) -> str:
+        return "n/a" if value is None else f"{value * 100:.2f}%"
+
+    window = (
+        "n/a"
+        if report.window_start is None or report.window_end is None
+        else f"[{report.window_start.isoformat()}, {report.window_end.isoformat()}]"
+    )
+    print(
+        f"paper session (no exchange submission) robot={report.robot.value} "
+        f"instrument={report.instrument_id} mode={report.mode.value} source={report.source}"
+    )
+    print(
+        f"bars={report.bar_count} window={window} starting={report.starting_equity} "
+        f"ending_balance={report.ending_equity} "
+        # `ending_balance` is the account after realized fills only; a session that ends
+        # holding a position is not flat, so the marked number is printed beside it.
+        f"net_pnl_marked={report.net_pnl} return_marked={percent(report.return_fraction)}"
+    )
+    print(
+        f"fills={len(report.fills)} positions={len(report.positions)} "
+        f"fees={report.fees_paid} traded_notional={report.traded_notional} "
+        f"max_dd={'n/a' if report.metrics is None else report.metrics.max_drawdown}"
+    )
+    if report.open_position is not None:
+        print(
+            f"open_position side={report.open_position.side} qty={report.open_position.qty} "
+            f"entry={report.open_position.entry_price} mark={report.mark_price} "
+            f"unrealized={report.unrealized_pnl}"
+        )
+    else:
+        print("open_position=none (flat at the last bar)")
+    for reason, count in report.risk_breaches:
+        print(f"risk_breach blocked={count} {reason}")
+    for fill in report.fills[:10]:
+        print(
+            f"  {fill.ts_utc.isoformat()} {fill.instrument_id} {fill.side} "
+            f"qty={fill.qty} px={fill.price} fee={fill.commission} {fill.liquidity}"
+        )
+    if len(report.fills) > 10:
+        print(f"  ... {len(report.fills) - 10} more fills")
 
 
 def _run_scan(args: argparse.Namespace) -> int:

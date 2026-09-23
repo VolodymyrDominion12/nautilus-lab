@@ -441,6 +441,131 @@ class OrderBookFeed(Protocol):
     def load(self, request: BacktestRequest) -> list[OrderBookSnapshot]: ...
 
 
+class PaperBacktestPort(Protocol):
+    """Engine that can also hand back the paper ledger, not just the ending balance.
+
+    A backtest answers "how much did the window end with"; a paper session has to
+    answer "what did it actually do" — which orders filled, at what price, against
+    which fee, and what was still open at the bell.
+    """
+
+    def run_paper(
+        self,
+        request: BacktestRequest,
+        bars: list[OhlcvBar],
+        ticks: list[AggTrade] | None = None,
+        books: list[OrderBookSnapshot] | None = None,
+    ) -> PaperSessionReport: ...
+
+    def run_paper_spread(
+        self,
+        request: BacktestRequest,
+        bars_by_instrument: dict[str, list[OhlcvBar]],
+    ) -> PaperSessionReport: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PaperFill:
+    """One executed order in a paper session. No exchange was involved."""
+
+    ts_utc: datetime
+    instrument_id: str
+    side: str
+    qty: Decimal
+    price: Decimal
+    commission: Decimal
+    liquidity: str
+    is_reduce_only: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPosition:
+    """A position the paper session opened — closed, or still open at the last bar."""
+
+    instrument_id: str
+    side: str
+    qty: Decimal
+    entry_price: Decimal
+    opened_utc: datetime
+    exit_price: Decimal | None = None
+    closed_utc: datetime | None = None
+    realized_pnl: Decimal = Decimal("0")
+    is_open: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PaperSessionReport:
+    """What one forward paper run did, with the ledger to prove it.
+
+    Nothing here selects parameters: a paper session runs a *frozen* configuration
+    forward, which is the one thing a walk-forward report cannot do. It is also not
+    an out-of-sample report — it is a live-rehearsal artifact, and `mode` says so.
+    """
+
+    robot: RobotName
+    instrument_id: str
+    source: str
+    mode: TradingMode
+    bar_count: int
+    window_start: datetime | None
+    window_end: datetime | None
+    starting_equity: Decimal
+    ending_equity: Decimal | None
+    equity_curve: tuple[Decimal, ...] = ()
+    fills: tuple[PaperFill, ...] = ()
+    positions: tuple[PaperPosition, ...] = ()
+    fees_paid: Decimal = Decimal("0")
+    turnover: Decimal = Decimal("0")
+    traded_notional: Decimal = Decimal("0")
+    metrics: BacktestMetrics | None = None
+    risk_breaches: tuple[tuple[str, int], ...] = ()
+    open_position: PaperPosition | None = None
+    unrealized_pnl: Decimal = Decimal("0")
+    mark_price: Decimal | None = None
+
+    @property
+    def closed_positions(self) -> tuple[PaperPosition, ...]:
+        return tuple(position for position in self.positions if not position.is_open)
+
+    @property
+    def realized_pnl(self) -> Decimal:
+        return sum((position.realized_pnl for position in self.positions), Decimal("0"))
+
+    @property
+    def net_pnl(self) -> Decimal | None:
+        """Realized plus mark-to-market of anything still open at the last bar."""
+        return self.realized_pnl + self.unrealized_pnl
+
+    @property
+    def return_fraction(self) -> Decimal | None:
+        if self.starting_equity <= 0:
+            return None
+        pnl = self.net_pnl
+        if pnl is None:
+            return None
+        return pnl / self.starting_equity
+
+    def summary_line(self) -> str:
+        """One line a human can paste into a session log."""
+
+        def percent(value: Decimal | None) -> str:
+            return "n/a" if value is None else f"{value * 100:.2f}%"
+
+        window = (
+            "n/a"
+            if self.window_start is None or self.window_end is None
+            else f"{self.window_start.isoformat()}..{self.window_end.isoformat()}"
+        )
+        open_qty = self.open_position.qty if self.open_position is not None else Decimal("0")
+        return (
+            f"paper {self.robot.value} {self.instrument_id} mode={self.mode.value} "
+            f"bars={self.bar_count} window={window} fills={len(self.fills)} "
+            f"positions={len(self.positions)} open_qty={open_qty} "
+            f"return={percent(self.return_fraction)} fees={self.fees_paid} "
+            f"(no exchange submission)"
+        )
+
+
 def selected_from_request(request: BacktestRequest) -> SelectedParams:
     return SelectedParams(
         fast_ema=request.fast_ema,

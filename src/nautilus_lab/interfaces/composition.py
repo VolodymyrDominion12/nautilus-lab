@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -19,6 +20,7 @@ from nautilus_lab.application.ingest_orderbook import IngestOrderBook
 from nautilus_lab.application.propose_alphas import AlphaProposalRequest, resolve_prompt_path
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_overfitting_audit import RunOverfitAudit
+from nautilus_lab.application.run_paper import RunPaperSession
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
 from nautilus_lab.application.run_walk_forward import RunWalkForward
 from nautilus_lab.domain.bars import BarOrigin
@@ -26,6 +28,7 @@ from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.ports import ChatCompleter
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.ticks import AggTrade
+from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.alerts import AlertNotifier, build_notifier
@@ -274,6 +277,34 @@ def research_request(
         adaptive_params=cfg.adaptive_ema_params(),
         tearsheet_path=tearsheet_path,
     )
+
+
+def paper_use_case(cfg: Settings | None = None) -> RunPaperSession:
+    """Paper session wiring: same engine and feeds as research, plus the ledger."""
+    resolved = cfg or settings()
+    tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    book_catalog = orderbook_catalog(resolved)
+    tick_feed = _TickFeedAdapter(tick_catalog)
+    book_feed = _BookFeedAdapter(book_catalog)
+    return RunPaperSession(
+        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed
+    )
+
+
+def paper_request(
+    cfg: Settings,
+    *,
+    bar_count: int,
+    robot: RobotName | None = None,
+    source: BarOrigin = BarOrigin.CATALOG,
+) -> BacktestRequest:
+    """A paper session runs in `paper` mode; live mode is refused downstream.
+
+    Mode is forced rather than inherited: an artifact that says `research` when a
+    human ran a paper session misreports what happened.
+    """
+    request = research_request(cfg, bar_count=bar_count, robot=robot, source=source)
+    return replace(request, mode=TradingMode.PAPER)
 
 
 def ingest_request(

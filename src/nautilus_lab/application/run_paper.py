@@ -1,26 +1,143 @@
+"""Paper session: a frozen configuration run forward, with the ledger to prove it.
+
+What this is **not**: an out-of-sample report. A walk-forward run selects parameters
+on in-sample bars and reports on held-out bars; a paper session selects nothing — it
+runs the configuration it was handed, over a window, and records every fill, every
+position, and what was still open at the last bar. That makes it the rehearsal step
+between "the research says this is a candidate" and "let it touch a real venue",
+which is exactly the gap `lab live` is not allowed to fill yet.
+
+Nothing here reaches an exchange: no order is ever submitted anywhere but into the
+Nautilus simulation engine, and `require_simulated_mode` refuses `live` outright.
+"""
+
 from __future__ import annotations
 
 from decimal import Decimal
 
-from nautilus_lab.application.dtos import BacktestRequest
-from nautilus_lab.application.risk import evaluate_entry, size_position, stop_distance
+from nautilus_lab.application.dtos import (
+    BacktestRequest,
+    BarFeed,
+    OrderBookFeed,
+    PaperBacktestPort,
+    PaperSessionReport,
+    TickFeed,
+)
+from nautilus_lab.application.risk import (
+    evaluate_entry,
+    require_simulated_mode,
+    size_position,
+    stop_distance,
+)
+from nautilus_lab.application.run_research_backtest import minimum_bars
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
-from nautilus_lab.domain.regime import RobotName
+from nautilus_lab.domain.regime import RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot
 from nautilus_lab.domain.signals import SignalSide
 from nautilus_lab.infrastructure.paper_trading import PaperTradingLogger
 
-#: Robots `lab paper` can actually build. `_build_robot` maps only EMA to `EmaCrossover`
-#: and everything else to `RegimeRouter`, so any other name would run the regime robot
-#: while the artifact recorded the name that was asked for. The CLI restricts its
-#: `--robot` choices to exactly this set (cli.py) and the API validates against it too.
-PAPER_SUPPORTED_ROBOTS: frozenset[RobotName] = frozenset({RobotName.REGIME, RobotName.EMA})
+#: Robots a paper session can actually build, mirroring the engine's `_build_robot`.
+#: The CLI and the API both validate against this set: a name that is missing here
+#: would otherwise run whichever robot the engine falls back to while the artifact
+#: recorded the name that was asked for.
+PAPER_SUPPORTED_ROBOTS: frozenset[RobotName] = frozenset(
+    {
+        RobotName.REGIME,
+        RobotName.EMA,
+        RobotName.PAIRS,
+        RobotName.VPIN_MOMENTUM,
+        RobotName.FORMULAIC_LGBM,
+        RobotName.META_LABEL,
+        RobotName.ADAPTIVE_EMA,
+        RobotName.ML_OBI,
+    }
+)
+
+
+def require_paper_support(robot: RobotName) -> None:
+    """Fail closed when a robot has no paper path, instead of substituting one."""
+    require_backtest_support(robot)
+    if robot not in PAPER_SUPPORTED_ROBOTS:
+        supported = ", ".join(sorted(item.value for item in PAPER_SUPPORTED_ROBOTS))
+        msg = (
+            f"paper mode cannot build robot {robot.value!r}; supported: {supported}. "
+            "Refusing rather than substituting a different robot."
+        )
+        raise ValueError(msg)
+
+
+class RunPaperSession:
+    """Run one paper session: load bars, run the engine, return the ledger.
+
+    The bar source is a `BarFeed`, so the historical catalog and a future streaming
+    feed are interchangeable here — the session does not care where closed bars came
+    from, only that they are closed.
+    """
+
+    def __init__(
+        self,
+        engine: PaperBacktestPort,
+        feed: BarFeed,
+        tick_feed: TickFeed | None = None,
+        book_feed: OrderBookFeed | None = None,
+    ) -> None:
+        self._engine = engine
+        self._feed = feed
+        self._tick_feed = tick_feed
+        self._book_feed = book_feed
+
+    def execute(self, request: BacktestRequest) -> PaperSessionReport:
+        require_simulated_mode(request.mode)
+        require_paper_support(request.robot)
+        minimum = minimum_bars(request.robot)
+        if request.bar_count < minimum:
+            raise ValueError(f"bar_count must be >= {minimum} so indicators can warm up")
+
+        if request.robot is RobotName.PAIRS:
+            multi = self._feed.load_multi(request)
+            # Both legs are tailed by the same count; they arrive aligned by an inner
+            # join, so equal tails stay aligned and the spread never sees a stale leg.
+            return self._engine.run_paper_spread(
+                request, {key: _tail(value, request.bar_count) for key, value in multi.items()}
+            )
+
+        # `bar_count` is a window length here, not a floor: a session runs the most
+        # recent closed bars forward, which is what makes it a rehearsal rather than
+        # another look at the whole history.
+        bars = _tail(self._feed.load(request), request.bar_count)
+
+        ticks = None
+        if request.use_tick_vpin or request.use_hawkes:
+            if self._tick_feed is None:
+                raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
+            ticks = self._tick_feed.load(request)
+
+        books = None
+        if request.robot is RobotName.ML_OBI:
+            if self._book_feed is None:
+                raise ValueError("OrderBook feed must be provided to use ML_OBI")
+            books = self._book_feed.load(request)
+
+        return self._engine.run_paper(request, bars, ticks, books)
+
+
+def _tail(bars: list[OhlcvBar], count: int) -> list[OhlcvBar]:
+    """The last `count` bars, or all of them when the window is not shorter."""
+    if count <= 0:
+        return list(bars)
+    return list(bars[-count:])
 
 
 class RunPaperResearch:
-    """Paper mode: public-data path, log hypothetical orders only."""
+    """Dry-run order preview: which orders *would* be sent, and nothing else.
+
+    Kept separate from `RunPaperSession` on purpose. This one holds no account, no
+    position and no PnL — it answers "does the robot produce signals at all", which is
+    a useful smoke check but must never be mistaken for a session result. `lab paper`
+    runs the session; the API preview and the smoke tests use this.
+    """
 
     def __init__(self, logger: PaperTradingLogger | None = None) -> None:
         self._logger = logger or PaperTradingLogger()

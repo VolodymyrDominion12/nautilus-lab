@@ -47,6 +47,7 @@ from nautilus_lab.application.dtos import (
 )
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
 from nautilus_lab.domain.metrics import BacktestMetrics
+from nautilus_lab.domain.regime import BACKTEST_WIRED_ROBOTS
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.settings import Settings
 
@@ -343,10 +344,10 @@ def test_archived_config_reproduces_every_research_argument() -> None:
 
 
 def test_paper_refuses_robots_it_cannot_build() -> None:
-    """Only regime/ema have a paper adapter; substitutes would misreport the run."""
-    result, _ = execute_paper(PaperRunConfig(robot="pairs", bars=10, source="synthetic"))
+    """A robot without a paper path is refused; substituting one would misreport the run."""
+    result, _ = execute_paper(PaperRunConfig(robot="funding", bars=10, source="synthetic"))
     assert result["is_error"] is True
-    assert "pairs" in str(result["error_message"])
+    assert "funding" in str(result["error_message"])
     assert "regime" in str(result["error_message"])
 
 
@@ -523,11 +524,11 @@ def test_research_route_rejects_impossible_combinations_before_spawning() -> Non
 def test_paper_route_rejects_a_robot_without_an_adapter() -> None:
     client = _client()
     response = client.post(
-        "/api/paper/run", json={"robot": "pairs", "bars": 10, "source": "synthetic"}
+        "/api/paper/run", json={"robot": "funding", "bars": 10, "source": "synthetic"}
     )
     assert response.status_code == 400
     detail = response.json()["detail"]
-    assert "pairs" in detail
+    assert "funding" in detail
     # the supported set must be named, or the user cannot pick a working robot
     assert "regime" in detail and "ema" in detail
 
@@ -542,4 +543,7 @@ def test_status_reports_every_job_and_the_selected_catalog() -> None:
     assert body["live_safe_mode"] == "FAIL_CLOSED"
     assert body["is_live"] is False
     assert body["bar_interval"]
-    assert body["paper_robots"] == ["ema", "regime"]
+    # The advertised set is the engine's wired set: paper runs the real engine now,
+    # so any robot it cannot build must be absent from this list.
+    assert body["paper_robots"] == sorted(item.value for item in BACKTEST_WIRED_ROBOTS)
+    assert "pairs" in body["paper_robots"]

@@ -91,14 +91,21 @@ def test_api_scan_triangular(client: TestClient) -> None:
 
 def test_run_paper_job_cli(tmp_path: Path) -> None:
     cfg_file = tmp_path / "paper_cfg.json"
+    # 150 bars is the warm-up floor for `regime`; a shorter session is refused rather
+    # than silently run with indicators that never warmed up.
     cfg_file.write_text(
-        json.dumps({"robot": "regime", "bars": 100, "source": "synthetic"}),
+        json.dumps({"robot": "regime", "bars": 200, "source": "synthetic"}),
         encoding="utf-8",
     )
     code = run_paper_job_main(["--config-json", str(cfg_file), "--reports-dir", str(tmp_path)])
     assert code == 0
     assert (tmp_path / "paper.log").exists()
     assert (tmp_path / "paper.json").exists()
+    payload = json.loads((tmp_path / "paper.json").read_text(encoding="utf-8"))
+    assert payload["is_error"] is False
+    assert payload["mode"] == "paper"
+    assert payload["robot"] == "regime"
+    assert "no order was submitted" in payload["disclaimer"]
 
 
 def test_run_research_job_cli(tmp_path: Path) -> None:

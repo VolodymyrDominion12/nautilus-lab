@@ -6,18 +6,19 @@ import traceback
 from dataclasses import dataclass
 from typing import Any, TextIO, cast
 
+from nautilus_lab.application.dtos import PaperSessionReport
 from nautilus_lab.application.risk import require_simulated_mode
-from nautilus_lab.application.run_paper import PAPER_SUPPORTED_ROBOTS, RunPaperResearch
+from nautilus_lab.application.run_paper import require_paper_support
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.regime import RobotName
-from nautilus_lab.interfaces.composition import research_request, research_use_case, settings
+from nautilus_lab.interfaces.composition import paper_request, paper_use_case, settings
 
 
 @dataclass(frozen=True, slots=True)
 class PaperRunConfig:
     robot: str = "regime"
-    bars: int = 500
-    source: str = "synthetic"
+    bars: int = 2000
+    source: str = "catalog"
 
 
 class _Tee(io.TextIOBase):
@@ -34,6 +35,59 @@ class _Tee(io.TextIOBase):
         self._original.flush()
 
 
+def session_payload(report: PaperSessionReport) -> dict[str, Any]:
+    """JSON body for the dashboard. Decimals stay strings; no float rounding."""
+    return {
+        "is_finished": True,
+        "is_error": False,
+        "robot": report.robot.value,
+        "instrument_id": report.instrument_id,
+        "mode": report.mode.value,
+        "source": report.source,
+        "bars": report.bar_count,
+        "window_start": None if report.window_start is None else report.window_start.isoformat(),
+        "window_end": None if report.window_end is None else report.window_end.isoformat(),
+        "starting_equity": str(report.starting_equity),
+        "ending_equity": None if report.ending_equity is None else str(report.ending_equity),
+        "net_pnl": str(report.net_pnl),
+        "realized_pnl": str(report.realized_pnl),
+        "unrealized_pnl": str(report.unrealized_pnl),
+        "fees_paid": str(report.fees_paid),
+        "traded_notional": str(report.traded_notional),
+        "order_count": len(report.fills),
+        "position_count": len(report.positions),
+        "open_position": (
+            None
+            if report.open_position is None
+            else {
+                "side": report.open_position.side,
+                "qty": str(report.open_position.qty),
+                "entry_price": str(report.open_position.entry_price),
+            }
+        ),
+        "risk_breaches": [
+            {"reason": reason, "count": count} for reason, count in report.risk_breaches
+        ],
+        "orders": [
+            {
+                "ts": fill.ts_utc.isoformat(),
+                "instrument_id": fill.instrument_id,
+                "side": fill.side,
+                "qty": str(fill.qty),
+                "price": str(fill.price),
+                "commission": str(fill.commission),
+                "liquidity": fill.liquidity,
+                "reason": f"{fill.liquidity.lower() or 'fill'} fill against the simulated venue",
+            }
+            for fill in report.fills
+        ],
+        "disclaimer": (
+            "Paper session: orders were filled by the simulated venue against closed bars. "
+            "No exchange was contacted and no order was submitted."
+        ),
+    }
+
+
 def execute_paper(job: PaperRunConfig) -> tuple[dict[str, Any], str]:
     buffer = io.StringIO()
     original = cast(TextIO, sys.stdout)
@@ -42,49 +96,18 @@ def execute_paper(job: PaperRunConfig) -> tuple[dict[str, Any], str]:
     try:
         require_simulated_mode(cfg.trading_mode)
         robot = RobotName(job.robot)
-        if robot not in PAPER_SUPPORTED_ROBOTS:
-            supported = ", ".join(sorted(item.value for item in PAPER_SUPPORTED_ROBOTS))
-            msg = (
-                f"paper mode cannot build robot {robot.value!r}; supported: {supported}. "
-                "Refusing rather than substituting a different robot."
-            )
-            raise ValueError(msg)
+        require_paper_support(robot)
         bar_origin = BarOrigin.SYNTHETIC if job.source == "synthetic" else BarOrigin.CATALOG
-        request = research_request(
-            cfg,
-            bar_count=job.bars,
-            robot=robot,
-            source=bar_origin,
-        )
-        bars = research_use_case(cfg)._feed.load(request)
-        logger = RunPaperResearch().execute(request, bars)
-        orders = [
-            {
-                "ts": order.ts_utc.isoformat(),
-                "instrument_id": order.instrument_id,
-                "side": str(order.side),
-                "qty": str(order.qty),
-                "reason": order.description,
-            }
-            for order in logger.orders
-        ]
-        print(f"paper_orders={len(logger.orders)} (no exchange submission)")
-        for order in logger.orders[:20]:
+        request = paper_request(cfg, bar_count=job.bars, robot=robot, source=bar_origin)
+        report = paper_use_case(cfg).execute(request)
+        payload = session_payload(report)
+        print(report.summary_line())
+        for order in payload["orders"][:20]:
             print(
-                f"{order.ts_utc.isoformat()} {order.instrument_id} "
-                f"{order.side} qty={order.qty} reason={order.description}"
+                f"{order['ts']} {order['instrument_id']} {order['side']} "
+                f"qty={order['qty']} px={order['price']} fee={order['commission']}"
             )
-        return (
-            {
-                "is_finished": True,
-                "is_error": False,
-                "robot": job.robot,
-                "order_count": len(logger.orders),
-                "orders": orders,
-                "disclaimer": "Paper mode logs hypothetical orders only; no position state.",
-            },
-            buffer.getvalue(),
-        )
+        return payload, buffer.getvalue()
     except Exception as exc:
         traceback.print_exc()
         return (

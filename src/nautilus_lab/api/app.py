@@ -155,8 +155,8 @@ class MLTrainRequest(BaseModel):
 
 class PaperRunRequest(BaseModel):
     robot: str = "regime"
-    bars: int = 500
-    source: str = "synthetic"
+    bars: int = 2000
+    source: str = "catalog"
 
 
 class JournalPatchRequest(BaseModel):
@@ -1075,7 +1075,10 @@ def run_paper(background_tasks: BackgroundTasks, req: PaperRunRequest) -> dict[s
     return {
         "status": "started",
         "message": f"Paper simulation started for {req.robot} ({req.source})",
-        "disclaimer": "Paper mode logs hypothetical orders only; no position state.",
+        "disclaimer": (
+            "Paper session: the simulated venue fills against closed bars. "
+            "No exchange is contacted and no order is submitted."
+        ),
     }
 
 

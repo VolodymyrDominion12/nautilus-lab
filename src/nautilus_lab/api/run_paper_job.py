@@ -17,8 +17,8 @@ def main(argv: list[str] | None = None) -> int:
     reports_dir = Path(args.reports_dir)
     job = PaperRunConfig(
         robot=str(payload.get("robot", "regime")),
-        bars=int(payload.get("bars", 500)),
-        source=str(payload.get("source", "synthetic")),
+        bars=int(payload.get("bars", 2000)),
+        source=str(payload.get("source", "catalog")),
     )
     result, log_text = execute_paper(job)
     log_path = reports_dir / "paper.log"

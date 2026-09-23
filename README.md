@@ -26,6 +26,7 @@
 | [docs/12-karta-fayliv.md](docs/12-karta-fayliv.md) | Карта всіх модулів і публічного API |
 | [docs/14-llm-model-u-torhivli.md](docs/14-llm-model-u-torhivli.md) | Як LLM/LRM-модель допомагає в торгівлі (і де їй не місце) + офлайн-контур гіпотез |
 | [docs/15-audit-vypravlennya.md](docs/15-audit-vypravlennya.md) | Аудит коректності: знайдені помилки логіки та як їх виправлено |
+| [docs/24-paper-treydynh.md](docs/24-paper-treydynh.md) | **Paper-сесії**: як запускати, які роботи проходять, виміряні числа, чому тікові дані поки не основа |
 
 ## Що всередині
 
@@ -106,11 +107,27 @@ uv run lab research --synthetic --bars 5000
 uv run lab research --synthetic --bars 1000 --tearsheet reports/synthetic_tearsheet.html
 ```
 
-Інші режими навмисно не торгують:
+## Paper-сесії (репетиція без ордерів)
+
+Paper-сесія проганяє **заморожену** конфігурацію вперед і пише повний журнал: кожен
+філ, кожну позицію, комісії, PnL і переоцінку відкритої позиції. Рушій, комісії та
+модель філів — ті самі, що в бектесті; ордери нікуди не надсилаються.
 
 ```bash
-uv run lab paper   # ще не підключений live feed
-uv run lab live    # завжди fail closed
+uv run lab paper --robot regime --bars 1500 --journal      # останні 1500 барів каталогу
+uv run lab paper --robot pairs --bars 800                  # дві ноги
+uv run lab paper --robot vpin_momentum --bars 400 --select-on-is   # параметри — лише на IS
+uv run lab paper --robot regime --source live --live-bars 5 # + закриті бари з публічного WS
+```
+
+Сесії дописуються в `reports/paper/sessions.jsonl`. П'ять роботів реально торгують у
+paper (`regime`, `ema`, `pairs`, `ml_obi`, `meta_label`); `vpin_momentum` і
+`formulaic_lgbm` запускаються й чесно не торгують — причини, числа й виміри в
+[docs/24](docs/24-paper-treydynh.md). Жоден робот досі не має виміряної переваги над
+buy&hold, тому `lab live` лишається fail closed.
+
+```bash
+uv run lab live    # завжди fail closed, код 1
 ```
 
 ## Офлайн-контур ШІ-дослідження (поза гарячим шляхом)

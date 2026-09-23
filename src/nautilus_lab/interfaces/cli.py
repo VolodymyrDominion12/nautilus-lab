@@ -12,6 +12,7 @@ from nautilus_lab.application.dtos import (
     MultiWindowReport,
     PaperSessionReport,
     WalkForwardReport,
+    apply_selected,
 )
 from nautilus_lab.application.journal import JournalEntry, record_run
 from nautilus_lab.application.risk import require_simulated_mode
@@ -45,11 +46,13 @@ from nautilus_lab.interfaces.composition import (
     ingest_request,
     ingest_use_case,
     journal_paths,
+    live_paper_use_case,
     notifier,
     overfit_audit_request,
     overfit_audit_use_case,
     paper_request,
     paper_use_case,
+    param_selection_use_case,
     research_request,
     research_use_case,
     settings,
@@ -229,9 +232,42 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     paper.add_argument(
         "--source",
-        choices=("catalog", "synthetic"),
+        choices=("catalog", "synthetic", "live"),
         default="catalog",
-        help="Where the closed bars come from (catalog = real history)",
+        help=(
+            "Where the closed bars come from: catalog (real history), synthetic "
+            "(tests only), or live (public Binance WebSocket tail after a catalog warm-up)"
+        ),
+    )
+    paper.add_argument(
+        "--live-bars",
+        type=int,
+        default=5,
+        help=(
+            "With --source live: how many closed bars to wait for from the socket. "
+            "--bars still sets the total window, so the rest is catalog warm-up"
+        ),
+    )
+    paper.add_argument(
+        "--live-timeout",
+        type=float,
+        default=900.0,
+        help="With --source live: give up after this many seconds without enough bars",
+    )
+    paper.add_argument(
+        "--select-on-is",
+        action="store_true",
+        help=(
+            "Grid-search the robot's parameters on the history BEFORE the session window "
+            "(with an embargo gap) and run the session with that configuration. Without "
+            "this, a robot whose defaults never trade reports fills=0 and looks broken"
+        ),
+    )
+    paper.add_argument(
+        "--embargo-bars",
+        type=int,
+        default=None,
+        help="Embargo gap between the selection window and the session window",
     )
     paper.add_argument(
         "--journal",
@@ -723,17 +759,56 @@ def _run_pbo(cfg: Settings, args: argparse.Namespace, robot: RobotName | None) -
 def _run_paper(cfg: Settings, args: argparse.Namespace) -> int:
     """Run a paper session: real ledger, real fees, and no exchange submission.
 
-    This is not a backtest report and not an out-of-sample result: no parameter is
-    selected here. The configuration is taken as given and run forward, which is why
-    the printed line says `paper` rather than reporting a return anyone could mistake
-    for evidence of edge.
+    This is not a backtest report and not an out-of-sample result. With
+    `--select-on-is` the configuration is chosen on history that ends *before* the
+    session window (plus an embargo gap), which is the only honest way to give a robot
+    parameters it would actually have had at the start of the session. Without it the
+    request runs exactly as configured, and a robot whose defaults never trade will
+    honestly report `fills=0`.
     """
     require_simulated_mode(TradingMode.PAPER)
     robot = RobotName(args.robot)
     require_paper_support(robot)
+    live = args.source == "live"
+    if live:
+        if robot is RobotName.PAIRS:
+            raise ValueError(
+                "live paper does not support the two-leg pairs robot yet; "
+                "run it with --source catalog"
+            )
+        if robot is RobotName.ML_OBI:
+            raise ValueError(
+                "live paper does not support ml_obi: it needs a live L2 depth stream, "
+                "and the session would otherwise run without the books it trades on"
+            )
     source = BarOrigin.SYNTHETIC if args.source == "synthetic" else BarOrigin.CATALOG
     request = paper_request(cfg, bar_count=args.bars, robot=robot, source=source)
-    report = paper_use_case(cfg).execute(request)
+
+    if args.select_on_is:
+        embargo = cfg.embargo_bars if args.embargo_bars is None else args.embargo_bars
+        selection = param_selection_use_case(cfg).execute(
+            request,
+            holdout_bars=args.bars,
+            embargo_bars=embargo,
+        )
+        print(selection.notes)
+        print(selection.summary_line())
+        request = apply_selected(request, selection.params)
+
+    if live:
+        print(
+            f"live paper: waiting for {args.live_bars} closed "
+            f"{cfg.bar_interval} bars from the public Binance stream (no keys, no orders)"
+        )
+        use_case = live_paper_use_case(
+            cfg,
+            live_bars=args.live_bars,
+            timeout_seconds=args.live_timeout,
+        )
+    else:
+        use_case = paper_use_case(cfg)
+
+    report = use_case.execute(request)
     _print_paper_session(report)
     if args.journal:
         path = append_session(report, created_at=datetime.now(UTC).isoformat())

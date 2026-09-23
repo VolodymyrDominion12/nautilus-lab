@@ -23,6 +23,7 @@ from nautilus_lab.application.run_overfitting_audit import RunOverfitAudit
 from nautilus_lab.application.run_paper import RunPaperSession
 from nautilus_lab.application.run_research_backtest import RunResearchBacktest
 from nautilus_lab.application.run_walk_forward import RunWalkForward
+from nautilus_lab.application.select_params import RunParamSelection
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.ports import ChatCompleter
@@ -35,8 +36,10 @@ from nautilus_lab.infrastructure.alerts import AlertNotifier, build_notifier
 from nautilus_lab.infrastructure.binance_agg_trades import BinancePublicAggTrades
 from nautilus_lab.infrastructure.binance_funding import BinancePublicFunding
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
+from nautilus_lab.infrastructure.binance_ws import BinanceKlineStream
 from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
 from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
+from nautilus_lab.infrastructure.live_bar_feed import LiveBarCollector, SeededLiveBarFeed
 from nautilus_lab.infrastructure.llm_client import OpenAICompatibleChatClient
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
 from nautilus_lab.infrastructure.nautilus.bar_feed import ResearchBarFeed
@@ -288,6 +291,53 @@ def paper_use_case(cfg: Settings | None = None) -> RunPaperSession:
     book_feed = _BookFeedAdapter(book_catalog)
     return RunPaperSession(
         NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed
+    )
+
+
+def param_selection_use_case(cfg: Settings | None = None) -> RunParamSelection:
+    """In-sample parameter selection wiring: same engine and feeds as the session."""
+    resolved = cfg or settings()
+    tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    book_catalog = orderbook_catalog(resolved)
+    return RunParamSelection(
+        NautilusResearchBacktest(),
+        research_feed(resolved),
+        _TickFeedAdapter(tick_catalog),
+        _BookFeedAdapter(book_catalog),
+    )
+
+
+def live_paper_use_case(
+    cfg: Settings | None = None,
+    *,
+    live_bars: int = 5,
+    timeout_seconds: float = 900.0,
+) -> RunPaperSession:
+    """Paper session over history plus a live WebSocket tail.
+
+    Public market data only: the stream needs no keys, and the session still submits
+    nothing anywhere. Any robot that the replay path supports is supported here; the
+    two-leg `pairs` robot is not, because a synchronised pair of live legs is a
+    different problem and faking it would misreport the result.
+    """
+    resolved = cfg or settings()
+    stream = BinanceKlineStream(resolved.binance_symbol, resolved.bar_interval)
+    feed = SeededLiveBarFeed(
+        history=research_feed(resolved),
+        collector=LiveBarCollector(
+            source=stream,
+            count=max(live_bars, 1),
+            timeout_seconds=timeout_seconds,
+        ),
+        live_bars=max(live_bars, 1),
+    )
+    tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
+    book_catalog = orderbook_catalog(resolved)
+    return RunPaperSession(
+        NautilusResearchBacktest(),
+        feed,
+        _TickFeedAdapter(tick_catalog),
+        _BookFeedAdapter(book_catalog),
     )
 
 

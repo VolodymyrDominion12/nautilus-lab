@@ -106,7 +106,12 @@ function AppContent() {
       .catch((err: unknown) => console.error(err));
     fetchStrategies()
       .then((data) => setStrategies(data.strategies))
-      .catch((err: unknown) => console.error(err));
+      .catch((err: unknown) => {
+        console.error(err);
+        setConnectionError(
+          (prev) => prev || (err instanceof Error ? err.message : 'Cannot reach API strategies'),
+        );
+      });
   }, [selectedCatalogPath]);
 
   // Keyboard shortcut: Cmd+K / Ctrl+K opens CommandPalette; ? opens Guide
@@ -358,7 +363,7 @@ function AppContent() {
             <span>
               {connectionError}
               <span className="block text-red-400/70 mt-1 font-mono">
-                Try: .venv/bin/uvicorn nautilus_lab.api.app:app --port 8000
+                Try: uv run --extra api uvicorn nautilus_lab.api.app:app --port 8000 (or: make api)
               </span>
             </span>
           </div>

@@ -14,6 +14,8 @@
 | 2026-09-23 10:21 | lab api research | formulaic_lgbm BTC/USDT.SIM | PBO/CSCV blocks=8 configurations=3 | n/a | n/a | ⏳ pending | PBO undefined: 3 configurations x 8 blocks (need >= 2 configurations) |
 | 2026-09-23 17:00 | людина (план, docs/25) | `xsmom` 7 монет 1d (BTC, ETH, SOL, BNB, XRP, ADA, DOGE) | walk-forward folds=6 + PBO/CSCV blocks=8, grid=6, calmar | +56.70% (середнє), 4/6 прибуткових | +54.39% (кошик) | ❌ rejected | ворота REJECT: profitable 4/6 < 5/6, PBO 0.40 > 0.30, DSR 0.931 < 0.95; перевага над кошиком +2.3 в.п. при просадках до 53% |
 | 2026-09-24 14:57 | lab research | regime ETH/USDT.SIM | synthetic backtest (no OOS split) | n/a | n/a | ⏳ pending | auto: in-sample only; IS return 530.51% (not an OOS number) |
+| 2026-09-24 15:57 | lab api research | formulaic_lgbm BTC/USDT.SIM | PBO/CSCV blocks=8 configurations=3 | n/a | n/a | ⏳ pending | PBO=0 over 70 splits x 3 configurations on 8 blocks (selection generalises, but no configuration is profitable on average) |
+| 2026-09-24 16:02 | lab api research | formulaic_lgbm BTC/USDT.SIM | PBO/CSCV blocks=8 configurations=3 | n/a | n/a | ⏳ pending | PBO=0 over 70 splits x 3 configurations on 8 blocks (selection generalises, but no configuration is profitable on average) |
 <!-- journal:rows:end -->
 
 **Як це працює.** Рядки між маркерами `journal:rows:start` і `journal:rows:end`

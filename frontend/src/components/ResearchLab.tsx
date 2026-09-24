@@ -352,37 +352,46 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
     return entry.ticks.present;
   }, [dataHealth, selectedInstrument]);
 
-  const issues: PreflightIssue[] = useMemo(
-    () =>
-      preflight({
-        robot,
-        spec: selectedStrategyInfo,
-        source,
-        totalBars: selectedInstrument?.bars_count ?? null,
-        syntheticBars: bars,
-        folds,
-        isFraction,
-        embargoBars,
-        fullSample,
-        useOptuna,
-        pbo: usePbo,
-        windowMode,
-        isStart,
-        isEnd,
-        oosStart,
-        oosEnd,
-        instrument: selectedInstrument,
-        catalogInstruments: catalogInstruments.length,
-        tickVpin,
-        hawkes,
-        tickVpinRobots,
-        hawkesRobots,
-        tickDataAvailable,
-        stressSliceWindow: selectedSliceWindow,
-      }),
-    [
+  const issues: PreflightIssue[] = useMemo(() => {
+    if (strategies.length === 0) {
+      return [
+        {
+          level: 'error',
+          message:
+            'Strategy specifications are not loaded yet. Verify that the API server is running on http://localhost:8000.',
+        },
+      ];
+    }
+    return preflight({
       robot,
-      selectedStrategyInfo,
+      spec: selectedStrategyInfo,
+      source,
+      totalBars: selectedInstrument?.bars_count ?? null,
+      syntheticBars: bars,
+      folds,
+      isFraction,
+      embargoBars,
+      fullSample,
+      useOptuna,
+      pbo: usePbo,
+      windowMode,
+      isStart,
+      isEnd,
+      oosStart,
+      oosEnd,
+      instrument: selectedInstrument,
+      catalogInstruments: catalogInstruments.length,
+      tickVpin,
+      hawkes,
+      tickVpinRobots,
+      hawkesRobots,
+      tickDataAvailable,
+      stressSliceWindow: selectedSliceWindow,
+    });
+  }, [
+    strategies.length,
+    robot,
+    selectedStrategyInfo,
       source,
       selectedInstrument,
       bars,
@@ -751,13 +760,18 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
             <select
               value={robot}
               onChange={(e) => setRobot(e.target.value)}
-              className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 focus:border-blue-500 focus:outline-none"
+              disabled={strategies.length === 0}
+              className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {strategies.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {s.name} {s.wired_in_backtest ? '✓' : '(fail-closed)'}
-                </option>
-              ))}
+              {strategies.length === 0 ? (
+                <option value="">Loading strategies...</option>
+              ) : (
+                strategies.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name} {s.wired_in_backtest ? '✓' : '(fail-closed)'}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 

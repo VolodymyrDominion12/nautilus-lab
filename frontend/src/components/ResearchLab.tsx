@@ -309,9 +309,10 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
 
   // Keep the instrument selection valid when the catalog changes.
   useEffect(() => {
-    if (catalogInstruments.length === 0) return;
+    const first = catalogInstruments[0];
+    if (first === undefined) return;
     if (!catalogInstruments.some((item) => item.instrument_id === instrumentId)) {
-      setInstrumentId(catalogInstruments[0].instrument_id);
+      setInstrumentId(first.instrument_id);
     }
   }, [catalogInstruments, instrumentId]);
 

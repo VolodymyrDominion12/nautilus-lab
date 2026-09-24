@@ -33,6 +33,7 @@
 | Хочу знати, що з роудмапу вже зроблено, а що в ньому застаріло | [22-plan-realizatsii-roadmap.md](22-plan-realizatsii-roadmap.md) |
 | Хочу запустити робота в paper-режимі та побачити журнал угод | [24-paper-treydynh.md](24-paper-treydynh.md) |
 | Хочу, щоб paper-торгівля йшла 24/7 на VPS, а аналіз — локально | [26-deploy-vps.md](26-deploy-vps.md) |
+| Хочу знати, що виправити в інженерії й безпеці перед наступними дослідженнями | [27-audyt-praktyk-2026-ta-roadmap-E.md](27-audyt-praktyk-2026-ta-roadmap-E.md) |
 | Хочу підняти веб-дашборд і зрозуміти його вкладки (`frontend/` + `api/`) | [../frontend/README.md](../frontend/README.md) → [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md) |
 | Хочу навчити ML-модель і підключити її до робота (`lab ml train`) | [19-ml-steking-vidpovidnist.md](19-ml-steking-vidpovidnist.md) → [10-cli-dovidnyk.md](10-cli-dovidnyk.md) |
 | Хочу знати, за якими порогами робот допускають до paper | [25-xsmom-ta-vorota-dopusku.md](25-xsmom-ta-vorota-dopusku.md) |
@@ -79,6 +80,7 @@
 | [24-paper-treydynh.md](24-paper-treydynh.md) | Paper-сесії: як запускати, які роботи реально торгують, виміряні числа, чому тікові дані поки не основа, живий paper на WebSocket |
 | [25-xsmom-ta-vorota-dopusku.md](25-xsmom-ta-vorota-dopusku.md) | Крос-секційний momentum (`lab xsmom`) і ворота допуску `promotion_gate`: пороги, зафіксовані до прогону, і результат гіпотези |
 | [26-deploy-vps.md](26-deploy-vps.md) | Деплой на VPS: живий paper 24/7 із журналом і відновленням, `LAB_ROLE=paper`, Docker + Caddy + Tailscale, збирач тіків, `pull_vps.sh` |
+| [27-audyt-praktyk-2026-ta-roadmap-E.md](27-audyt-praktyk-2026-ta-roadmap-E.md) | Аудит відповідності практикам 2026 (тести, CI, безпека деплою, спостережуваність, відтворюваність, фронтенд) і роудмап E/R-серії з хвилями 0–4 та критеріями готовності |
 | [План багатороботний paper-термінал.md](План%20багатороботний%20paper-термінал.md) | План багатороботного paper-терміналу: 3–5 незалежних сесій із власними рахунками, екран «Портфель», один WS-фід на пару символ+інтервал |
 | [../frontend/README.md](../frontend/README.md) | Фронтенд: як запускати, вкладки, що UI відмовляється робити (ті самі дослідницькі правила, виражені в інтерфейсі) |
 | [../specs/README.md](../specs/README.md) | Spec-Driven Development: специфікація робота як контракт, який звіряється з кодом машиною |

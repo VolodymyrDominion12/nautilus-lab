@@ -51,6 +51,9 @@ reports/
 *.sqlite
 *.db
 
+# Assistant scratch output (drafts land here; the real doc goes to docs/)
+Claude outputs/
+
 # IDE
 .idea/
 .vscode/*

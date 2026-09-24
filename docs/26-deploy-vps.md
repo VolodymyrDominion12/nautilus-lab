@@ -106,7 +106,7 @@ mkdir -p data reports catalog && sudo chown -R 1000:1000 data reports catalog
 | Файл | Хто читає | Що там |
 |---|---|---|
 | `~/nautilus-lab/.env` | застосунок (`Settings`; у контейнер змонтований як `/app/.env:ro`) | `LAB_ROLE=paper`, `LIVE_PAPER_*` — журнал, автостарт/портфель, `LIVE_PAPER_MAX_SESSIONS`, `LIVE_PAPER_MAX_FEEDS`, **заморожені параметри робота й ризику**, `API_ALLOWED_ORIGINS`, `API_TOKEN`, `CATALOG_PATH` |
-| `~/nautilus-lab/deploy/.env` | `docker compose` (не застосунок) | `BIND_ADDR`, `SITE_ADDRESS`, `API_TOKEN` (той самий, що в `.env`: він вшивається в бандл дашборда), `COMPOSE_PROFILES`, `TICK_SYMBOLS`, `TICK_WINDOW_MINUTES` |
+| `~/nautilus-lab/deploy/.env` | `docker compose` (не застосунок) | `BIND_ADDR`, `SITE_ADDRESS`, `API_TOKEN` (той самий, що в `.env`: він вшивається в бандл дашборда), `DASHBOARD_AUTH`/`BASIC_AUTH_USER`/`BASIC_AUTH_HASH` (замок для публічного доступу), `COMPOSE_PROFILES`, `TICK_SYMBOLS`, `TICK_WINDOW_MINUTES` |
 
 `.env` з робочої станції на сервер **не копіюйте**: там LLM-ключ і все, що серверу не потрібно.
 
@@ -192,9 +192,22 @@ research тут вимкнено.
 
 DNS `A lab.example.com → IP VPS`, потім у `deploy/.env`: `BIND_ADDR=0.0.0.0`,
 `SITE_ADDRESS=lab.example.com`; у `.env`: `API_ALLOWED_ORIGINS=https://lab.example.com`;
-`ufw allow 80,443/tcp`. Caddy сам отримає HTTPS-сертифікат. Обов'язково увімкніть
-`basic_auth` у `deploy/Caddyfile` (інструкція в коментарі): токен вшитий у JS-бандл і
-захищає API від чужих сторінок, а не від людини, яка відкрила ваш дашборд.
+`ufw allow 80,443/tcp`. Caddy сам отримає HTTPS-сертифікат.
+
+Замок обов'язковий: токен вшитий у JS-бандл і захищає API від чужих сторінок, а не від
+людини, яка відкрила ваш дашборд. У `deploy/.env`:
+
+```bash
+docker run --rm caddy:2-alpine caddy hash-password   # введіть пароль -> $2a$14$...
+# deploy/.env — хеш ОБОВ'ЯЗКОВО в одинарних лапках: у ньому є `$`, який compose розкрив би
+DASHBOARD_AUTH=on
+BASIC_AUTH_USER=volodymyr
+BASIC_AUTH_HASH='$2a$14$...'
+```
+
+`deploy_vps.sh` перед `docker compose up` запускає `deploy/check_exposure.sh`: якщо
+`BIND_ADDR` не `127.*` і не адреса Tailscale (`100.64.0.0/10`), а `DASHBOARD_AUTH=off`,
+деплой зупиняється. Свідомо відкритий дашборд — лише з `ALLOW_OPEN_DASHBOARD=1`.
 
 ## 5a. Кілька роботів одночасно
 
@@ -305,4 +318,6 @@ equity = pd.json_normalize(ev[ev.type == "snapshot"]["equity_point"].dropna())
 | `deploy_vps.sh`: `missing .env on the server` / `missing deploy/.env` | Шаблони скопіюйте самі (крок 4) — скрипт лише підказує команду і виходить |
 | Контейнер `api` не стартує, `unknown LAB_ROLE` | Опечатка в `LAB_ROLE` (дозволено `full`, `paper`) — навмисно fail closed |
 | `.env` виявився текою | `docker compose up` запустили до створення `.env`; `rmdir .env && cp deploy/vps.env.example .env` |
-| Permission denied у `data/` | `sudo chown -R 1000:1000 data reports catalog` |
+| Permission denied у `data/` (у лозі `Live paper journal write failed (...)`) | `data/` належить комусь іншому, ніж uid 1000 контейнера: `sudo chown -R 1000:1000 data reports catalog`. Поки це не зроблено, сесії йдуть у пам'ять, і після рестарту починаються з нуля |
+| Контейнер `api` не стартує: `live paper journal is not writable` | Той самий chown `data/`. Навмисно fail closed: паперовий термінал без журналу — це не «деградований режим», а порожній ledger при здоровому дашборді. Режим спостереження без журналу — порожній `LIVE_PAPER_JOURNAL` |
+| `deploy_vps.sh`: `check_exposure: refusing — BIND_ADDR=...` | Дашборд був би відкритий без замка: прив'яжіть до Tailscale (`BIND_ADDR=100.x.y.z`) або ввімкніть `DASHBOARD_AUTH=on` (розділ «Варіант із публічним доменом») |

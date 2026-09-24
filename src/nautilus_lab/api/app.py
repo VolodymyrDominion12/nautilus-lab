@@ -47,6 +47,7 @@ from nautilus_lab.api.experiment_history import list_history, load_history_entry
 from nautilus_lab.api.journal_service import list_journal_entries, update_journal_decision
 from nautilus_lab.api.live_paper_boot import (
     boot_sessions,
+    ensure_journal_writable,
     live_config_from_settings,
     registry_from_settings,
 )
@@ -89,6 +90,10 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__fil
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # A configured journal nobody can write to stops the process instead of decorating
+    # the log: sessions would run in memory, the dashboard would look healthy and the
+    # ledger would be empty. Better to crash-loop visibly than to lie quietly.
+    ensure_journal_writable(settings(), root=Path(ROOT_DIR))
     # Resume every unfinished live paper session, then bring up the declared portfolio.
     # Shutdown deliberately does NOT stop them: sessions ended by SIGTERM (deploy, reboot)
     # must resume, and only a session a person stopped is final in its journal.

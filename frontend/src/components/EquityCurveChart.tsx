@@ -150,7 +150,9 @@ export const EquityCurveChart: React.FC<EquityCurveChartProps> = ({
 
   const ddAreaPath = `${ddPath} L ${getX(points.length - 1).toFixed(1)} 0 L ${getX(0).toFixed(1)} 0 Z`;
 
-  const activePoint = hoverIndex !== null && hoverIndex >= 0 ? points[hoverIndex] : null;
+  // `points` can shrink under a stale hoverIndex (new run loaded while hovering), so the
+  // lookup may miss; every consumer below goes through this guarded value.
+  const activePoint = hoverIndex !== null && hoverIndex >= 0 ? (points[hoverIndex] ?? null) : null;
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 flex flex-col gap-4">
@@ -363,10 +365,10 @@ export const EquityCurveChart: React.FC<EquityCurveChartProps> = ({
               stroke="#374151"
               strokeWidth="1"
             />
-            {hoverIndex !== null && (
+            {activePoint && hoverIndex !== null && (
               <circle
                 cx={getX(hoverIndex)}
-                cy={getDdY(points[hoverIndex].drawdownPct)}
+                cy={getDdY(activePoint.drawdownPct)}
                 r={3.5}
                 className="fill-red-400 stroke-gray-950 stroke-2"
               />

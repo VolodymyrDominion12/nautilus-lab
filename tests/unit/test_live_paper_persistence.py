@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -13,7 +14,9 @@ import pytest
 from nautilus_lab.api.live_paper_boot import (
     autostart_config,
     boot_live_paper,
+    ensure_journal_writable,
     journal_from_settings,
+    journal_write_problems,
 )
 from nautilus_lab.api.paper_streamer import (
     LivePaperConfig,
@@ -70,6 +73,18 @@ def _close_bar(manager: LivePaperSessionManager, ts: datetime, close: str) -> No
         volume=Decimal("5"),
         is_closed=True,
     )
+
+
+def _journal_settings(root: Path, journal: str) -> Settings:
+    """Settings that put one journal under `root`, as `LIVE_PAPER_JOURNAL` does."""
+    return Settings(  # type: ignore[call-arg]
+        _env_file=root / ".env",  # does not exist: the settings under test are explicit
+        live_paper_journal=journal,
+    )
+
+
+def _not_root() -> bool:
+    return not (hasattr(os, "geteuid") and os.geteuid() == 0)
 
 
 def test_config_round_trips_through_the_journal_format() -> None:
@@ -241,3 +256,93 @@ def test_every_closed_bar_is_journalled(tmp_path: Path, event_count: int) -> Non
         if json.loads(line).get("equity_point")
     ]
     assert len(points) == event_count
+
+
+# ------------------------------------------------------- start-up refuses to lie
+# A paper terminal whose journal cannot be written runs every session in memory: the
+# dashboard looks healthy and the ledger — the only artifact a VPS exists to produce —
+# stays empty (the VPS failure of docs/26: `data/` owned by another uid than the
+# container's 1000). So an unwritable configured journal is a start-up failure.
+
+
+def test_in_memory_mode_is_not_a_journal_problem(tmp_path: Path) -> None:
+    cfg = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert journal_write_problems(cfg, root=tmp_path) == []
+    ensure_journal_writable(cfg, root=tmp_path)
+    assert list(tmp_path.iterdir()) == [], "watching on a workstation creates nothing"
+
+
+def test_configured_journal_creates_its_directories_and_leaves_no_probe(tmp_path: Path) -> None:
+    cfg = _journal_settings(tmp_path, "data/paper/live_events.jsonl")
+    assert journal_write_problems(cfg, root=tmp_path) == []
+    ensure_journal_writable(cfg, root=tmp_path)
+    sessions = tmp_path / "data" / "paper" / "sessions"
+    assert sessions.is_dir()
+    assert list(sessions.iterdir()) == [], "the write probe is removed, not left behind"
+
+
+@pytest.mark.skipif(not _not_root(), reason="root ignores directory modes")
+def test_unwritable_data_directory_is_reported_once_as_the_cause(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    data.chmod(0o500)
+    cfg = _journal_settings(tmp_path, "data/paper/live_events.jsonl")
+    try:
+        problems = journal_write_problems(cfg, root=tmp_path)
+        assert len(problems) == 1, "the parent is the cause; its children are not counted twice"
+        assert str(data / "paper") in problems[0], "the message names the directory that failed"
+        with pytest.raises(RuntimeError, match="live paper journal is not writable"):
+            ensure_journal_writable(cfg, root=tmp_path)
+    finally:
+        data.chmod(0o700)
+
+
+@pytest.mark.skipif(not _not_root(), reason="root ignores directory modes")
+def test_existing_but_unwritable_journal_directory_is_refused(tmp_path: Path) -> None:
+    """`data/paper` exists from an earlier root-run container: the probe is what fails."""
+    paper = tmp_path / "data" / "paper"
+    paper.mkdir(parents=True)
+    paper.chmod(0o500)
+    cfg = _journal_settings(tmp_path, "data/paper/live_events.jsonl")
+    try:
+        problems = journal_write_problems(cfg, root=tmp_path)
+        assert len(problems) == 1
+        assert "is not writable" in problems[0]
+    finally:
+        paper.chmod(0o700)
+
+
+def test_journal_path_under_a_file_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "data").write_text("not a directory\n")
+    cfg = _journal_settings(tmp_path, "data/paper/live_events.jsonl")
+    problems = journal_write_problems(cfg, root=tmp_path)
+    assert len(problems) == 1
+    assert str(tmp_path / "data") in problems[0]
+    with pytest.raises(RuntimeError):
+        ensure_journal_writable(cfg, root=tmp_path)
+
+
+@pytest.mark.skipif(not _not_root(), reason="root ignores directory modes")
+def test_api_refuses_to_start_instead_of_running_without_a_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end through the ASGI lifespan: the process dies, it does not trade in memory."""
+    from fastapi.testclient import TestClient
+
+    from nautilus_lab.api import app as app_module
+
+    blocked = tmp_path / "data"
+    blocked.mkdir()
+    blocked.chmod(0o500)
+    # Absolute on purpose: the lifespan resolves a relative path against the project root,
+    # which is exactly what makes /app/data/paper fail on the VPS (docs/26).
+    cfg = _journal_settings(tmp_path, str(blocked / "paper" / "live_events.jsonl"))
+    monkeypatch.setattr(app_module, "settings", lambda: cfg)
+    try:
+        with (
+            pytest.raises(RuntimeError, match="live paper journal is not writable"),
+            TestClient(app_module.app),  # start-up raises before a request is served
+        ):
+            pass
+    finally:
+        blocked.chmod(0o700)

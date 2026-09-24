@@ -41,6 +41,10 @@ services:
       - api
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      # Lock for a dashboard reachable beyond Tailscale (deploy/Caddyfile header).
+      DASHBOARD_AUTH: ${DASHBOARD_AUTH:-off}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:-}
     ports:
       # Docker publishes around ufw/iptables rules, so the bind address IS the firewall.
       # Tailscale-only: set BIND_ADDR to the server's 100.x.y.z address.

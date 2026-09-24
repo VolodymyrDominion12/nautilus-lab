@@ -213,6 +213,71 @@ def sessions_dir_from_settings(cfg: Settings, *, root: Path) -> Path | None:
     return None if legacy is None else legacy.path.parent / "sessions"
 
 
+def _unwritable(directory: Path) -> str | None:
+    """None when `directory` would accept a journal file, else why it would not.
+
+    The probe is a real file, not ``os.access``: a read-only mount, a wrong owner and a
+    full disk all answer "no" to an actual write and only some of them answer "no" to a
+    permission check.
+    """
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"{directory} cannot be created: {exc}"
+    probe = directory / ".journal_write_probe"
+    try:
+        with probe.open("w", encoding="utf-8") as handle:
+            handle.write("")
+        probe.unlink()
+    except OSError as exc:
+        return f"{directory} is not writable: {exc}"
+    return None
+
+
+def journal_write_problems(cfg: Settings, *, root: Path) -> list[str]:
+    """Every configured journal directory that refuses a write, with the reason.
+
+    Empty when no journal is configured — in-memory is a legitimate mode, the mode of a
+    workstation that is only watching — or when each directory takes a file. A deeper
+    directory is skipped once its parent is already reported: the cause is the parent.
+    """
+    targets: list[Path] = []
+    legacy = journal_from_settings(cfg, root=root)
+    if legacy is not None:
+        targets.append(legacy.path.parent)
+    sessions_dir = sessions_dir_from_settings(cfg, root=root)
+    if sessions_dir is not None:
+        targets.append(sessions_dir)
+    problems: list[str] = []
+    refused: list[Path] = []
+    for target in sorted(dict.fromkeys(targets), key=lambda path: len(path.parts)):
+        if any(target.is_relative_to(parent) for parent in refused):
+            continue
+        problem = _unwritable(target)
+        if problem is not None:
+            problems.append(problem)
+            refused.append(target)
+    return problems
+
+
+def ensure_journal_writable(cfg: Settings, *, root: Path) -> None:
+    """Refuse to start when a configured journal cannot be written. Raises RuntimeError.
+
+    A paper terminal without its ledger is not a degraded paper terminal: every session
+    would run in memory, the dashboard would look healthy, and the artifact this server
+    exists to produce would be empty. So this is a startup failure (fail closed, like
+    `lab live`), not an error logged once per closed bar.
+    """
+    problems = journal_write_problems(cfg, root=root)
+    if problems:
+        raise RuntimeError(
+            "live paper journal is not writable: "
+            + "; ".join(problems)
+            + ". Fix the owner/mount of that directory (docs/26-deploy-vps.md), or leave "
+            "LIVE_PAPER_JOURNAL and LIVE_PAPER_SESSIONS_DIR unset to run in memory on purpose."
+        )
+
+
 def registry_from_settings(
     cfg: Settings,
     *,

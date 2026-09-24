@@ -17,6 +17,14 @@
     "jsx": "react-jsx",
 
     /* Linting */
+    /* TypeScript 6 already defaults `strict` to true; stated here so the guarantee does not
+       depend on the compiler version, the IDE or another tool reading this file. */
+    "strict": true,
+    /* Arrays of bars/folds/points are indexed everywhere: an index past the end is
+       `undefined` at runtime, and this makes the type say so (docs/27 E-0.4). */
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

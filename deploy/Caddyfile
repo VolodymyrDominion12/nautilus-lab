@@ -1,15 +1,30 @@
 # SITE_ADDRESS (deploy/.env):
 #   :80                 plain HTTP, e.g. only reachable over Tailscale (default)
 #   lab.example.com     public domain; Caddy obtains and renews HTTPS by itself
+#
+# DASHBOARD_AUTH (deploy/.env): off | on
+#   The API token is compiled into the JS bundle, so it keeps other web pages out, not
+#   people who can load the dashboard. Anything reachable beyond Tailscale/localhost
+#   therefore needs this lock; scripts/deploy_vps.sh refuses to deploy an exposed
+#   dashboard with DASHBOARD_AUTH=off (deploy/check_exposure.sh).
+#   With `on`, BASIC_AUTH_USER and BASIC_AUTH_HASH are required. Make the hash with:
+#     docker run --rm caddy:2-alpine caddy hash-password
+#   and put it in deploy/.env in SINGLE quotes (the hash contains `$`, which compose
+#   would otherwise expand):  BASIC_AUTH_HASH='$2a$14$...'
+
+(auth_off) {
+}
+
+(auth_on) {
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+}
+
 {$SITE_ADDRESS::80} {
 	encode zstd gzip
 
-	# Optional second lock in front of everything (recommended with a public domain).
-	# Generate the hash with:  docker run --rm caddy:2-alpine caddy hash-password
-	# then uncomment and put the user/hash here:
-	# basic_auth {
-	# 	volodymyr $2a$14$REPLACE_WITH_HASH
-	# }
+	import auth_{$DASHBOARD_AUTH:off}
 
 	# API, the live-paper WebSocket and the report/hypothesis mounts.
 	@api path /api/* /static_reports/* /static_hypotheses/* /docs /openapi.json

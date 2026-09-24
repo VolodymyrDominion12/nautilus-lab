@@ -181,6 +181,22 @@ invariants_enforced:
       Однакові бари — tests/unit/test_live_sessions.py::test_two_sessions_share_one_feed_and_see_the_same_bars.
 
   - statement: >
+      Налаштований журнал, у який процес не може писати, зупиняє API на старті:
+      якщо `LIVE_PAPER_JOURNAL` або `LIVE_PAPER_SESSIONS_DIR` вказують у теку, якої
+      не створити чи не записати, застосунок падає з `RuntimeError`, а не веде сесії в
+      пам'яті. Порожній `LIVE_PAPER_JOURNAL` (режим спостереження) — не помилка.
+    enforced_by: src/nautilus_lab/api/live_paper_boot.py
+    verified_by: tests/unit/test_live_paper_persistence.py::test_api_refuses_to_start_instead_of_running_without_a_ledger
+    note: >
+      Паперовий термінал без ledger — не «деградований режим»: дашборд виглядав би
+      здоровим, а єдиний артефакт, заради якого сервер існує, лишався б порожнім. Саме
+      це сталось на VPS: `data/` належить іншому uid, ніж uid 1000 контейнера, і
+      `mkdir /app/data/paper` дає EACCES (docs/26, troubleshooting). Перевірка робить
+      реальний запис, а не `os.access`: read-only mount і повний диск теж мусять
+      зупиняти старт. Серед роботи поведінка не змінилась — `paper_streamer` ловить
+      `OSError` і лише логує, щоб диск не зупиняв торговий цикл.
+
+  - statement: >
       Слот джоба займається всередині запиту під блокуванням: другий запуск того
       самого джоба, поки перший ще не породив процес, отримує `status: error`, а
       опитування логу одразу після старту бачить `is_running: true`.

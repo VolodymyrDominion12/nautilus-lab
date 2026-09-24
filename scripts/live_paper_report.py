@@ -1,7 +1,10 @@
 """Summarise a live paper journal pulled from the VPS (scripts/pull_vps.sh).
 
-    uv run python scripts/live_paper_report.py data/vps/paper/live_events.jsonl
-    uv run python scripts/live_paper_report.py data/vps/paper/live_events.jsonl --csv out/
+    uv run python scripts/live_paper_report.py data/vps/paper
+    uv run python scripts/live_paper_report.py data/vps/paper --csv out/
+
+Arguments are journal files or folders (every `*.jsonl` inside, recursively: the
+single-session `live_events.jsonl` and one file per session under `sessions/`).
 
 One block per session: configuration, fills, fees, realised and marked PnL, max
 drawdown of the per-bar equity curve. `--csv DIR` also writes fills.csv and
@@ -79,7 +82,36 @@ def max_drawdown(equity: list[float]) -> float:
     return worst
 
 
-def render(summary: SessionSummary) -> str:
+def journal_paths(inputs: list[Path]) -> list[Path]:
+    paths: list[Path] = []
+    for item in inputs:
+        if item.is_dir():
+            paths.extend(sorted(item.rglob("*.jsonl")))
+        elif item.exists():
+            paths.append(item)
+    return paths
+
+
+def marked_return(summary: SessionSummary) -> Decimal | None:
+    start = Decimal(str(summary.config.get("starting_equity", "0")))
+    snap = summary.last_snapshot or {}
+    if start <= 0 or "equity" not in snap:
+        return None
+    return (Decimal(str(snap["equity"])) / start - 1) * 100
+
+
+def benchmarks(summaries: list[SessionSummary]) -> dict[tuple[str, str], Decimal]:
+    """Latest `hold` session per symbol+interval: what every robot there is judged against."""
+    found: dict[tuple[str, str], Decimal] = {}
+    for summary in summaries:
+        cfg = summary.config
+        value = marked_return(summary)
+        if cfg.get("robot") == "hold" and value is not None:
+            found[(str(cfg.get("symbol")), str(cfg.get("interval")))] = value
+    return found
+
+
+def render(summary: SessionSummary, bench: dict[tuple[str, str], Decimal] | None = None) -> str:
     cfg = summary.config
     snap = summary.last_snapshot or {}
     start = Decimal(str(cfg.get("starting_equity", "0")))
@@ -91,8 +123,9 @@ def render(summary: SessionSummary) -> str:
     dd = max_drawdown([float(p["equity"]) for p in summary.equity]) * 100
     status = "stopped" if summary.stopped else "running/resumable"
     position = snap.get("position")
+    name = cfg.get("name") or "-"
     lines = [
-        f"session {summary.session_id}  [{status}]  started {summary.started_at}",
+        f"session {name} ({summary.session_id})  [{status}]  started {summary.started_at}",
         f"  {cfg.get('robot')} {cfg.get('symbol')} {cfg.get('interval')}  "
         f"risk/trade={cfg.get('risk_per_trade')} stop={cfg.get('stop_pct')} "
         f"tp_x={cfg.get('take_profit_multiple')} taker_fee={cfg.get('taker_fee')}",
@@ -103,6 +136,11 @@ def render(summary: SessionSummary) -> str:
         f"max_dd={dd:.2f}%",
         f"  open_position={position if position else 'flat'}",
     ]
+    key = (str(cfg.get("symbol")), str(cfg.get("interval")))
+    if bench and cfg.get("robot") != "hold" and key in bench:
+        lines.append(f"  vs hold {key[0]} {key[1]}: {ret - bench[key]:+.2f} pp")
+    if cfg.get("notes"):
+        lines.append(f"  notes: {cfg.get('notes')}")
     refusals = snap.get("risk_refusals") or {}
     if refusals:
         lines.append(f"  risk_refusals={refusals}")
@@ -129,17 +167,22 @@ def write_csv(summaries: list[SessionSummary], out_dir: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("journal", type=Path, help="live_events.jsonl")
+    parser.add_argument(
+        "journals", type=Path, nargs="+", help="journal files or folders (e.g. data/vps/paper)"
+    )
     parser.add_argument("--csv", type=Path, default=None, help="write fills.csv/equity.csv here")
     args = parser.parse_args(argv)
-    if not args.journal.exists():
-        print(f"no such file: {args.journal}", file=sys.stderr)
+    paths = journal_paths(args.journals)
+    if not paths:
+        print(f"no journal files in: {', '.join(map(str, args.journals))}", file=sys.stderr)
         return 1
-    summaries = collect(LivePaperJournal(args.journal))
+    summaries = [s for path in paths for s in collect(LivePaperJournal(path))]
+    summaries.sort(key=lambda s: s.started_at)
     if not summaries:
-        print("journal has no sessions")
+        print("journals have no sessions")
         return 0
-    print("\n\n".join(render(s) for s in summaries))
+    bench = benchmarks(summaries)
+    print("\n\n".join(render(s, bench) for s in summaries))
     if args.csv is not None:
         write_csv(summaries, args.csv)
         print(f"\nwrote {args.csv / 'fills.csv'} and {args.csv / 'equity.csv'}")

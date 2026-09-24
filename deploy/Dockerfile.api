@@ -23,6 +23,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY src ./src
 COPY specs ./specs
 COPY research ./research
+# The declared paper portfolio (LIVE_PAPER_PORTFOLIO). Versioned with the code on purpose:
+# what trades on the server is whatever the deployed revision says.
+COPY deploy/paper_portfolio.yaml ./deploy/paper_portfolio.yaml
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra api --extra alerts
 

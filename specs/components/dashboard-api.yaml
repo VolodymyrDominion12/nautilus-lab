@@ -172,6 +172,15 @@ invariants_enforced:
       tests/unit/test_live_paper_persistence.py::test_stop_hit_while_offline_is_filled_at_its_level.
 
   - statement: >
+      Кілька живих paper-сесій працюють незалежно (свій рахунок, запобіжники і журнал),
+      сесії одного symbol+interval отримують однакові бари з одного фіду, а файл
+      портфеля не перезапускає сесію, яку зупинила людина.
+    enforced_by: src/nautilus_lab/api/live_sessions.py
+    verified_by: tests/unit/test_live_sessions.py::test_restart_resumes_every_session_and_the_portfolio_does_not_duplicate
+    note: >
+      Однакові бари — tests/unit/test_live_sessions.py::test_two_sessions_share_one_feed_and_see_the_same_bars.
+
+  - statement: >
       Слот джоба займається всередині запиту під блокуванням: другий запуск того
       самого джоба, поки перший ще не породив процес, отримує `status: error`, а
       опитування логу одразу після старту бачить `is_running: true`.

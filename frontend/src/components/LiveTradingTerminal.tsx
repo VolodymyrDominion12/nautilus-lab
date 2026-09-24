@@ -36,6 +36,10 @@ import type {
 
 interface LiveTradingTerminalProps {
   supportedRobots?: string[];
+  /** Session shown and controlled here; null = the "new session" form. */
+  sessionId?: string | null;
+  /** Called with the new id after Start, and with null after Stop. */
+  onSessionChange?: (sessionId: string | null) => void;
 }
 
 const POPULAR_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'];
@@ -43,7 +47,11 @@ const INTERVALS = ['1m', '3m', '5m', '15m', '1h'];
 
 export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
   supportedRobots = ['regime', 'ema', 'adaptive_ema'],
+  sessionId = null,
+  onSessionChange,
 }) => {
+  const [sessionName, setSessionName] = useState('');
+  const [sessionNotes, setSessionNotes] = useState('');
   // Session & Config state
   const [mode, setMode] = useState<'paper' | 'live_guarded'>('paper');
   const [symbol, setSymbol] = useState('BTCUSDT');
@@ -83,8 +91,12 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
 
   // Fetch initial state
   const loadInitialState = async () => {
+    if (!sessionId) {
+      setState(null);
+      return;
+    }
     try {
-      const data = await fetchLivePaperState();
+      const data = await fetchLivePaperState(sessionId);
       setState(data);
       if (data.position) {
         setEditSl(data.position.stop_loss || '');
@@ -97,7 +109,8 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
 
   useEffect(() => {
     loadInitialState();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   // Initialize Lightweight Chart
   useEffect(() => {
@@ -264,6 +277,8 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
     setStopPct(activeConfig.stop_pct);
     setTpMultiple(activeConfig.take_profit_multiple);
     setAutoTrade(activeConfig.auto_trade);
+    setSessionName(state?.name ?? activeConfig.name ?? '');
+    setSessionNotes(state?.notes ?? activeConfig.notes ?? '');
   }, [
     activeConfig?.symbol,
     activeConfig?.interval,
@@ -283,9 +298,17 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
     let pingTimer: ReturnType<typeof setInterval> | null = null;
     let attempt = 0;
 
+    if (!sessionId) {
+      setIsConnected(false);
+      setStatusMsg('No session selected: fill in the form and press Start');
+      return () => {
+        disposed = true;
+      };
+    }
+
     const connect = () => {
       if (disposed) return;
-      const ws = new WebSocket(getLivePaperWsUrl());
+      const ws = new WebSocket(getLivePaperWsUrl(sessionId));
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -294,14 +317,22 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
         setStatusMsg('Connected to Live Stream');
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (pingTimer) clearInterval(pingTimer);
         pingTimer = null;
         setIsConnected(false);
         if (disposed) return;
         const delayMs = Math.min(15000, 1000 * 2 ** attempt);
         attempt += 1;
-        setStatusMsg(`Stream disconnected — reconnecting in ${Math.round(delayMs / 1000)}s`);
+        if (event.code === 1008) {
+          // Policy refusal from the API gate: say why instead of a bare "disconnected".
+          setStatusMsg(
+            `Refused by the API: ${event.reason || 'origin or token'} — open the dashboard at the ` +
+              'address listed in API_ALLOWED_ORIGINS (and check API_TOKEN)',
+          );
+        } else {
+          setStatusMsg(`Stream disconnected — reconnecting in ${Math.round(delayMs / 1000)}s`);
+        }
         retryTimer = setTimeout(connect, delayMs);
       };
 
@@ -370,13 +401,16 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
       if (pingTimer) clearInterval(pingTimer);
       wsRef.current?.close();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   // Actions
   const handleStartSession = async () => {
     setActionError(null);
     try {
       const res = await startLivePaper({
+        name: sessionName.trim(),
+        notes: sessionNotes.trim(),
         symbol,
         interval,
         robot,
@@ -388,8 +422,8 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
         auto_trade: autoTrade,
       });
       if (res.status === 'started') {
-        setStatusMsg(`Active: ${symbol} (${robot})`);
-        loadInitialState();
+        setStatusMsg(`Active: ${res.name ?? symbol} (${robot})`);
+        if (res.session_id) onSessionChange?.(res.session_id);
       } else {
         setActionError(res.message || 'Failed to start session');
       }
@@ -399,9 +433,16 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
   };
 
   const handleStopSession = async () => {
+    if (!sessionId) return;
+    const label = state?.name || sessionId;
+    const confirmed = window.confirm(
+      `Stop "${label}" for good?\n\nA stopped session is final: it is not resumed after a ` +
+        'restart and is not restarted from the portfolio file. Use Pause to only halt new entries.',
+    );
+    if (!confirmed) return;
     setActionError(null);
     try {
-      await stopLivePaper();
+      await stopLivePaper(sessionId);
       setStatusMsg('Session stopped');
       loadInitialState();
     } catch (err) {
@@ -412,7 +453,8 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
   const handleClosePosition = async () => {
     setActionError(null);
     try {
-      const res = await closeLivePosition();
+      if (!sessionId) return;
+      const res = await closeLivePosition(sessionId);
       setStatusMsg(res.message || 'Position closed');
       loadInitialState();
     } catch (err) {
@@ -423,7 +465,8 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
   const handleUpdateStops = async () => {
     setActionError(null);
     try {
-      const res = await updateLiveStops({
+      if (!sessionId) return;
+      const res = await updateLiveStops(sessionId, {
         stop_loss: editSl ? editSl : null,
         take_profit: editTp ? editTp : null,
       });
@@ -808,6 +851,30 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
             <span className="text-xs font-semibold text-gray-300 block">Session Configuration</span>
 
             <div className="space-y-2 text-xs">
+              <div>
+                <label className="text-[10px] text-gray-400 block mb-1">Session name</label>
+                <input
+                  type="text"
+                  value={sessionName}
+                  onChange={(e) => setSessionName(e.target.value)}
+                  disabled={state?.is_active}
+                  placeholder={`${robot}-${symbol.replace('USDT', '').toLowerCase()}`}
+                  className="w-full bg-gray-950 border border-gray-800 rounded-xl px-2.5 py-1.5 text-xs disabled:opacity-50 text-gray-200 font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 block mb-1">
+                  Hypothesis / stop criterion
+                </label>
+                <textarea
+                  value={sessionNotes}
+                  onChange={(e) => setSessionNotes(e.target.value)}
+                  disabled={state?.is_active}
+                  rows={2}
+                  placeholder="e.g. beats hold-eth after fees within 60 days, else rejected"
+                  className="w-full bg-gray-950 border border-gray-800 rounded-xl px-2.5 py-1.5 text-xs disabled:opacity-50 text-gray-200"
+                />
+              </div>
               <div>
                 <label className="text-[10px] text-gray-400 block mb-1">Trading Robot</label>
                 <select

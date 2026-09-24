@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     live_paper_robot: str = "regime"
     live_paper_starting_equity: Decimal = Decimal("10000")
     live_paper_take_profit_multiple: Decimal = Decimal("2")
+    # Several sessions: one journal per session in this folder. Empty = next to
+    # LIVE_PAPER_JOURNAL as `sessions/` (or in-memory only when that is empty too).
+    live_paper_sessions_dir: str = ""
+    # YAML list of the sessions this server should run (deploy/paper_portfolio.yaml).
+    # When set it replaces LIVE_PAPER_AUTOSTART; empty = autostart as before.
+    live_paper_portfolio: str = ""
+    live_paper_max_sessions: int = 8
+    # Distinct symbol+interval sockets to Binance at once (sessions share them).
+    live_paper_max_feeds: int = 5
     live_enabled: bool = False
     starting_equity: Decimal = Decimal("100000")
     risk_per_trade: Decimal = Decimal("0.005")

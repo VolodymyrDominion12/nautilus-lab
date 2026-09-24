@@ -129,3 +129,47 @@ class LivePaperJournal:
             fills=fills,
             equity_points=equity_points,
         )
+
+    def sessions(self) -> list[SessionRecord]:
+        """Every session this file has seen, oldest first: identity, config, final state."""
+        found: dict[str, SessionRecord] = {}
+        for record in self.events():
+            sid = str(record["session_id"])
+            kind = record["type"]
+            if kind == SESSION_START and isinstance(record.get("config"), dict):
+                found[sid] = SessionRecord(
+                    session_id=sid,
+                    started_at=str(record.get("started_at") or record.get("logged_at") or ""),
+                    config=record["config"],
+                    path=self.path,
+                )
+                continue
+            entry = found.get(sid)
+            if entry is None:
+                continue
+            if kind == SNAPSHOT:
+                entry.last_snapshot = record
+            elif kind == FILL:
+                entry.fill_count += 1
+            elif kind == SESSION_STOP:
+                entry.stopped = True
+                entry.stopped_at = str(record.get("stopped_at") or record.get("logged_at") or "")
+        return list(found.values())
+
+
+@dataclass(slots=True)
+class SessionRecord:
+    """One session as a journal remembers it (running, interrupted or stopped)."""
+
+    session_id: str
+    started_at: str
+    config: dict[str, Any]
+    path: Path
+    stopped: bool = False
+    stopped_at: str | None = None
+    fill_count: int = 0
+    last_snapshot: dict[str, Any] | None = None
+
+    @property
+    def name(self) -> str:
+        return str(self.config.get("name") or "")

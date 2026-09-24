@@ -1,0 +1,46 @@
+# Live paper sessions this server runs (LIVE_PAPER_PORTFOLIO=deploy/paper_portfolio.yaml).
+#
+# Read on every API start and reconciled by `name`:
+#   * a name that is running        -> left alone (changed parameters are reported in the
+#                                      log, not applied: new parameters = a new name);
+#   * a name a person stopped (Stop) -> NOT restarted; rename it to run it again;
+#   * a name never seen              -> started.
+# Removing an entry does not stop a running session; stop it in the dashboard.
+#
+# Robot parameters, fees, RISK_PER_TRADE, STOP_PCT and the breakers come from .env —
+# the same settings the research runs use. Only what to trade is declared here.
+# Robots available live: regime, ema, adaptive_ema, vpin_momentum, formulaic_lgbm, hold.
+# `hold` is the buy-and-hold benchmark: every other session on the same symbol and
+# interval is compared with it (vs_benchmark_pp in the dashboard and the report).
+
+defaults:
+  starting_equity: 10000
+  interval: 1h
+
+sessions:
+  - name: regime-eth
+    robot: regime
+    symbol: ETHUSDT
+    notes: >-
+      Main hypothesis: over 60 days regime beats hold-eth after fees.
+      Otherwise the hypothesis is rejected (breakeven 7.96 bp < 10 bp paid, docs/24).
+
+  - name: regime-btc
+    robot: regime
+    symbol: BTCUSDT
+    notes: Same parameters on another instrument (generalisation check).
+
+  - name: ema-eth
+    robot: ema
+    symbol: ETHUSDT
+    notes: Negative control (OOS -5.6%). If it "wins" here, suspect the paper, not the robot.
+
+  - name: hold-eth
+    robot: hold
+    symbol: ETHUSDT
+    notes: Benchmark for every ETHUSDT 1h session.
+
+  - name: hold-btc
+    robot: hold
+    symbol: BTCUSDT
+    notes: Benchmark for every BTCUSDT 1h session.

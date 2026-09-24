@@ -46,13 +46,17 @@ from nautilus_lab.api.data_health import (
 from nautilus_lab.api.experiment_history import list_history, load_history_entry
 from nautilus_lab.api.journal_service import list_journal_entries, update_journal_decision
 from nautilus_lab.api.live_paper_boot import (
-    autostart_config,
-    boot_live_paper,
-    journal_from_settings,
+    boot_sessions,
     live_config_from_settings,
+    registry_from_settings,
 )
+from nautilus_lab.api.live_sessions import SessionRegistry
 from nautilus_lab.api.ml_runner import list_models
-from nautilus_lab.api.paper_streamer import LIVE_PAPER_SESSION
+from nautilus_lab.api.paper_streamer import (
+    LIVE_PAPER_ROBOTS,
+    LivePaperSessionManager,
+    binance_history_loader,
+)
 from nautilus_lab.api.research_runner import (
     default_tearsheet_path,
     load_job_result,
@@ -85,11 +89,11 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__fil
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    # Resume the unfinished live paper session, or autostart one. Shutdown deliberately
-    # does NOT stop it: a session ended by SIGTERM (deploy, reboot) must resume, and only
-    # a session a person stopped is final in the journal.
-    outcome = await boot_live_paper(LIVE_PAPER_SESSION, autostart=autostart_config(settings()))
-    print(f"live paper boot: {outcome}", flush=True)
+    # Resume every unfinished live paper session, then bring up the declared portfolio.
+    # Shutdown deliberately does NOT stop them: sessions ended by SIGTERM (deploy, reboot)
+    # must resume, and only a session a person stopped is final in its journal.
+    for line in await boot_sessions(LIVE_SESSIONS, settings(), root=Path(ROOT_DIR)):
+        print(f"live paper boot: {line}", flush=True)
     yield
 
 
@@ -112,8 +116,11 @@ SECURITY = ApiSecurity.from_values(
     role=settings().lab_role,
 )
 
-# Persist the live paper ledger when LIVE_PAPER_JOURNAL is set (see live_paper_journal.py).
-LIVE_PAPER_SESSION.journal = journal_from_settings(settings(), root=Path(ROOT_DIR))
+# Live paper sessions (api/live_sessions.py): one journal per session when persistence
+# is configured (LIVE_PAPER_JOURNAL / LIVE_PAPER_SESSIONS_DIR), shared Binance feeds.
+LIVE_SESSIONS: SessionRegistry = registry_from_settings(
+    settings(), root=Path(ROOT_DIR), history_loader=binance_history_loader
+)
 
 
 @app.middleware("http")
@@ -269,6 +276,8 @@ class PaperLiveStartRequest(BaseModel):
     take_profit_multiple: str = "2.0"
     mode: str = "paper"
     auto_trade: bool = True
+    name: str = ""
+    notes: str = ""
 
 
 class PaperLiveStopsUpdateRequest(BaseModel):
@@ -391,7 +400,8 @@ def get_status(catalog_path: str | None = None) -> dict[str, Any]:
         "is_live": False,
         "live_safe_mode": "FAIL_CLOSED",
         "lab_role": SECURITY.role,
-        "live_paper_persisted": LIVE_PAPER_SESSION.journal is not None,
+        "live_paper_robots": sorted(LIVE_PAPER_ROBOTS),
+        "live_paper_persisted": LIVE_SESSIONS.persisted,
     }
 
 
@@ -1258,13 +1268,28 @@ def get_paper_log() -> dict[str, Any]:
     return {"is_running": is_running, "log": content, "summary": summary, "result": result}
 
 
-@app.get("/api/paper/live/state")
-def get_paper_live_state() -> dict[str, Any]:
-    return LIVE_PAPER_SESSION.to_state_dict()
+def _idle_state() -> dict[str, Any]:
+    """What the terminal shows when no session is selected or running."""
+    state = LivePaperSessionManager().to_state_dict()
+    state["persisted"] = LIVE_SESSIONS.persisted
+    return state
 
 
-@app.post("/api/paper/live/start")
-async def start_paper_live(req: PaperLiveStartRequest) -> dict[str, Any]:
+def _session_or_404(key: str) -> LivePaperSessionManager:
+    manager = LIVE_SESSIONS.find(key)
+    if manager is None:
+        raise HTTPException(status_code=404, detail=f"no live paper session {key!r}")
+    return manager
+
+
+def _primary_or_400() -> LivePaperSessionManager:
+    manager = LIVE_SESSIONS.primary()
+    if manager is None:
+        raise HTTPException(status_code=400, detail="no live paper session")
+    return manager
+
+
+async def _create_session(req: PaperLiveStartRequest) -> LivePaperSessionManager:
     # Robot parameters, fees and breakers come from the same Settings the research runs
     # use, so the terminal rehearses the tested configuration rather than its own defaults.
     config = live_config_from_settings(
@@ -1278,38 +1303,133 @@ async def start_paper_live(req: PaperLiveStartRequest) -> dict[str, Any]:
         take_profit_multiple=Decimal(req.take_profit_multiple),
         mode=req.mode,
         auto_trade=req.auto_trade,
+        name=req.name,
+        notes=req.notes,
+        created_from="ui",
     )
     try:
-        await LIVE_PAPER_SESSION.start(config)
+        return await LIVE_SESSIONS.create(config)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"status": "started", "message": f"Started live paper session for {req.symbol}"}
+
+
+async def _close_position(manager: LivePaperSessionManager) -> dict[str, Any]:
+    msg = manager.close_position_manual()
+    await manager.broadcast_state()
+    return {"status": "ok", "message": msg}
+
+
+async def _update_stops(
+    manager: LivePaperSessionManager, req: PaperLiveStopsUpdateRequest
+) -> dict[str, Any]:
+    sl = Decimal(req.stop_loss) if req.stop_loss else None
+    tp = Decimal(req.take_profit) if req.take_profit else None
+    msg = manager.update_stops(sl, tp)
+    await manager.broadcast_state()
+    return {"status": "ok", "message": msg}
+
+
+async def _set_paused(key: str, paused: bool) -> LivePaperSessionManager:
+    try:
+        return await LIVE_SESSIONS.set_paused(key, paused)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no live paper session {key!r}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---- several sessions -------------------------------------------------------------
+@app.get("/api/paper/sessions")
+def list_paper_sessions() -> dict[str, Any]:
+    return {"sessions": LIVE_SESSIONS.summaries(), "portfolio": LIVE_SESSIONS.portfolio()}
+
+
+@app.get("/api/paper/portfolio")
+def get_paper_portfolio() -> dict[str, Any]:
+    return LIVE_SESSIONS.portfolio()
+
+
+@app.post("/api/paper/sessions")
+async def create_paper_session(req: PaperLiveStartRequest) -> dict[str, Any]:
+    manager = await _create_session(req)
+    return {
+        "status": "started",
+        "session_id": manager.session_id,
+        "name": manager.config.name,
+        "message": f"Started {manager.config.name} ({manager.config.symbol})",
+    }
+
+
+@app.get("/api/paper/sessions/{key}")
+def get_paper_session(key: str) -> dict[str, Any]:
+    return _session_or_404(key).to_state_dict()
+
+
+@app.post("/api/paper/sessions/{key}/stop")
+async def stop_paper_session(key: str) -> dict[str, Any]:
+    manager = _session_or_404(key)
+    await manager.stop()
+    return {"status": "stopped", "message": f"Stopped {manager.config.name}"}
+
+
+@app.post("/api/paper/sessions/{key}/pause")
+async def pause_paper_session(key: str) -> dict[str, Any]:
+    manager = await _set_paused(key, True)
+    return {"status": "paused", "message": f"Paused entries of {manager.config.name}"}
+
+
+@app.post("/api/paper/sessions/{key}/resume")
+async def resume_paper_session(key: str) -> dict[str, Any]:
+    manager = await _set_paused(key, False)
+    return {"status": "active", "message": f"Resumed entries of {manager.config.name}"}
+
+
+@app.post("/api/paper/sessions/{key}/close-position")
+async def close_paper_session_position(key: str) -> dict[str, Any]:
+    return await _close_position(_session_or_404(key))
+
+
+@app.post("/api/paper/sessions/{key}/update-stops")
+async def update_paper_session_stops(key: str, req: PaperLiveStopsUpdateRequest) -> dict[str, Any]:
+    return await _update_stops(_session_or_404(key), req)
+
+
+# ---- one-session endpoints, kept for older dashboards: act on the primary session ---
+@app.get("/api/paper/live/state")
+def get_paper_live_state() -> dict[str, Any]:
+    manager = LIVE_SESSIONS.primary()
+    return _idle_state() if manager is None else manager.to_state_dict()
+
+
+@app.post("/api/paper/live/start")
+async def start_paper_live(req: PaperLiveStartRequest) -> dict[str, Any]:
+    manager = await _create_session(req)
+    return {
+        "status": "started",
+        "session_id": manager.session_id,
+        "message": f"Started live paper session for {req.symbol}",
+    }
 
 
 @app.post("/api/paper/live/stop")
 async def stop_paper_live() -> dict[str, Any]:
-    await LIVE_PAPER_SESSION.stop()
+    await _primary_or_400().stop()
     return {"status": "stopped", "message": "Live paper session stopped"}
 
 
 @app.post("/api/paper/live/close-position")
 async def close_paper_live_position() -> dict[str, Any]:
-    msg = LIVE_PAPER_SESSION.close_position_manual()
-    await LIVE_PAPER_SESSION.broadcast_state()
-    return {"status": "ok", "message": msg}
+    return await _close_position(_primary_or_400())
 
 
 @app.post("/api/paper/live/update-stops")
 async def update_paper_live_stops(req: PaperLiveStopsUpdateRequest) -> dict[str, Any]:
-    sl = Decimal(req.stop_loss) if req.stop_loss else None
-    tp = Decimal(req.take_profit) if req.take_profit else None
-    msg = LIVE_PAPER_SESSION.update_stops(sl, tp)
-    await LIVE_PAPER_SESSION.broadcast_state()
-    return {"status": "ok", "message": msg}
+    return await _update_stops(_primary_or_400(), req)
 
 
 @app.websocket("/api/paper/live-stream")
 async def paper_live_stream_ws(websocket: WebSocket) -> None:
+    """State + bars of one session: `?session=<id or name>`, else the primary session."""
     # HTTP middleware never sees a WebSocket handshake, and CORS does not apply to one,
     # so the same gate runs here. Browsers cannot set headers on a WebSocket: the token
     # travels as `?token=`.
@@ -1323,12 +1443,13 @@ async def paper_live_stream_ws(websocket: WebSocket) -> None:
         await websocket.close(code=1008, reason=reason)
         return
     await websocket.accept()
-    LIVE_PAPER_SESSION.subscribers.add(websocket)
+    key = websocket.query_params.get("session")
+    manager = LIVE_SESSIONS.find(key) if key else LIVE_SESSIONS.primary()
+    if manager is not None:
+        manager.subscribers.add(websocket)
     try:
-        # Send initial state immediately upon connection
-        await websocket.send_text(
-            json.dumps({"type": "INIT_STATE", "data": LIVE_PAPER_SESSION.to_state_dict()})
-        )
+        state = _idle_state() if manager is None else manager.to_state_dict()
+        await websocket.send_text(json.dumps({"type": "INIT_STATE", "data": state}))
         while True:
             data = await websocket.receive_text()
             if data == "ping":
@@ -1338,7 +1459,8 @@ async def paper_live_stream_ws(websocket: WebSocket) -> None:
     except Exception:
         pass
     finally:
-        LIVE_PAPER_SESSION.subscribers.discard(websocket)
+        if manager is not None:
+            manager.subscribers.discard(websocket)
 
 
 @app.post("/api/scan/triangular")

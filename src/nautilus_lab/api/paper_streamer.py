@@ -26,11 +26,11 @@ import dataclasses
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket
 
@@ -40,6 +40,7 @@ from nautilus_lab.application.risk import (
 )
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRouter
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
+from nautilus_lab.domain.buy_and_hold import HOLD_ROBOT, BuyAndHold
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.errors import InvalidBarError
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
@@ -60,6 +61,9 @@ from nautilus_lab.infrastructure.live_paper_journal import (
     ResumableSession,
 )
 
+if TYPE_CHECKING:
+    from nautilus_lab.api.market_feed import FeedHub
+
 logger = logging.getLogger(__name__)
 
 BINANCE_WS_STREAM_URL = "wss://stream.binance.com:9443/ws"
@@ -67,7 +71,7 @@ BINANCE_WS_STREAM_URL = "wss://stream.binance.com:9443/ws"
 #: Robots the live terminal can build. Anything else is refused: the terminal used to
 #: fall back to `regime` for an unknown name while the UI kept showing the name asked for.
 LIVE_PAPER_ROBOTS: frozenset[str] = frozenset(
-    {"regime", "ema", "adaptive_ema", "vpin_momentum", "formulaic_lgbm"}
+    {"regime", "ema", "adaptive_ema", "vpin_momentum", "formulaic_lgbm", HOLD_ROBOT}
 )
 
 #: Closed candles replayed into the robot before a session may trade. Regime needs ~150
@@ -100,6 +104,36 @@ class LivePaperConfig:
     adaptive: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
     max_daily_loss: Decimal = Decimal("0.02")
     max_drawdown: Decimal = Decimal("0.06")
+    # Identity of the session in a portfolio of several: a stable human name
+    # ("regime-eth"), the hypothesis it tests, and where it was started from.
+    name: str = ""
+    notes: str = ""
+    created_from: str = "ui"
+
+
+def default_session_name(robot: str, symbol: str, interval: str) -> str:
+    """`regime-eth`, `ema-btc-15m`: stable names for sessions nobody named."""
+    base = symbol.upper().removesuffix("USDT").lower() or symbol.lower()
+    name = f"{robot}-{base}"
+    return name if interval == "1h" else f"{name}-{interval}"
+
+
+def parse_kline_message(raw: str | bytes) -> dict[str, Any] | None:
+    """Keyword arguments for `process_kline_update` from one Binance kline message."""
+    data = json.loads(raw)
+    kline = data.get("k") if isinstance(data, dict) else None
+    if not isinstance(kline, dict):
+        return None
+    return {
+        "time_sec": int(kline["t"]) // 1000,
+        "open_price": Decimal(str(kline["o"])),
+        "high_price": Decimal(str(kline["h"])),
+        "low_price": Decimal(str(kline["l"])),
+        "close_price": Decimal(str(kline["c"])),
+        "volume": Decimal(str(kline["v"])),
+        "is_closed": bool(kline["x"]),
+        "taker_buy_volume": Decimal(str(kline["V"])) if "V" in kline else None,
+    }
 
 
 def _plain(value: object) -> object:
@@ -217,10 +251,16 @@ class LivePaperSessionManager:
         *,
         history_loader: HistoryLoader | None = None,
         journal: LivePaperJournal | None = None,
+        feed_hub: FeedHub | None = None,
     ) -> None:
         self.config = config or LivePaperConfig()
         self._history_loader = history_loader
         self.journal = journal
+        #: Shared market data. Several sessions on one symbol+interval read one socket;
+        #: without a hub the session opens its own (single-session mode, tests).
+        self.feed_hub = feed_hub
+        #: Paused = no new entries. Exits, stops and the robot's indicators keep running.
+        self.paused = False
         self.session_id: str | None = None
         self.started_at: str | None = None
         self.resumed_at: str | None = None
@@ -262,7 +302,9 @@ class LivePaperSessionManager:
                 f"live paper cannot build robot {self.config.robot!r}; supported: {supported}. "
                 "Refusing rather than substituting a different robot."
             )
-        if name == "ema":
+        if name == HOLD_ROBOT:
+            self._robot_instance = BuyAndHold(instrument_id=self.config.symbol)
+        elif name == "ema":
             self._robot_instance = EmaCrossover(
                 instrument_id=self.config.symbol,
                 fast_period=self.config.fast_ema,
@@ -306,8 +348,28 @@ class LivePaperSessionManager:
         for bar in bars:
             if self._accept_closed_bar(bar):
                 self._robot_instance.on_bar(bar)
+                self._remember_bar(bar)
                 consumed += 1
         return consumed
+
+    def _remember_bar(self, bar: OhlcvBar) -> None:
+        """Warm-up history also fills the chart, which was empty after every restart."""
+        live = LiveBar(
+            time=int(bar.ts_utc.timestamp()),
+            open=float(bar.open),
+            high=float(bar.high),
+            low=float(bar.low),
+            close=float(bar.close),
+            volume=float(bar.volume),
+            is_closed=True,
+        )
+        if self.recent_bars and self.recent_bars[-1].time >= live.time:
+            return
+        self.recent_bars.append(live)
+        if len(self.recent_bars) > 500:
+            self.recent_bars.pop(0)
+        if self._last_mark_price is None:
+            self._last_mark_price = bar.close
 
     def _accept_closed_bar(self, bar: OhlcvBar) -> bool:
         """True once per closed candle, in time order.
@@ -347,6 +409,14 @@ class LivePaperSessionManager:
         equity = self.current_equity
         return {
             "is_active": self.is_active,
+            "paused": self.paused,
+            "name": self.config.name,
+            "notes": self.config.notes,
+            "created_from": self.config.created_from,
+            "risk_refusals": dict(self.risk_refusals),
+            "last_bar_ts": None
+            if self._last_closed_ts is None
+            else self._last_closed_ts.isoformat(),
             "session_id": self.session_id,
             "started_at": self.started_at,
             "resumed_at": self.resumed_at,
@@ -528,7 +598,11 @@ class LivePaperSessionManager:
         plan = plan_for_signal(self._holding(), signal.side)
         if plan.exit_position:
             events.append(self._close_position_internal(price, "signal_exit"))
-        if plan.wants_entry:
+        if plan.wants_entry and self.paused:
+            msg = "Paused: entry skipped"
+            self.status_message = msg
+            events.append(msg)
+        elif plan.wants_entry:
             refusal = self._entry_refusal()
             if refusal is not None:
                 self.risk_refusals[refusal] = self.risk_refusals.get(refusal, 0) + 1
@@ -581,14 +655,21 @@ class LivePaperSessionManager:
         if stop_dist <= Decimal("0"):
             stop_dist = price * Decimal("0.01")
 
-        qty = size_position(
-            # Marked equity, like the backtest: an open loss shrinks the next size.
-            equity=self.current_equity,
-            price=price,
-            stop_distance=stop_dist,
-            risk_fraction=risk_fraction,
-            qty_step=self.config.qty_step,
-        )
+        is_hold = self.config.robot.lower() == HOLD_ROBOT
+        if is_hold:
+            # The benchmark holds the whole account (entry fee included), no risk fraction.
+            step = self.config.qty_step
+            raw_qty = self.current_equity / (price * (Decimal("1") + self.config.taker_fee))
+            qty = (raw_qty / step).to_integral_value(rounding="ROUND_FLOOR") * step
+        else:
+            qty = size_position(
+                # Marked equity, like the backtest: an open loss shrinks the next size.
+                equity=self.current_equity,
+                price=price,
+                stop_distance=stop_dist,
+                risk_fraction=risk_fraction,
+                qty_step=self.config.qty_step,
+            )
         if qty <= Decimal("0"):
             msg = f"Skipped entry {side}: sized quantity is 0"
             self.status_message = msg
@@ -599,12 +680,21 @@ class LivePaperSessionManager:
         self.fees_paid += entry_fee
 
         tp_distance = stop_dist * self.config.take_profit_multiple
-        if side == "LONG":
+        sl_price: Decimal | None
+        tp_price: Decimal | None
+        if is_hold:
+            sl_price = tp_price = None
+        elif side == "LONG":
             sl_price = price - stop_dist
             tp_price = price + tp_distance
         else:
             sl_price = price + stop_dist
             tp_price = price - tp_distance
+        levels = (
+            "no stop, benchmark"
+            if sl_price is None or tp_price is None
+            else f"SL: {sl_price:.2f}, TP: {tp_price:.2f}"
+        )
 
         self._pos_side = side
         self._pos_entry_price = price
@@ -621,8 +711,8 @@ class LivePaperSessionManager:
             mark_price=str(price),
             unrealized_pnl="0.00",
             unrealized_pnl_pct="0.00%",
-            stop_loss=str(sl_price),
-            take_profit=str(tp_price),
+            stop_loss=None if sl_price is None else str(sl_price),
+            take_profit=None if tp_price is None else str(tp_price),
         )
 
         fill = LiveFill(
@@ -634,11 +724,11 @@ class LivePaperSessionManager:
             price=str(price),
             fee=f"{entry_fee:.4f}",
             realized_pnl="0.00",
-            reason=f"Open {side} (SL: {sl_price:.2f}, TP: {tp_price:.2f})",
+            reason=f"Open {side} ({levels})",
         )
         self.fills.append(fill)
         self._journal_fill(fill)
-        msg = f"Opened {side} {qty} @ {price} (SL={sl_price:.2f}, TP={tp_price:.2f})"
+        msg = f"Opened {side} {qty} @ {price} ({levels})"
         self.status_message = msg
         return msg
 
@@ -711,7 +801,7 @@ class LivePaperSessionManager:
         self._journal_snapshot()
         return msg
 
-    async def start(self, config: LivePaperConfig) -> None:
+    async def start(self, config: LivePaperConfig, *, session_id: str | None = None) -> None:
         """Start the live paper session. Raises ValueError for a robot it cannot build."""
         previous = self.config
         self.config = config
@@ -733,8 +823,11 @@ class LivePaperSessionManager:
         self._day_start_equity = config.starting_equity
         self._day = None
         self._resume_after_ts = None
+        self.paused = False
+        self.recent_bars.clear()
+        self._last_mark_price = None
         self._stop_event.clear()
-        self.session_id = uuid.uuid4().hex[:12]
+        self.session_id = session_id or uuid.uuid4().hex[:12]
         self.started_at = datetime.now(UTC).isoformat()
         self.resumed_at = None
         self.status_message = f"Live Paper active ({config.symbol}, {config.robot})"
@@ -776,6 +869,7 @@ class LivePaperSessionManager:
         raw_day = snap.get("day")
         self._day = date.fromisoformat(raw_day) if isinstance(raw_day, str) and raw_day else None
         self.risk_refusals = {str(k): int(v) for k, v in (snap.get("risk_refusals") or {}).items()}
+        self.paused = bool(snap.get("paused", False))
         self._last_mark_price = _decimal_or_none(snap.get("last_mark_price"))
         raw_last = snap.get("last_closed_ts")
         self._resume_after_ts = (
@@ -797,7 +891,37 @@ class LivePaperSessionManager:
     def _launch_stream(self) -> None:
         if self._ws_task and not self._ws_task.done():
             self._ws_task.cancel()
-        self._ws_task = asyncio.create_task(self._run_binance_stream())
+        if self.feed_hub is not None:
+            self._ws_task = asyncio.create_task(self._join_feed())
+        else:
+            self._ws_task = asyncio.create_task(self._run_binance_stream())
+
+    async def _join_feed(self) -> None:
+        """Warm up on history first, then take live bars from the shared feed.
+
+        In this order, so a live closed bar can never reach the robot before the
+        history it follows (`_accept_closed_bar` would then reject the whole warm-up).
+        """
+        await self._announce_warm_up()
+        if self.feed_hub is not None and self.is_active:
+            self.feed_hub.subscribe(self)
+
+    async def on_market_update(self, update: Mapping[str, Any]) -> None:
+        """One kline message from the feed: book it, then tell the browsers."""
+        events = self.process_kline_update(**update)
+        if self.recent_bars:
+            await self.broadcast_bar(self.recent_bars[-1])
+        if events or update.get("is_closed"):
+            await self.broadcast_state()
+
+    async def _announce_warm_up(self) -> None:
+        warmed = await self._warm_up_from_history()
+        if warmed:
+            self.status_message = (
+                f"Live Paper active ({self.config.symbol}, {self.config.robot}); "
+                f"robot warmed on {warmed} closed bars"
+            )
+            await self.broadcast_state()
 
     def _clear_position(self) -> None:
         self.position = None
@@ -868,6 +992,7 @@ class LivePaperSessionManager:
                 "day_start_equity": str(self._day_start_equity),
                 "day": self._day.isoformat() if isinstance(self._day, date) else None,
                 "risk_refusals": dict(self.risk_refusals),
+                "paused": self.paused,
                 "last_closed_ts": (
                     None if self._last_closed_ts is None else self._last_closed_ts.isoformat()
                 ),
@@ -916,6 +1041,8 @@ class LivePaperSessionManager:
         self._stop_event.set()
         if self._ws_task and not self._ws_task.done():
             self._ws_task.cancel()
+        if self.feed_hub is not None:
+            self.feed_hub.unsubscribe(self)
         if was_active:
             self._journal_snapshot()
             self._journal_event(SESSION_STOP, {"stopped_at": datetime.now(UTC).isoformat()})
@@ -923,19 +1050,10 @@ class LivePaperSessionManager:
         await self.broadcast_state()
 
     async def _run_binance_stream(self) -> None:
-        """Connect to Binance public WebSocket stream and parse klines."""
+        """Single-session mode: this session's own socket (no shared feed hub)."""
         import websockets
 
-        # Warm the robot on recent closed candles first, inside the stream task so that
-        # starting a session never blocks the request on a REST call.
-        warmed = await self._warm_up_from_history()
-        if warmed:
-            self.status_message = (
-                f"Live Paper active ({self.config.symbol}, {self.config.robot}); "
-                f"robot warmed on {warmed} closed bars"
-            )
-            await self.broadcast_state()
-
+        await self._announce_warm_up()
         stream_name = f"{self.config.symbol.lower()}@kline_{self.config.interval}"
         url = f"{BINANCE_WS_STREAM_URL}/{stream_name}"
         logger.info("Connecting to Binance WS: %s", url)
@@ -947,39 +1065,9 @@ class LivePaperSessionManager:
                     backoff = 1
                     logger.info("Connected to Binance stream %s", stream_name)
                     while not self._stop_event.is_set():
-                        raw_msg = await ws.recv()
-                        data = json.loads(raw_msg)
-                        kline = data.get("k")
-                        if not kline:
-                            continue
-
-                        time_sec = int(kline["t"]) // 1000
-                        open_p = Decimal(str(kline["o"]))
-                        high_p = Decimal(str(kline["h"]))
-                        low_p = Decimal(str(kline["l"]))
-                        close_p = Decimal(str(kline["c"]))
-                        volume_p = Decimal(str(kline["v"]))
-                        is_closed = bool(kline["x"])
-                        taker_buy_vol = Decimal(str(kline.get("V", 0))) if "V" in kline else None
-
-                        events = self.process_kline_update(
-                            time_sec=time_sec,
-                            open_price=open_p,
-                            high_price=high_p,
-                            low_price=low_p,
-                            close_price=close_p,
-                            volume=volume_p,
-                            is_closed=is_closed,
-                            taker_buy_volume=taker_buy_vol,
-                        )
-
-                        # Broadcast bar update
-                        if self.recent_bars:
-                            await self.broadcast_bar(self.recent_bars[-1])
-
-                        if events or is_closed:
-                            await self.broadcast_state()
-
+                        update = parse_kline_message(await ws.recv())
+                        if update is not None:
+                            await self.on_market_update(update)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -1021,7 +1109,3 @@ async def binance_history_loader(symbol: str, interval: str, count: int) -> list
         end=end,
         instrument_id=symbol,
     )
-
-
-# Global singleton instance for the FastAPI application
-LIVE_PAPER_SESSION = LivePaperSessionManager(history_loader=binance_history_loader)

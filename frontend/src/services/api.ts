@@ -45,6 +45,8 @@ export interface StatusResponse {
   live_safe_mode: string;
   /** `paper` = a server that only runs the live paper terminal (LAB_ROLE). */
   lab_role?: 'full' | 'paper';
+  /** Robots the live paper terminal can build (differs from the batch `paper_robots`). */
+  live_paper_robots?: string[];
   /** True when the live paper ledger is journalled and survives restarts. */
   live_paper_persisted?: boolean;
 }
@@ -765,6 +767,8 @@ export interface LivePaperConfig {
   stop_pct: string;
   take_profit_multiple: string;
   auto_trade: boolean;
+  name?: string;
+  notes?: string;
 }
 
 export interface LivePosition {
@@ -811,6 +815,16 @@ export interface LiveEquityPoint {
 
 export interface LivePaperState {
   is_active: boolean;
+  session_id?: string | null;
+  name?: string;
+  notes?: string;
+  paused?: boolean;
+  created_from?: string;
+  risk_refusals?: Record<string, number>;
+  last_bar_ts?: string | null;
+  started_at?: string | null;
+  resumed_at?: string | null;
+  persisted?: boolean;
   mode: string;
   config: LivePaperConfig;
   starting_equity: string;
@@ -828,15 +842,109 @@ export interface LivePaperState {
   status_message: string;
 }
 
-export async function fetchLivePaperState(): Promise<LivePaperState> {
-  return parseJson(await fetch(apiUrl('/api/paper/live/state')));
+/** One row of the sessions table (`GET /api/paper/sessions`). */
+export interface PaperSessionRow {
+  session_id: string;
+  name: string;
+  robot: string;
+  symbol: string;
+  interval: string;
+  status: 'active' | 'paused' | 'stopped';
+  notes?: string;
+  created_from?: string;
+  started_at?: string | null;
+  stopped_at?: string | null;
+  resumed_at?: string | null;
+  starting_equity: string;
+  equity: string;
+  return_pct: number | null;
+  vs_benchmark_pp?: number | null;
+  position?: string | null;
+  unrealized_pnl?: string;
+  fees_paid?: string;
+  fills: number;
+  closed_trades?: number;
+  wins?: number;
+  max_drawdown_pct?: number;
+  last_bar_ts?: string | null;
+  risk_refusals?: number;
+  status_message?: string;
+  history_only?: boolean;
+}
+
+export interface PaperFeedStatus {
+  symbol: string;
+  interval: string;
+  connected: boolean;
+  sessions: number;
+  messages: number;
+}
+
+export interface PaperPortfolio {
+  sessions_active: number;
+  sessions_paused: number;
+  starting_equity: number;
+  equity: number;
+  return_pct: number | null;
+  exposure: Record<string, { long: number; short: number; flat: number }>;
+  warnings: string[];
+  feeds: PaperFeedStatus[];
+  persisted: boolean;
+  max_sessions: number;
+}
+
+const sessionPath = (sessionId: string, action?: string) =>
+  apiUrl(`/api/paper/sessions/${encodeURIComponent(sessionId)}${action ? `/${action}` : ''}`);
+
+export async function fetchPaperSessions(): Promise<{
+  sessions: PaperSessionRow[];
+  portfolio: PaperPortfolio;
+}> {
+  return parseJson(await fetch(apiUrl('/api/paper/sessions')));
+}
+
+/** State of one session; without an id, the primary session (older single-session API). */
+export async function fetchLivePaperState(sessionId?: string | null): Promise<LivePaperState> {
+  return parseJson(
+    await fetch(sessionId ? sessionPath(sessionId) : apiUrl('/api/paper/live/state')),
+  );
 }
 
 export async function startLivePaper(
   params: Partial<LivePaperConfig> & { mode?: string },
+): Promise<ActionResult & { session_id?: string; name?: string }> {
+  return parseJson(
+    await fetch(apiUrl('/api/paper/sessions'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    }),
+  );
+}
+
+export async function stopLivePaper(sessionId: string): Promise<ActionResult> {
+  return parseJson(await fetch(sessionPath(sessionId, 'stop'), { method: 'POST' }));
+}
+
+export async function pauseLivePaper(sessionId: string, paused: boolean): Promise<ActionResult> {
+  return parseJson(
+    await fetch(sessionPath(sessionId, paused ? 'pause' : 'resume'), { method: 'POST' }),
+  );
+}
+
+export async function closeLivePosition(sessionId: string): Promise<ActionResult> {
+  return parseJson(await fetch(sessionPath(sessionId, 'close-position'), { method: 'POST' }));
+}
+
+export async function updateLiveStops(
+  sessionId: string,
+  params: {
+    stop_loss?: string | null;
+    take_profit?: string | null;
+  },
 ): Promise<ActionResult> {
   return parseJson(
-    await fetch(apiUrl('/api/paper/live/start'), {
+    await fetch(sessionPath(sessionId, 'update-stops'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
@@ -844,37 +952,9 @@ export async function startLivePaper(
   );
 }
 
-export async function stopLivePaper(): Promise<ActionResult> {
-  return parseJson(
-    await fetch(apiUrl('/api/paper/live/stop'), {
-      method: 'POST',
-    }),
-  );
-}
-
-export async function closeLivePosition(): Promise<ActionResult> {
-  return parseJson(
-    await fetch(apiUrl('/api/paper/live/close-position'), {
-      method: 'POST',
-    }),
-  );
-}
-
-export async function updateLiveStops(params: {
-  stop_loss?: string | null;
-  take_profit?: string | null;
-}): Promise<ActionResult> {
-  return parseJson(
-    await fetch(apiUrl('/api/paper/live/update-stops'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    }),
-  );
-}
-
-export function getLivePaperWsUrl(): string {
-  const base = apiUrl('/api/paper/live-stream');
+export function getLivePaperWsUrl(sessionId?: string | null): string {
+  const query = sessionId ? `?session=${encodeURIComponent(sessionId)}` : '';
+  const base = apiUrl(`/api/paper/live-stream${query}`);
   return withWsToken(base.replace(/^http/, 'ws'));
 }
 

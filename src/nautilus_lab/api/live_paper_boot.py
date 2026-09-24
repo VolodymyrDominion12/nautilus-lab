@@ -11,7 +11,15 @@ import logging
 from decimal import Decimal
 from pathlib import Path
 
-from nautilus_lab.api.paper_streamer import LivePaperConfig, LivePaperSessionManager
+from nautilus_lab.api.live_sessions import SessionRegistry
+from nautilus_lab.api.market_feed import FeedHub
+from nautilus_lab.api.paper_streamer import (
+    LIVE_PAPER_ROBOTS,
+    HistoryLoader,
+    LivePaperConfig,
+    LivePaperSessionManager,
+    default_session_name,
+)
 from nautilus_lab.infrastructure.live_paper_journal import LivePaperJournal
 from nautilus_lab.infrastructure.settings import Settings
 
@@ -30,6 +38,9 @@ def live_config_from_settings(
     take_profit_multiple: Decimal,
     mode: str = "paper",
     auto_trade: bool = True,
+    name: str = "",
+    notes: str = "",
+    created_from: str = "ui",
 ) -> LivePaperConfig:
     """Robot parameters, fees and breakers from the same Settings research runs use."""
     fees = cfg.fee_schedule()
@@ -51,6 +62,9 @@ def live_config_from_settings(
         adaptive=cfg.adaptive_ema_params(),
         max_daily_loss=cfg.max_daily_loss,
         max_drawdown=cfg.max_drawdown,
+        name=name.strip(),
+        notes=notes,
+        created_from=created_from,
     )
 
 
@@ -67,6 +81,10 @@ def autostart_config(cfg: Settings) -> LivePaperConfig | None:
         risk_per_trade=cfg.risk_per_trade,
         stop_pct=cfg.stop_pct,
         take_profit_multiple=cfg.live_paper_take_profit_multiple,
+        name=default_session_name(
+            cfg.live_paper_robot, cfg.live_paper_symbol, cfg.live_paper_interval
+        ),
+        created_from="autostart",
     )
 
 
@@ -101,3 +119,124 @@ async def boot_live_paper(
         await manager.start(autostart)
         return "started"
     return "idle"
+
+
+# --------------------------------------------------------------------------- portfolio
+_PORTFOLIO_FIELDS = {
+    "name",
+    "robot",
+    "symbol",
+    "interval",
+    "starting_equity",
+    "risk_per_trade",
+    "stop_pct",
+    "take_profit_multiple",
+    "notes",
+    "auto_trade",
+}
+
+
+def _resolve(path: str, root: Path) -> Path:
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else root / candidate
+
+
+def parse_portfolio(raw: object, cfg: Settings) -> list[LivePaperConfig]:
+    """Sessions declared in a portfolio file. Raises ValueError naming what is wrong.
+
+    Unknown keys are refused rather than ignored: a typo such as `risk_per_trad` would
+    otherwise silently trade with the default and the ledger would lie about it.
+    """
+    if not isinstance(raw, dict) or not isinstance(raw.get("sessions"), list):
+        raise ValueError("portfolio file must have a top-level `sessions:` list")
+    defaults = raw.get("defaults") or {}
+    if not isinstance(defaults, dict):
+        raise ValueError("`defaults:` must be a mapping")
+    configs: list[LivePaperConfig] = []
+    names: set[str] = set()
+    for index, entry in enumerate(raw["sessions"]):
+        if not isinstance(entry, dict):
+            raise ValueError(f"sessions[{index}] must be a mapping")
+        merged = {**defaults, **entry}
+        unknown = set(merged) - _PORTFOLIO_FIELDS
+        if unknown:
+            raise ValueError(f"sessions[{index}]: unknown keys {sorted(unknown)}")
+        name = str(merged.get("name") or "").strip()
+        if not name:
+            raise ValueError(f"sessions[{index}]: `name` is required")
+        if name in names:
+            raise ValueError(f"duplicate session name {name!r}")
+        names.add(name)
+        robot = str(merged.get("robot") or "")
+        if robot not in LIVE_PAPER_ROBOTS:
+            known = ", ".join(sorted(LIVE_PAPER_ROBOTS))
+            raise ValueError(f"{name}: robot {robot!r} is not available live ({known})")
+        configs.append(
+            live_config_from_settings(
+                cfg,
+                symbol=str(merged.get("symbol") or cfg.live_paper_symbol),
+                interval=str(merged.get("interval") or cfg.live_paper_interval),
+                robot=robot,
+                starting_equity=Decimal(
+                    str(merged.get("starting_equity", cfg.live_paper_starting_equity))
+                ),
+                risk_per_trade=Decimal(str(merged.get("risk_per_trade", cfg.risk_per_trade))),
+                stop_pct=Decimal(str(merged.get("stop_pct", cfg.stop_pct))),
+                take_profit_multiple=Decimal(
+                    str(merged.get("take_profit_multiple", cfg.live_paper_take_profit_multiple))
+                ),
+                auto_trade=bool(merged.get("auto_trade", True)),
+                name=name,
+                notes=str(merged.get("notes") or ""),
+                created_from="portfolio",
+            )
+        )
+    return configs
+
+
+def load_portfolio(cfg: Settings, *, root: Path) -> list[LivePaperConfig]:
+    """Declared sessions: the portfolio file, else the single autostart session, else none."""
+    if cfg.live_paper_portfolio.strip():
+        import yaml
+
+        path = _resolve(cfg.live_paper_portfolio.strip(), root)
+        with path.open(encoding="utf-8") as handle:
+            return parse_portfolio(yaml.safe_load(handle), cfg)
+    single = autostart_config(cfg)
+    return [] if single is None else [single]
+
+
+def sessions_dir_from_settings(cfg: Settings, *, root: Path) -> Path | None:
+    if cfg.live_paper_sessions_dir.strip():
+        return _resolve(cfg.live_paper_sessions_dir.strip(), root)
+    legacy = journal_from_settings(cfg, root=root)
+    return None if legacy is None else legacy.path.parent / "sessions"
+
+
+def registry_from_settings(
+    cfg: Settings,
+    *,
+    root: Path,
+    history_loader: HistoryLoader | None,
+    feed_hub: FeedHub | None = None,
+) -> SessionRegistry:
+    legacy = journal_from_settings(cfg, root=root)
+    return SessionRegistry(
+        sessions_dir=sessions_dir_from_settings(cfg, root=root),
+        legacy_journal=None if legacy is None else legacy.path,
+        history_loader=history_loader,
+        feed_hub=feed_hub if feed_hub is not None else FeedHub(max_feeds=cfg.live_paper_max_feeds),
+        max_sessions=cfg.live_paper_max_sessions,
+    )
+
+
+async def boot_sessions(registry: SessionRegistry, cfg: Settings, *, root: Path) -> list[str]:
+    """Resume what was running, then bring up the declared portfolio. One line per session."""
+    outcomes = await registry.restore()
+    try:
+        portfolio = load_portfolio(cfg, root=root)
+    except (OSError, ValueError) as exc:
+        logger.error("Live paper portfolio not loaded: %s", exc)
+        return [*outcomes, f"portfolio error: {exc}"]
+    outcomes.extend(await registry.reconcile(portfolio))
+    return outcomes or ["idle"]

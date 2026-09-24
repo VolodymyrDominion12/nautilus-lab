@@ -1,8 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, History, ListOrdered, Play, RefreshCw, Square, Terminal, Zap } from 'lucide-react';
-import { cancelPaper, fetchPaperLog, runPaper } from '../services/api';
-import type { PaperOrder, PaperSummary, StatusResponse, StrategySpec } from '../services/api';
+import { cancelPaper, fetchPaperLog, fetchPaperSessions, runPaper } from '../services/api';
+import type {
+  PaperOrder,
+  PaperPortfolio,
+  PaperSessionRow,
+  PaperSummary,
+  StatusResponse,
+  StrategySpec,
+} from '../services/api';
 import { LiveTradingTerminal } from './LiveTradingTerminal';
+import { SessionsPanel } from './SessionsPanel';
 
 interface PaperSimulatorProps {
   strategies: StrategySpec[];
@@ -15,7 +23,43 @@ interface PaperSimulatorProps {
  */
 export const PaperSimulator: React.FC<PaperSimulatorProps> = ({ strategies, status }) => {
   const supported = status?.paper_robots ?? ['regime', 'ema', 'adaptive_ema'];
+  const liveRobots = status?.live_paper_robots ?? ['regime', 'ema', 'adaptive_ema', 'hold'];
   const available = strategies.filter((spec) => supported.includes(spec.name));
+
+  // Live sessions: the table above the terminal, and which one the terminal shows.
+  const [sessionRows, setSessionRows] = useState<PaperSessionRow[]>([]);
+  const [portfolio, setPortfolio] = useState<PaperPortfolio | null>(null);
+  const [selectedSession, setSelectedSession] = useState<string | null>(null);
+  const [autoSelected, setAutoSelected] = useState(false);
+
+  const refreshSessions = async () => {
+    try {
+      const data = await fetchPaperSessions();
+      setSessionRows(data.sessions);
+      setPortfolio(data.portfolio);
+      if (!autoSelected) {
+        // Open on the first running session once; afterwards the user's choice wins.
+        const first = data.sessions.find((row) => row.status !== 'stopped');
+        if (first) setSelectedSession(first.session_id);
+        setAutoSelected(true);
+      }
+    } catch (err) {
+      console.error('Failed to load paper sessions:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshSessions();
+    const timer = setInterval(refreshSessions, 5000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSelected]);
+
+  const handleSessionChange = (sessionId: string | null) => {
+    setSelectedSession(sessionId);
+    setAutoSelected(true);
+    refreshSessions();
+  };
 
   const [activeSubTab, setActiveSubTab] = useState<'live' | 'batch'>('live');
   const [robot, setRobot] = useState(supported[0] ?? 'regime');
@@ -88,17 +132,19 @@ export const PaperSimulator: React.FC<PaperSimulatorProps> = ({ strategies, stat
           >
             <Zap className="w-3.5 h-3.5 text-blue-400" /> Live Interactive Terminal
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('batch')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeSubTab === 'batch'
-                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" /> Batch Historical Replay
-          </button>
+          {status?.lab_role !== 'paper' && (
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('batch')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeSubTab === 'batch'
+                  ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" /> Batch Historical Replay
+            </button>
+          )}
         </div>
 
         <span className="text-[11px] font-mono text-gray-500">
@@ -109,7 +155,21 @@ export const PaperSimulator: React.FC<PaperSimulatorProps> = ({ strategies, stat
       </div>
 
       {activeSubTab === 'live' ? (
-        <LiveTradingTerminal supportedRobots={supported} />
+        <div className="flex flex-col gap-5">
+          <SessionsPanel
+            rows={sessionRows}
+            portfolio={portfolio}
+            selectedId={selectedSession}
+            onSelect={handleSessionChange}
+            onChanged={refreshSessions}
+          />
+          <LiveTradingTerminal
+            key={selectedSession ?? 'new'}
+            supportedRobots={liveRobots}
+            sessionId={selectedSession}
+            onSessionChange={handleSessionChange}
+          />
+        </div>
       ) : (
         <div className="flex flex-col gap-6">
           <div>

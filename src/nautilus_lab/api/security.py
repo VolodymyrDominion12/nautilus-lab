@@ -31,6 +31,7 @@ A third gate is about *where* the API runs rather than who calls it:
 from __future__ import annotations
 
 import hmac
+import re
 from dataclasses import dataclass
 
 DEFAULT_ALLOWED_ORIGINS: tuple[str, ...] = (
@@ -55,7 +56,12 @@ PAPER_ROLE_WRITES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/paper/live/stop"),
         ("POST", "/api/paper/live/close-position"),
         ("POST", "/api/paper/live/update-stops"),
+        ("POST", "/api/paper/sessions"),
     }
+)
+#: Per-session controls: /api/paper/sessions/<id or name>/<action>.
+_PAPER_SESSION_ACTION = re.compile(
+    r"^/api/paper/sessions/[A-Za-z0-9._-]+/(stop|pause|resume|close-position|update-stops)$"
 )
 _READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -67,7 +73,10 @@ def role_refusal(role: str, *, method: str, path: str) -> str | None:
     verb = method.upper()
     if verb in _READ_METHODS or not path.startswith("/api"):
         return None
-    if (verb, path.rstrip("/")) in PAPER_ROLE_WRITES:
+    clean = path.rstrip("/")
+    if (verb, clean) in PAPER_ROLE_WRITES:
+        return None
+    if verb == "POST" and _PAPER_SESSION_ACTION.match(clean):
         return None
     return (
         f"{verb} {path} is disabled on this server (LAB_ROLE=paper): it only runs the "

@@ -148,12 +148,47 @@ DNS `A lab.example.com → IP VPS`, потім у `deploy/.env`: `BIND_ADDR=0.0.
 `basic_auth` у `deploy/Caddyfile` (інструкція в коментарі): токен вшитий у JS-бандл і
 захищає API від чужих сторінок, а не від людини, яка відкрила ваш дашборд.
 
+## 5a. Кілька роботів одночасно
+
+Сервер тримає до `LIVE_PAPER_MAX_SESSIONS` (8) сесій. У кожної свій робот, свій
+віртуальний рахунок із запобіжниками і свій журнал `data/paper/sessions/<id>.jsonl`.
+Сесії на одному symbol+interval читають **один** сокет Binance (`api/market_feed.py`),
+тож бачать ті самі бари. Різних ринків одночасно може бути до `LIVE_PAPER_MAX_FEEDS` (5).
+
+Що торгує сервер, задає файл `deploy/paper_portfolio.yaml` (у git, розгортається
+разом із кодом). Щоб він діяв, у `.env` сервера потрібен рядок
+`LIVE_PAPER_PORTFOLIO=deploy/paper_portfolio.yaml`. На кожному старті API файл
+звіряється з журналами **за іменем** сесії:
+
+| Ситуація | Що робить сервер |
+| --- | --- |
+| сесія з таким `name` працює | нічого; якщо параметри у файлі змінились — пише в лог, але не застосовує |
+| сесію з таким `name` зупинили кнопкою Stop | не перезапускає (перейменуйте, щоб почати знову) |
+| такого `name` ще не було | запускає |
+| запис прибрали з файлу | сесія працює далі, поки її не зупинять у дашборді |
+
+Сесія з роботом `hold` — це бенчмарк buy & hold. Інші сесії на тому самому
+symbol+interval порівнюються з нею: колонка «vs hold» у дашборді та рядок
+`vs hold` у звіті.
+
+Дашборд, вкладка **Paper**: таблиця сесій (equity, дохідність, «vs hold»,
+позиція, угоди, max DD, останній бар) і кнопки Pause (стоп нових входів;
+виходи й стопи працюють) та Stop. Клік по рядку відкриває сесію в терміналі.
+«New session» — форма для разового експерименту з назвою та гіпотезою.
+
+API (для скриптів): `GET /api/paper/sessions`, `POST /api/paper/sessions`,
+`POST /api/paper/sessions/<id або name>/{stop,pause,resume,close-position,update-stops}`,
+`GET /api/paper/portfolio`. Старі `/api/paper/live/*` працюють із першою активною сесією.
+
+Сесія з однофайлового `live_events.jsonl` (до цієї версії) відновлюється як є,
+отримує ім'я `regime-eth`, і файл портфеля її впізнає, а не запускає другу.
+
 ## 6. Дані на робочу станцію і аналіз
 
 ```bash
 VPS=lab@100.101.102.103 scripts/pull_vps.sh
-uv run python scripts/live_paper_report.py data/vps/paper/live_events.jsonl
-uv run python scripts/live_paper_report.py data/vps/paper/live_events.jsonl --csv data/vps/csv
+uv run python scripts/live_paper_report.py data/vps/paper
+uv run python scripts/live_paper_report.py data/vps/paper --csv data/vps/csv
 ```
 
 У ноутбуці:

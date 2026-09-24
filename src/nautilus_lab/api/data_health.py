@@ -82,8 +82,8 @@ def _parquet_span(path: Path, column: str) -> tuple[str | None, str | None]:
     return _iso(stats.get("min")), _iso(stats.get("max"))
 
 
-def _taker_flow_health(root: Path, symbol: str) -> dict[str, Any]:
-    target = ParquetTakerFlowCatalog(root).series_path(symbol)
+def _taker_flow_health(root: Path, symbol: str, interval: str) -> dict[str, Any]:
+    target = ParquetTakerFlowCatalog(root).series_path(symbol, interval)
     if not target.exists():
         return {"present": False, "rows": None, "first": None, "last": None}
     first, last = _parquet_span(target, "ts_utc")
@@ -161,6 +161,7 @@ def describe_data_health(catalog_path: str | None = None) -> dict[str, Any]:
     resolved = resolve_catalog_path(catalog_path)
     payload = describe_catalog_cached(str(resolved))
     instruments = payload.get("instruments") or []
+    bar_interval = payload.get("bar_interval") or settings().bar_interval
     empty_shards: dict[str, Any] = {
         "present": False,
         "files": 0,
@@ -188,7 +189,7 @@ def describe_data_health(catalog_path: str | None = None) -> dict[str, Any]:
             "funding": {"present": False, "rows": None, "first": None, "last": None},
         }
         if symbol:
-            entry["taker_flow"] = _taker_flow_health(resolved, symbol)
+            entry["taker_flow"] = _taker_flow_health(resolved, symbol, bar_interval)
             entry["ticks"] = _ticks_health(resolved, symbol)
             entry["orderbook"] = _orderbook_health(resolved, symbol)
             entry["funding"] = _funding_health(resolved, symbol)

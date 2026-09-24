@@ -122,8 +122,8 @@ evidence:
   reproduce: >
     uv run lab ingest --start 2024-01-01 --end 2026-09-19 --symbols ETHUSDT   # бари + серія потоку
     uv run lab research --robot vpin_momentum --folds 4                       # зі справжнім потоком
-    mv catalog/data/taker_flow /tmp/taker_flow && uv run lab research --robot vpin_momentum --folds 4
-    mv /tmp/taker_flow catalog/data/taker_flow                                # той самий прогін на проксі
+    mv catalog/data/taker_flow/ETHUSDT/1h /tmp/taker_flow && uv run lab research --robot vpin_momentum --folds 4
+    mv /tmp/taker_flow catalog/data/taker_flow/ETHUSDT/1h                     # той самий прогін на проксі
     Друга й третя команди — контрольоване A/B на одній і тій самій бар-серії.
   notes: >
     Вимір є, і він негативний — але тепер із розділенням причин. На ETH/USDT 1h
@@ -170,8 +170,9 @@ notes: >
   змішаний». Напрямок входу, як і раніше, задає бік ціни відносно EMA.
   Провенанс поля. Nautilus `Bar` не має колонки під taker-обсяг, тож поле не
   проходить round-trip через рушій: `lab ingest` пише його окремою серією
-  `<catalog>/data/taker_flow/<SYMBOL>/taker_flow.parquet` (ключ — той самий час
-  бару, `Decimal` зберігається рядком), `ResearchBarFeed` підмішує його назад у
+  `<catalog>/data/taker_flow/<SYMBOL>/<interval>/taker_flow.parquet` (ключ —
+  «символ + інтервал» і той самий час бару, `Decimal` зберігається рядком),
+  `ResearchBarFeed` підмішує його назад у
   `OhlcvBar` за міткою часу, а `NautilusResearchBacktest` передає таблицю
   `{nanos: taker_buy}` у стратегію
   (`SignalRobot(..., taker_buy_base_volume_by_ns=...)`). Джойн точний, бо і ключ,

@@ -28,6 +28,7 @@
 | [docs/15-audit-vypravlennya.md](docs/15-audit-vypravlennya.md) | Аудит коректності: знайдені помилки логіки та як їх виправлено |
 | [docs/24-paper-treydynh.md](docs/24-paper-treydynh.md) | **Paper-сесії**: як запускати, які роботи проходять, виміряні числа, чому тікові дані поки не основа |
 | [docs/25-xsmom-ta-vorota-dopusku.md](docs/25-xsmom-ta-vorota-dopusku.md) | **Крос-секційний momentum** (`lab xsmom`) і **ворота допуску**: пороги, які робот мусить пройти до paper |
+| [docs/26-deploy-vps.md](docs/26-deploy-vps.md) | **Деплой на VPS**: живий paper 24/7 з журналом і відновленням, `LAB_ROLE=paper`, Docker + Caddy + Tailscale, збирач тіків, `pull_vps.sh` |
 
 ## Що всередині
 

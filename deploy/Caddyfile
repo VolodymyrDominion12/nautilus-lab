@@ -1,0 +1,32 @@
+# SITE_ADDRESS (deploy/.env):
+#   :80                 plain HTTP, e.g. only reachable over Tailscale (default)
+#   lab.example.com     public domain; Caddy obtains and renews HTTPS by itself
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	# Optional second lock in front of everything (recommended with a public domain).
+	# Generate the hash with:  docker run --rm caddy:2-alpine caddy hash-password
+	# then uncomment and put the user/hash here:
+	# basic_auth {
+	# 	volodymyr $2a$14$REPLACE_WITH_HASH
+	# }
+
+	# API, the live-paper WebSocket and the report/hypothesis mounts.
+	@api path /api/* /static_reports/* /static_hypotheses/* /docs /openapi.json
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	# Single-page app: unknown paths fall back to index.html.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}

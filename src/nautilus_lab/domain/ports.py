@@ -97,17 +97,20 @@ class TakerFlowCatalog(Protocol):
     """Per-bar taker-buy volume, stored beside the bar series.
 
     Not a `BarCatalog` and not part of `OhlcvBar`'s storage: Nautilus `Bar` has no
-    field for it, so it is kept as its own series keyed by the bar close timestamp and
-    joined back by the research feed. Reading a symbol with no such series returns an
-    empty mapping — an unknown split, not a zero one.
+    field for it, so it is kept as its own series keyed by `(symbol, interval)` and the
+    bar close timestamp, then joined back by the research feed. The interval is part of
+    the key because an hourly and a daily bar share a close at 23:59:59.999; without it
+    the two series would overwrite each other. Reading a symbol with no such series
+    returns an empty mapping — an unknown split, not a zero one.
     """
 
-    def write(self, bars: Sequence[OhlcvBar], *, symbol: str) -> int: ...
+    def write(self, bars: Sequence[OhlcvBar], *, symbol: str, interval: str) -> int: ...
 
     def load(
         self,
         *,
         symbol: str,
+        interval: str,
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> Mapping[datetime, Decimal]: ...

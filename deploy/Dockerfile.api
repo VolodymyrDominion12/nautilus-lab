@@ -1,0 +1,41 @@
+# API + live paper terminal (and the tick collector, same image, different command).
+# Built from the repository root:  docker compose -f deploy/docker-compose.yml build
+FROM python:3.12-slim-bookworm
+
+COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PATH="/app/.venv/bin:$PATH"
+
+WORKDIR /app
+
+# Dependencies first, so a code change does not re-download nautilus-trader.
+COPY pyproject.toml uv.lock README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --extra api --extra alerts
+
+# The project itself, installed editable: api/app.py resolves reports/, specs/ and
+# research/ relative to the source tree, so the source tree must be /app.
+COPY src ./src
+COPY specs ./specs
+COPY research ./research
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --extra api --extra alerts
+
+RUN useradd --create-home --uid 1000 lab \
+    && mkdir -p /app/data /app/reports /app/catalog \
+    && chown -R lab:lab /app/data /app/reports /app/catalog /app/research
+USER lab
+
+EXPOSE 8000
+# `/` is outside the /api token gate, so the probe needs no secret.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=4)"
+
+# One worker, always: the live paper session is one object in this process. A second
+# worker would run a second, independent ledger behind the same URL.
+CMD ["uvicorn", "nautilus_lab.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers"]

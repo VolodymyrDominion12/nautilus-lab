@@ -26,6 +26,23 @@ class Settings(BaseSettings):
     api_token: str = ""
     # Empty = the defaults in api/security.py (Vite dev/preview and the API's own port).
     api_allowed_origins: str = ""
+    # What this API process is allowed to do. "full" = the research workstation;
+    # "paper" = a server that only runs the live paper terminal: research, ingest, ML,
+    # alpha proposals and PUT /api/settings are refused (api/security.py).
+    lab_role: str = "full"
+    # Live paper terminal persistence (infrastructure/live_paper_journal.py). Empty =
+    # in-memory only, as before. When set, every fill and closed bar is appended there
+    # and an unfinished session is resumed when the API starts.
+    live_paper_journal: str = ""
+    # Start a live paper session on API start when there is nothing to resume. The
+    # robot's parameters, fees, risk and breakers come from the settings above, like
+    # every research run; these only pick what to trade.
+    live_paper_autostart: bool = False
+    live_paper_symbol: str = "ETHUSDT"
+    live_paper_interval: str = "1h"
+    live_paper_robot: str = "regime"
+    live_paper_starting_equity: Decimal = Decimal("10000")
+    live_paper_take_profit_multiple: Decimal = Decimal("2")
     live_enabled: bool = False
     starting_equity: Decimal = Decimal("100000")
     risk_per_trade: Decimal = Decimal("0.005")

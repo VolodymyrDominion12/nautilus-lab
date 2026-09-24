@@ -79,6 +79,9 @@ function AppContent() {
 
   // Track background jobs transition to notify on completion
   const prevJobsRef = useRef<Record<string, boolean>>({});
+  // A `paper` server opens on the live terminal once; afterwards the user navigates freely.
+  const openedOnPaperRef = useRef(false);
+  const isPaperServer = status?.lab_role === 'paper';
 
   const handleCatalogChange = (path: string) => {
     setSelectedCatalogPathState(path);
@@ -152,6 +155,13 @@ function AppContent() {
     const interval = setInterval(refreshOverview, 15000);
     return () => clearInterval(interval);
   }, [refreshOverview]);
+
+  useEffect(() => {
+    if (isPaperServer && !openedOnPaperRef.current) {
+      openedOnPaperRef.current = true;
+      setActiveTab('paper');
+    }
+  }, [isPaperServer]);
 
   const handleSelectStrategy = (robotName: string) => {
     setSelectedRobot(robotName);
@@ -350,6 +360,21 @@ function AppContent() {
               <span className="block text-red-400/70 mt-1 font-mono">
                 Try: .venv/bin/uvicorn nautilus_lab.api.app:app --port 8000
               </span>
+            </span>
+          </div>
+        )}
+
+        {isPaperServer && (
+          <div className="p-3 bg-amber-950/30 border border-amber-800/50 rounded-xl flex items-start gap-3 text-amber-200 text-xs">
+            <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>
+              Paper server (LAB_ROLE=paper): only the live paper terminal runs here. Research, ingest,
+              ML and settings changes are disabled — run them on the workstation.
+              {status?.live_paper_persisted === false && (
+                <span className="block text-amber-400/80 mt-1">
+                  LIVE_PAPER_JOURNAL is not set: the ledger is lost on restart.
+                </span>
+              )}
             </span>
           </div>
         )}

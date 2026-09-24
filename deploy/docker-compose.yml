@@ -1,0 +1,77 @@
+# nautilus-lab on a VPS: live paper terminal + dashboard + tick collector.
+#
+#   cp deploy/vps.env.example .env          # backend settings (LAB_ROLE=paper, ...)
+#   cp deploy/compose.env.example deploy/.env # bind address, site address, token
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Everything the server produces lives in bind-mounted folders at the repo root —
+# data/ (live paper journal), catalog/ (ticks), reports/ — so `scripts/pull_vps.sh`
+# can rsync them to the workstation and a rebuild never touches them.
+name: nautilus-lab
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: unless-stopped
+    volumes:
+      - ../.env:/app/.env:ro
+      - ../data:/app/data
+      - ../reports:/app/reports
+      - ../catalog:/app/catalog
+    # Not published: only Caddy reaches it, over the compose network.
+    expose:
+      - "8000"
+    stop_grace_period: 20s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      args:
+        VITE_API_TOKEN: ${API_TOKEN:-}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      # Docker publishes around ufw/iptables rules, so the bind address IS the firewall.
+      # Tailscale-only: set BIND_ADDR to the server's 100.x.y.z address.
+      # Public domain: BIND_ADDR=0.0.0.0 (and SITE_ADDRESS=your.domain for HTTPS).
+      - "${BIND_ADDR:-127.0.0.1}:80:80"
+      - "${BIND_ADDR:-127.0.0.1}:443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    logging: *logging
+
+  # Live aggTrades from the public Binance WebSocket into catalog/data/agg_trade/.
+  # REST history of ticks is not reachable in practice (docs/24 §5.2); a stream that
+  # runs for weeks is. One bounded `lab ingest --live-ticks` per symbol, restarted in
+  # a loop, so a stuck socket costs at most one window.
+  collector:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: unless-stopped
+    profiles: ["collector"]
+    command: ["/bin/sh", "/app/deploy/collect_ticks.sh"]
+    environment:
+      TICK_SYMBOLS: ${TICK_SYMBOLS:-ETHUSDT}
+      TICK_WINDOW_MINUTES: ${TICK_WINDOW_MINUTES:-60}
+    volumes:
+      - ../.env:/app/.env:ro
+      - ../catalog:/app/catalog
+      - ./collect_ticks.sh:/app/deploy/collect_ticks.sh:ro
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:

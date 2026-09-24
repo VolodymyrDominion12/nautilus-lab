@@ -43,6 +43,10 @@ export interface StatusResponse {
   trading_mode: string;
   is_live: boolean;
   live_safe_mode: string;
+  /** `paper` = a server that only runs the live paper terminal (LAB_ROLE). */
+  lab_role?: 'full' | 'paper';
+  /** True when the live paper ledger is journalled and survives restarts. */
+  live_paper_persisted?: boolean;
 }
 
 /**

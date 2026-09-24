@@ -8,6 +8,14 @@ was being lost — defect D4 in docs/23-infrastruktura-danyh-plan.md. Storing it
 own subtree, keyed by the same bar close timestamp, keeps the bar series byte-for-byte
 what Nautilus expects while making the order-flow field recoverable.
 
+Why the interval is part of the path: a bar close at 23:59:59.999 belongs to both an
+hourly bar (the 23:00 hour) and a daily bar. Without the interval, a catalog holding
+1h and 1d history merged the two series into one file, and the daily taker-buy total
+(roughly 24x the hourly volume) overwrote the hourly value for that one bar — which then
+failed `validate_bar` with "taker buy base volume must be <= bar volume". One
+series
+per `(symbol, interval)` keeps the join unambiguous.
+
 Decimals are stored as strings, for the same reason as funding: a Parquet float column
 would round-trip exact decimal volumes through binary floating point, and the domain
 layer is built on exact decimal arithmetic.
@@ -37,7 +45,7 @@ _SCHEMA = pa.schema(
 
 
 class ParquetTakerFlowCatalog:
-    """Idempotent writer / reader for one taker-flow series per symbol."""
+    """Idempotent writer / reader for one taker-flow series per symbol and interval."""
 
     def __init__(self, path: Path) -> None:
         self._path = path.expanduser().resolve()
@@ -46,10 +54,10 @@ class ParquetTakerFlowCatalog:
     def path(self) -> Path:
         return self._path
 
-    def series_path(self, symbol: str) -> Path:
-        return self._path / "data" / "taker_flow" / symbol.upper() / "taker_flow.parquet"
+    def series_path(self, symbol: str, interval: str) -> Path:
+        return self._path / "data" / "taker_flow" / symbol.upper() / interval / "taker_flow.parquet"
 
-    def write(self, bars: Sequence[OhlcvBar], *, symbol: str) -> int:
+    def write(self, bars: Sequence[OhlcvBar], *, symbol: str, interval: str) -> int:
         """Merge the known taker volumes into the stored series. Returns total rows.
 
         Bars whose field is None carry no information and are skipped rather than
@@ -60,14 +68,14 @@ class ParquetTakerFlowCatalog:
         known = [bar for bar in bars if bar.taker_buy_base_volume is not None]
         if not known:
             raise CatalogEmptyError("cannot write a taker-flow series without the kline field 9")
-        merged: dict[datetime, Decimal] = dict(self.load(symbol=symbol))
+        merged: dict[datetime, Decimal] = dict(self.load(symbol=symbol, interval=interval))
         for bar in known:
             value = bar.taker_buy_base_volume
             if value is not None:
                 merged[bar.ts_utc] = value
         ordered = sorted(merged)
 
-        target = self.series_path(symbol)
+        target = self.series_path(symbol, interval)
         target.parent.mkdir(parents=True, exist_ok=True)
         table = pa.Table.from_pydict(
             {
@@ -87,11 +95,12 @@ class ParquetTakerFlowCatalog:
         self,
         *,
         symbol: str,
+        interval: str,
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> Mapping[datetime, Decimal]:
         """Taker-buy base volume by bar close timestamp. Empty mapping when absent."""
-        target = self.series_path(symbol)
+        target = self.series_path(symbol, interval)
         if not target.exists():
             return {}
         rows = pq.read_table(target, schema=_SCHEMA).to_pylist()
@@ -105,5 +114,5 @@ class ParquetTakerFlowCatalog:
             series[ts] = Decimal(str(row["taker_buy_base_volume"]))
         return series
 
-    def series_exists(self, symbol: str) -> bool:
-        return self.series_path(symbol).exists()
+    def series_exists(self, symbol: str, interval: str) -> bool:
+        return self.series_path(symbol, interval).exists()

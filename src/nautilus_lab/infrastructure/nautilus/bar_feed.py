@@ -47,7 +47,11 @@ class ResearchBarFeed:
             end=end,
         )
         return self._with_taker_flow(
-            bars, instrument_id=request.instrument_id, start=start, end=end
+            bars,
+            instrument_id=request.instrument_id,
+            interval=interval_from_bar_type(request.bar_type),
+            start=start,
+            end=end,
         )
 
     def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
@@ -69,7 +73,7 @@ class ResearchBarFeed:
             bar_type = nautilus_bar_type(instrument_id, interval)
             loaded = self._catalog.load(bar_type=bar_type, start=start, end=end)
             raw[instrument_id] = self._with_taker_flow(
-                loaded, instrument_id=instrument_id, start=start, end=end
+                loaded, instrument_id=instrument_id, interval=interval, start=start, end=end
             )
         aligned = align_bars_inner_join(raw)
         return {key: list(value) for key, value in aligned.items()}
@@ -79,6 +83,7 @@ class ResearchBarFeed:
         bars: list[OhlcvBar],
         *,
         instrument_id: str,
+        interval: str,
         start: datetime | None,
         end: datetime | None,
     ) -> list[OhlcvBar]:
@@ -88,7 +93,7 @@ class ResearchBarFeed:
         if symbol is None:
             return bars
         series: Mapping[datetime, Decimal] = self._taker_flow.load(
-            symbol=symbol, start=start, end=end
+            symbol=symbol, interval=interval, start=start, end=end
         )
         if not series:
             return bars

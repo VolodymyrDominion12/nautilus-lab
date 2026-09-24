@@ -1,0 +1,29 @@
+# Build context for deploy/Dockerfile.* is the repo root. Keep it small and secret-free:
+# the images need source, lockfiles and specs — never data, reports or .env.
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+.coverage
+.env
+.env.*
+!.env.example
+deploy/.env
+catalog
+data
+reports
+models
+notebooks
+docs
+tests
+.idea
+.vscode
+.cursor
+.agents
+Claude outputs
+frontend/node_modules
+frontend/dist
+frontend/.env
+frontend/.env.*

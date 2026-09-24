@@ -22,12 +22,13 @@ Shared rules with the backtest (not a second, looser rulebook):
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -50,6 +51,14 @@ from nautilus_lab.domain.signals import Signal, SignalSide
 from nautilus_lab.domain.vpin import BarVpin
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
 from nautilus_lab.infrastructure.lightgbm_classifier import HeuristicDirectionClassifier
+from nautilus_lab.infrastructure.live_paper_journal import (
+    FILL,
+    SESSION_START,
+    SESSION_STOP,
+    SNAPSHOT,
+    LivePaperJournal,
+    ResumableSession,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +100,66 @@ class LivePaperConfig:
     adaptive: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
     max_daily_loss: Decimal = Decimal("0.02")
     max_drawdown: Decimal = Decimal("0.06")
+
+
+def _plain(value: object) -> object:
+    """JSON-safe copy: Decimals become strings (never floats), dataclasses become dicts."""
+    if isinstance(value, Decimal):
+        return str(value)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {f.name: _plain(getattr(value, f.name)) for f in dataclasses.fields(value)}
+    return value
+
+
+def _coerce_like(default: object, raw: object) -> object:
+    """Rebuild a journalled value with the type of the field's default."""
+    if isinstance(default, bool):
+        return raw if isinstance(raw, bool) else str(raw).strip().lower() in {"1", "true"}
+    if isinstance(default, Decimal):
+        return Decimal(str(raw))
+    if isinstance(default, int):
+        return int(str(raw))
+    return raw
+
+
+def _field_values(cls: type[object], raw: object) -> dict[str, Any]:
+    """Keyword arguments for dataclass `cls` from a journalled dict, typed like its defaults."""
+    if not isinstance(raw, dict):
+        return {}
+    template = cls()
+    known = {f.name for f in dataclasses.fields(cls)}  # type: ignore[arg-type]
+    return {
+        str(name): _coerce_like(getattr(template, str(name)), value)
+        for name, value in raw.items()
+        if name in known
+    }
+
+
+def config_to_dict(config: LivePaperConfig) -> dict[str, Any]:
+    """The frozen configuration a session trades with, as written to the journal."""
+    result = _plain(config)
+    assert isinstance(result, dict)
+    return result
+
+
+def config_from_dict(raw: dict[str, Any]) -> LivePaperConfig:
+    """Inverse of `config_to_dict`. Unknown keys are ignored, missing ones default.
+
+    A resumed session must trade with the parameters it *started* with, not with
+    whatever `.env` says after a redeploy — otherwise one ledger would mix two robots.
+    """
+    values = _field_values(LivePaperConfig, raw)
+    if "regime" in raw:
+        values["regime"] = RegimeParams(**_field_values(RegimeParams, raw["regime"]))
+    if "adaptive" in raw:
+        values["adaptive"] = AdaptiveEmaParams(**_field_values(AdaptiveEmaParams, raw["adaptive"]))
+    return LivePaperConfig(**values)
+
+
+def _decimal_or_none(raw: object) -> Decimal | None:
+    if raw is None or raw == "":
+        return None
+    return Decimal(str(raw))
 
 
 @dataclass
@@ -147,9 +216,17 @@ class LivePaperSessionManager:
         config: LivePaperConfig | None = None,
         *,
         history_loader: HistoryLoader | None = None,
+        journal: LivePaperJournal | None = None,
     ) -> None:
         self.config = config or LivePaperConfig()
         self._history_loader = history_loader
+        self.journal = journal
+        self.session_id: str | None = None
+        self.started_at: str | None = None
+        self.resumed_at: str | None = None
+        #: Last closed bar the restored snapshot had seen. Bars after it arrived while
+        #: the process was down; their highs/lows are checked against the stops once.
+        self._resume_after_ts: datetime | None = None
         self._last_closed_ts: datetime | None = None
         self._peak_equity = self.config.starting_equity
         self._day_start_equity = self.config.starting_equity
@@ -270,6 +347,10 @@ class LivePaperSessionManager:
         equity = self.current_equity
         return {
             "is_active": self.is_active,
+            "session_id": self.session_id,
+            "started_at": self.started_at,
+            "resumed_at": self.resumed_at,
+            "persisted": self.journal is not None,
             "mode": self.config.mode,
             "config": {
                 "symbol": self.config.symbol,
@@ -376,17 +457,7 @@ class LivePaperSessionManager:
             self.position.unrealized_pnl = str(float_pnl)
             self.position.unrealized_pnl_pct = f"{float_pct:.2f}%"
 
-            # Check stops against bar extremes
-            if self._pos_side == "LONG":
-                if self._pos_sl is not None and low_price <= self._pos_sl:
-                    events.append(self._close_position_internal(self._pos_sl, "stop_loss"))
-                elif self._pos_tp is not None and high_price >= self._pos_tp:
-                    events.append(self._close_position_internal(self._pos_tp, "take_profit"))
-            elif self._pos_side == "SHORT":
-                if self._pos_sl is not None and high_price >= self._pos_sl:
-                    events.append(self._close_position_internal(self._pos_sl, "stop_loss"))
-                elif self._pos_tp is not None and low_price <= self._pos_tp:
-                    events.append(self._close_position_internal(self._pos_tp, "take_profit"))
+            events.extend(self._check_stops(high_price, low_price))
 
         # 2. On bar close: evaluate domain robot signal
         if is_closed:
@@ -422,7 +493,29 @@ class LivePaperSessionManager:
                 if signal is not None and self.is_active and self.config.auto_trade:
                     events.extend(self._apply_signal(signal, close_price))
 
+        if self.is_active and (is_closed or events):
+            self._journal_snapshot(
+                equity_point=self.equity_history[-1] if is_closed and self.equity_history else None
+            )
         return events
+
+    def _check_stops(
+        self, high_price: Decimal, low_price: Decimal, *, ts: datetime | None = None
+    ) -> list[str]:
+        """Close the position if this bar's range touched its stop or target."""
+        if self.position is None:
+            return []
+        if self._pos_side == "LONG":
+            if self._pos_sl is not None and low_price <= self._pos_sl:
+                return [self._close_position_internal(self._pos_sl, "stop_loss", ts=ts)]
+            if self._pos_tp is not None and high_price >= self._pos_tp:
+                return [self._close_position_internal(self._pos_tp, "take_profit", ts=ts)]
+        elif self._pos_side == "SHORT":
+            if self._pos_sl is not None and high_price >= self._pos_sl:
+                return [self._close_position_internal(self._pos_sl, "stop_loss", ts=ts)]
+            if self._pos_tp is not None and low_price <= self._pos_tp:
+                return [self._close_position_internal(self._pos_tp, "take_profit", ts=ts)]
+        return []
 
     def _holding(self) -> Holding:
         if self.position is None:
@@ -544,11 +637,14 @@ class LivePaperSessionManager:
             reason=f"Open {side} (SL: {sl_price:.2f}, TP: {tp_price:.2f})",
         )
         self.fills.append(fill)
+        self._journal_fill(fill)
         msg = f"Opened {side} {qty} @ {price} (SL={sl_price:.2f}, TP={tp_price:.2f})"
         self.status_message = msg
         return msg
 
-    def _close_position_internal(self, exit_price: Decimal, reason: str) -> str:
+    def _close_position_internal(
+        self, exit_price: Decimal, reason: str, *, ts: datetime | None = None
+    ) -> str:
         """Close virtual position and realize PnL."""
         if not self.position:
             return "No open position to close"
@@ -571,7 +667,7 @@ class LivePaperSessionManager:
 
         fill = LiveFill(
             id=str(uuid.uuid4())[:8],
-            ts=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            ts=(ts or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S"),
             symbol=self.config.symbol,
             side="SELL" if side == "LONG" else "BUY",
             qty=str(qty),
@@ -581,6 +677,7 @@ class LivePaperSessionManager:
             reason=reason,
         )
         self.fills.append(fill)
+        self._journal_fill(fill)
 
         msg = f"Closed {side} {qty} @ {exit_price} | PnL: {net_pnl:+.2f} ({reason})"
         self.status_message = msg
@@ -597,7 +694,9 @@ class LivePaperSessionManager:
         if not self.position:
             return "No active position"
         mark = self._last_mark_price or self._pos_entry_price
-        return self._close_position_internal(mark, "manual_close")
+        msg = self._close_position_internal(mark, "manual_close")
+        self._journal_snapshot()
+        return msg
 
     def update_stops(self, stop_loss: Decimal | None, take_profit: Decimal | None) -> str:
         """Update Stop Loss and Take Profit levels."""
@@ -609,6 +708,7 @@ class LivePaperSessionManager:
         self.position.take_profit = str(take_profit) if take_profit else None
         msg = f"Updated stops: SL={stop_loss}, TP={take_profit}"
         self.status_message = msg
+        self._journal_snapshot()
         return msg
 
     async def start(self, config: LivePaperConfig) -> None:
@@ -625,27 +725,161 @@ class LivePaperSessionManager:
         self.balance = config.starting_equity
         self.realized_pnl = Decimal("0")
         self.fees_paid = Decimal("0")
-        self.position = None
-        self._pos_entry_price = Decimal("0")
-        self._pos_qty = Decimal("0")
-        self._pos_side = ""
-        self._pos_sl = None
-        self._pos_tp = None
+        self._clear_position()
         self.fills.clear()
         self.equity_history.clear()
         self.risk_refusals.clear()
         self._peak_equity = config.starting_equity
         self._day_start_equity = config.starting_equity
         self._day = None
+        self._resume_after_ts = None
         self._stop_event.clear()
+        self.session_id = uuid.uuid4().hex[:12]
+        self.started_at = datetime.now(UTC).isoformat()
+        self.resumed_at = None
         self.status_message = f"Live Paper active ({config.symbol}, {config.robot})"
+        self._journal_event(
+            SESSION_START,
+            {"started_at": self.started_at, "config": config_to_dict(config)},
+        )
+        self._journal_snapshot()
+        self._launch_stream()
+        await self.broadcast_state()
 
-        # Start WebSocket receiver task
+    async def resume(self, session: ResumableSession) -> None:
+        """Continue a session the process did not stop on purpose (deploy, crash, reboot).
+
+        The account (balance, fees, breaker marks, open position with its stops) comes
+        back from the last snapshot; the robot's indicators are rebuilt by the usual
+        warm-up on closed history. Bars that closed while the process was down are
+        checked once against the restored stop and target — a stop that was hit during
+        the outage is filled at its level, not silently skipped.
+        """
+        config = config_from_dict(session.config)
+        previous = self.config
+        self.config = config
+        try:
+            self._init_robot()
+        except ValueError:
+            self.config = previous
+            raise
+        snap = session.snapshot or {}
+        self.session_id = session.session_id
+        self.started_at = session.started_at
+        self.resumed_at = datetime.now(UTC).isoformat()
+        self.starting_equity = config.starting_equity
+        self.balance = _decimal_or_none(snap.get("balance")) or config.starting_equity
+        self.realized_pnl = _decimal_or_none(snap.get("realized_pnl")) or Decimal("0")
+        self.fees_paid = _decimal_or_none(snap.get("fees_paid")) or Decimal("0")
+        self._peak_equity = _decimal_or_none(snap.get("peak_equity")) or self.balance
+        self._day_start_equity = _decimal_or_none(snap.get("day_start_equity")) or self.balance
+        raw_day = snap.get("day")
+        self._day = date.fromisoformat(raw_day) if isinstance(raw_day, str) and raw_day else None
+        self.risk_refusals = {str(k): int(v) for k, v in (snap.get("risk_refusals") or {}).items()}
+        self._last_mark_price = _decimal_or_none(snap.get("last_mark_price"))
+        raw_last = snap.get("last_closed_ts")
+        self._resume_after_ts = (
+            datetime.fromisoformat(raw_last) if isinstance(raw_last, str) and raw_last else None
+        )
+        self._clear_position()
+        self._restore_position(snap.get("position"))
+        self.fills = [LiveFill(**fill) for fill in session.fills]
+        self.equity_history = [LiveEquityPoint(**point) for point in session.equity_points]
+        self.is_active = True
+        self._stop_event.clear()
+        self.status_message = (
+            f"Live Paper resumed ({config.symbol}, {config.robot}); session {self.session_id}"
+        )
+        logger.info("Resumed live paper session %s", self.session_id)
+        self._launch_stream()
+        await self.broadcast_state()
+
+    def _launch_stream(self) -> None:
         if self._ws_task and not self._ws_task.done():
             self._ws_task.cancel()
         self._ws_task = asyncio.create_task(self._run_binance_stream())
-        await self.broadcast_state()
 
+    def _clear_position(self) -> None:
+        self.position = None
+        self._pos_entry_price = Decimal("0")
+        self._pos_qty = Decimal("0")
+        self._pos_side = ""
+        self._pos_sl = None
+        self._pos_tp = None
+
+    def _restore_position(self, raw: object) -> None:
+        if not isinstance(raw, dict) or raw.get("side") not in {"LONG", "SHORT"}:
+            return
+        entry = Decimal(str(raw["entry_price"]))
+        qty = Decimal(str(raw["qty"]))
+        self._pos_side = str(raw["side"])
+        self._pos_entry_price = entry
+        self._pos_qty = qty
+        self._pos_sl = _decimal_or_none(raw.get("stop_loss"))
+        self._pos_tp = _decimal_or_none(raw.get("take_profit"))
+        mark = self._last_mark_price or entry
+        self.position = LivePosition(
+            symbol=self.config.symbol,
+            side=self._pos_side,
+            qty=str(qty),
+            entry_price=str(entry),
+            entry_time=str(raw.get("entry_time") or ""),
+            mark_price=str(mark),
+            unrealized_pnl=str(self.unrealized_pnl),
+            unrealized_pnl_pct="0.00%",
+            stop_loss=None if self._pos_sl is None else str(self._pos_sl),
+            take_profit=None if self._pos_tp is None else str(self._pos_tp),
+        )
+
+    # ------------------------------------------------------------------ journal
+    def _journal_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        if self.journal is None or self.session_id is None:
+            return
+        try:
+            self.journal.append(event_type, self.session_id, payload)
+        except OSError as exc:
+            # A full disk must not take the trading loop down with it; say so loudly.
+            logger.error("Live paper journal write failed (%s): %s", event_type, exc)
+            self.status_message = f"Journal write failed: {exc}"
+
+    def _journal_fill(self, fill: LiveFill) -> None:
+        self._journal_event(FILL, {"fill": asdict(fill)})
+
+    def _journal_snapshot(self, *, equity_point: LiveEquityPoint | None = None) -> None:
+        position = None
+        if self.position is not None:
+            position = {
+                "side": self._pos_side,
+                "qty": str(self._pos_qty),
+                "entry_price": str(self._pos_entry_price),
+                "entry_time": self.position.entry_time,
+                "stop_loss": None if self._pos_sl is None else str(self._pos_sl),
+                "take_profit": None if self._pos_tp is None else str(self._pos_tp),
+            }
+        self._journal_event(
+            SNAPSHOT,
+            {
+                "balance": str(self.balance),
+                "equity": str(self.current_equity),
+                "realized_pnl": str(self.realized_pnl),
+                "unrealized_pnl": str(self.unrealized_pnl),
+                "fees_paid": str(self.fees_paid),
+                "peak_equity": str(self._peak_equity),
+                "day_start_equity": str(self._day_start_equity),
+                "day": self._day.isoformat() if isinstance(self._day, date) else None,
+                "risk_refusals": dict(self.risk_refusals),
+                "last_closed_ts": (
+                    None if self._last_closed_ts is None else self._last_closed_ts.isoformat()
+                ),
+                "last_mark_price": (
+                    None if self._last_mark_price is None else str(self._last_mark_price)
+                ),
+                "position": position,
+                "equity_point": None if equity_point is None else asdict(equity_point),
+            },
+        )
+
+    # ------------------------------------------------------------------ warm-up
     async def _warm_up_from_history(self) -> int:
         if self._history_loader is None:
             return 0
@@ -654,14 +888,37 @@ class LivePaperSessionManager:
         except Exception as exc:  # network, rate limit: a cold start, not a failure
             logger.warning("Live paper warm-up failed, starting cold: %s", exc)
             return 0
+        self._settle_missed_bars(bars)
         return self.warm_up(bars)
 
+    def _settle_missed_bars(self, bars: list[OhlcvBar]) -> list[str]:
+        """After a resume: check the stops against bars that closed while we were down."""
+        cutoff = self._resume_after_ts
+        self._resume_after_ts = None
+        if cutoff is None or self.position is None:
+            return []
+        events: list[str] = []
+        for bar in bars:
+            if bar.ts_utc <= cutoff or self.position is None:
+                continue
+            self._last_mark_price = bar.close
+            events.extend(self._check_stops(bar.high, bar.low, ts=bar.ts_utc))
+        if events:
+            self.status_message = "While offline: " + "; ".join(events)
+            self._journal_snapshot()
+        return events
+
     async def stop(self) -> None:
-        """Stop the live paper session."""
+        """Stop the live paper session. Only a person does this: a stopped session is
+        final in the journal and is not resumed after a restart."""
+        was_active = self.is_active
         self.is_active = False
         self._stop_event.set()
         if self._ws_task and not self._ws_task.done():
             self._ws_task.cancel()
+        if was_active:
+            self._journal_snapshot()
+            self._journal_event(SESSION_STOP, {"stopped_at": datetime.now(UTC).isoformat()})
         self.status_message = "Session stopped"
         await self.broadcast_state()
 

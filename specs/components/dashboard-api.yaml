@@ -151,6 +151,27 @@ invariants_enforced:
       tests/unit/test_api_security_gate.py::test_cross_site_settings_write_is_refused.
 
   - statement: >
+      На сервері з `LAB_ROLE=paper` API приймає лише читання та керування живим
+      paper-терміналом; research, ingest, ML, alpha-пропозиції, пакетний paper-джоб
+      і `PUT /api/settings` отримують 403. Невідоме значення `LAB_ROLE` не стартує.
+    enforced_by: src/nautilus_lab/api/security.py
+    verified_by: tests/unit/test_api_security.py::test_paper_role_refuses_research_and_settings_writes
+    note: >
+      Сервер, який переписує власні налаштування з браузера, дає журнал угод, який
+      ніхто не відтворить. Дослідження живе на робочій станції (docs/26).
+
+  - statement: >
+      Живий paper-сеанс, перерваний не людиною (деплой, краш, ребут), відновлюється
+      при старті API з журналу `LIVE_PAPER_JOURNAL` з тією самою конфігурацією,
+      балансом, позицією та стопами; зупинений людиною сеанс не відновлюється.
+    enforced_by: src/nautilus_lab/api/live_paper_boot.py
+    verified_by: tests/unit/test_live_paper_persistence.py::test_restart_resumes_account_position_fills_and_equity
+    note: >
+      До 2026-09-24 весь реєстр терміналу жив у пам'яті процесу. Бари, що закрились
+      під час простою, перевіряються проти стопа —
+      tests/unit/test_live_paper_persistence.py::test_stop_hit_while_offline_is_filled_at_its_level.
+
+  - statement: >
       Слот джоба займається всередині запиту під блокуванням: другий запуск того
       самого джоба, поки перший ще не породив процес, отримує `status: error`, а
       опитування логу одразу після старту бачить `is_running: true`.

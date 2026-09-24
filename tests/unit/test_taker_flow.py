@@ -112,39 +112,50 @@ class _RecordingCatalog:
 
 def test_taker_flow_series_round_trips_and_merges_by_timestamp(tmp_path: Path) -> None:
     store = ParquetTakerFlowCatalog(tmp_path)
-    assert store.series_exists("ETHUSDT") is False
+    assert store.series_exists("ETHUSDT", "1h") is False
 
-    assert store.write([_bar(0, taker_buy="40"), _bar(1, taker_buy="60")], symbol="ethusdt") == 2
-    assert store.series_exists("ETHUSDT") is True
-    assert store.load(symbol="ETHUSDT") == {
+    assert (
+        store.write(
+            [_bar(0, taker_buy="40"), _bar(1, taker_buy="60")],
+            symbol="ethusdt",
+            interval="1h",
+        )
+        == 2
+    )
+    assert store.series_exists("ETHUSDT", "1h") is True
+    assert store.load(symbol="ETHUSDT", interval="1h") == {
         _bar(0).ts_utc: Decimal("40"),
         _bar(1).ts_utc: Decimal("60"),
     }
 
     # A re-ingest of an overlapping window replaces its timestamps instead of leaving
     # two rows for one bar — the same rule the bar catalog follows.
-    merged = store.write([_bar(1, taker_buy="55"), _bar(2, taker_buy="10")], symbol="ETHUSDT")
+    merged = store.write(
+        [_bar(1, taker_buy="55"), _bar(2, taker_buy="10")],
+        symbol="ETHUSDT",
+        interval="1h",
+    )
     assert merged == 3
-    series = store.load(symbol="ETHUSDT")
+    series = store.load(symbol="ETHUSDT", interval="1h")
     assert series[_bar(1).ts_utc] == Decimal("55")
     assert series[_bar(2).ts_utc] == Decimal("10")
     assert len(series) == 3
 
-    windowed = store.load(symbol="ETHUSDT", start=_bar(1).ts_utc, end=_bar(2).ts_utc)
+    windowed = store.load(symbol="ETHUSDT", interval="1h", start=_bar(1).ts_utc, end=_bar(2).ts_utc)
     assert windowed == {_bar(1).ts_utc: Decimal("55")}
 
 
 def test_taker_flow_writer_refuses_a_series_without_the_field(tmp_path: Path) -> None:
     store = ParquetTakerFlowCatalog(tmp_path)
     with pytest.raises(CatalogEmptyError, match="field 9"):
-        store.write([_bar(0), _bar(1)], symbol="ETHUSDT")
-    assert store.series_exists("ETHUSDT") is False
+        store.write([_bar(0), _bar(1)], symbol="ETHUSDT", interval="1h")
+    assert store.series_exists("ETHUSDT", "1h") is False
 
 
 def test_taker_flow_writer_skips_unknown_bars_instead_of_storing_zero(tmp_path: Path) -> None:
     store = ParquetTakerFlowCatalog(tmp_path)
-    assert store.write([_bar(0, taker_buy="0"), _bar(1)], symbol="ETHUSDT") == 1
-    series = store.load(symbol="ETHUSDT")
+    assert store.write([_bar(0, taker_buy="0"), _bar(1)], symbol="ETHUSDT", interval="1h") == 1
+    series = store.load(symbol="ETHUSDT", interval="1h")
     # A genuine "no aggressive buying" bar is stored as 0; an unknown bar is absent.
     assert series == {_bar(0).ts_utc: Decimal("0")}
     assert _bar(1).ts_utc not in series
@@ -152,7 +163,7 @@ def test_taker_flow_writer_skips_unknown_bars_instead_of_storing_zero(tmp_path: 
 
 def test_bar_feed_enriches_only_matching_timestamps(tmp_path: Path) -> None:
     store = ParquetTakerFlowCatalog(tmp_path)
-    store.write([_bar(0, taker_buy="40")], symbol="ETHUSDT")
+    store.write([_bar(0, taker_buy="40")], symbol="ETHUSDT", interval="1h")
     feed = ResearchBarFeed(_FakeBarCatalog([_bar(0), _bar(1)]), taker_flow=store)
 
     loaded = feed.load(_request())
@@ -165,7 +176,7 @@ def test_bar_feed_rejects_a_flow_series_that_cannot_belong_to_these_bars(
 ) -> None:
     """A mismatched flow series must fail closed, not tilt the feature."""
     store = ParquetTakerFlowCatalog(tmp_path)
-    store.write([_bar(0, volume="100", taker_buy="150")], symbol="ETHUSDT")
+    store.write([_bar(0, volume="100", taker_buy="150")], symbol="ETHUSDT", interval="1h")
     feed = ResearchBarFeed(_FakeBarCatalog([_bar(0, volume="100")]), taker_flow=store)
 
     with pytest.raises(InvalidBarError, match="taker buy"):
@@ -179,7 +190,7 @@ def test_bar_feed_without_a_flow_store_returns_the_bars_unchanged() -> None:
 
 def test_bar_feed_leaves_instruments_without_a_spot_symbol_alone(tmp_path: Path) -> None:
     store = ParquetTakerFlowCatalog(tmp_path)
-    store.write([_bar(0, taker_buy="40")], symbol="ETHUSDT")
+    store.write([_bar(0, taker_buy="40")], symbol="ETHUSDT", interval="1h")
     feed = ResearchBarFeed(_FakeBarCatalog([_bar(0)]), taker_flow=store)
 
     loaded = feed.load(_request(instrument_id="ETHUSDT-PERP.SIM"))
@@ -237,7 +248,7 @@ def test_ingest_keeps_the_taker_split_from_the_kline_field_nine(tmp_path: Path) 
     assert report.bars_written == 1
     assert report.taker_flow_rows == 1
     assert catalog.written[0].taker_buy_base_volume == Decimal("9.75")
-    assert list(flow.load(symbol="ETHUSDT").values()) == [Decimal("9.75")]
+    assert list(flow.load(symbol="ETHUSDT", interval="1h").values()) == [Decimal("9.75")]
 
 
 def test_ingest_skips_the_flow_series_when_the_feed_does_not_carry_it(tmp_path: Path) -> None:
@@ -264,7 +275,7 @@ def test_ingest_skips_the_flow_series_when_the_feed_does_not_carry_it(tmp_path: 
     )
 
     assert report.taker_flow_rows == 0
-    assert flow.series_exists("ETHUSDT") is False
+    assert flow.series_exists("ETHUSDT", "1h") is False
 
 
 def test_vpin_uses_the_real_taker_split_when_the_bar_carries_it() -> None:

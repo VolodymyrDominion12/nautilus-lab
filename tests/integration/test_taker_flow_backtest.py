@@ -89,7 +89,7 @@ def test_real_taker_split_reaches_the_robot_and_changes_its_verdict(tmp_path: Pa
     catalog = NautilusParquetCatalog(tmp_path)
     catalog.write(_rising_bars(taker_buy=None), bar_type=_BAR_TYPE)
     flow = ParquetTakerFlowCatalog(tmp_path)
-    flow.write(_rising_bars(taker_buy="50"), symbol="ETHUSDT")
+    flow.write(_rising_bars(taker_buy="50"), symbol="ETHUSDT", interval="1h")
 
     clear_singleton_instances(ParquetDataCatalog)
     on_the_proxy = _run(catalog, None)

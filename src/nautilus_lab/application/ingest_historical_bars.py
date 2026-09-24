@@ -47,7 +47,9 @@ class IngestHistoricalBars:
         # the feed returned no such field the writer refuses instead of storing zeros.
         flow_rows = 0
         if self._taker_flow is not None and _has_taker_flow(bars):
-            flow_rows = self._taker_flow.write(bars, symbol=request.symbol)
+            flow_rows = self._taker_flow.write(
+                bars, symbol=request.symbol, interval=request.interval
+            )
         return IngestReport(
             bars_written=written,
             first_ts=bars[0].ts_utc,

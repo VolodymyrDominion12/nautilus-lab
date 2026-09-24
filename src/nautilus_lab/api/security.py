@@ -17,6 +17,15 @@ Two independent gates, both cheap:
 
 Static report mounts are exempt from the token: the dashboard embeds tearsheets in an
 iframe, which cannot send a header, and they hold nothing that changes state.
+
+A third gate is about *where* the API runs rather than who calls it:
+
+* **Role** — ``LAB_ROLE=paper`` marks a server that only runs the live paper terminal.
+  Reads stay open (the dashboard needs them), and so do the live-paper controls; every
+  other state-changing call — research, ingest, ML training, alpha proposals, the batch
+  paper job, rewriting ``.env`` — is refused. Research belongs on the workstation,
+  where its data and its compute are; a server that rewrites its own settings from a
+  browser is a server whose ledger nobody can reproduce.
 """
 
 from __future__ import annotations
@@ -35,16 +44,57 @@ DEFAULT_ALLOWED_ORIGINS: tuple[str, ...] = (
 )
 TOKEN_HEADER = "x-lab-token"
 
+ROLE_FULL = "full"
+ROLE_PAPER = "paper"
+KNOWN_ROLES: frozenset[str] = frozenset({ROLE_FULL, ROLE_PAPER})
+
+#: The only state-changing calls a `paper` server accepts: the live terminal controls.
+PAPER_ROLE_WRITES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("POST", "/api/paper/live/start"),
+        ("POST", "/api/paper/live/stop"),
+        ("POST", "/api/paper/live/close-position"),
+        ("POST", "/api/paper/live/update-stops"),
+    }
+)
+_READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def role_refusal(role: str, *, method: str, path: str) -> str | None:
+    """Why a call is refused on this deployment role, or None when it may proceed."""
+    if role != ROLE_PAPER:
+        return None
+    verb = method.upper()
+    if verb in _READ_METHODS or not path.startswith("/api"):
+        return None
+    if (verb, path.rstrip("/")) in PAPER_ROLE_WRITES:
+        return None
+    return (
+        f"{verb} {path} is disabled on this server (LAB_ROLE=paper): it only runs the "
+        "live paper terminal. Run research, ingest and ML on the workstation."
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class ApiSecurity:
     allowed_origins: tuple[str, ...] = DEFAULT_ALLOWED_ORIGINS
     token: str = ""
+    role: str = ROLE_FULL
+
+    def __post_init__(self) -> None:
+        if self.role not in KNOWN_ROLES:
+            # Fail closed: a typo in LAB_ROLE must not quietly mean "full".
+            known = ", ".join(sorted(KNOWN_ROLES))
+            raise ValueError(f"unknown LAB_ROLE {self.role!r}; expected one of: {known}")
 
     @classmethod
-    def from_values(cls, *, origins: str, token: str) -> ApiSecurity:
+    def from_values(cls, *, origins: str, token: str, role: str = ROLE_FULL) -> ApiSecurity:
         parsed = tuple(item.strip().rstrip("/") for item in origins.split(",") if item.strip())
-        return cls(allowed_origins=parsed or DEFAULT_ALLOWED_ORIGINS, token=token.strip())
+        return cls(
+            allowed_origins=parsed or DEFAULT_ALLOWED_ORIGINS,
+            token=token.strip(),
+            role=role.strip().lower() or ROLE_FULL,
+        )
 
     def refusal(
         self,
@@ -66,4 +116,4 @@ class ApiSecurity:
             presented_token and hmac.compare_digest(presented_token, self.token)
         ):
             return "missing or invalid API token"
-        return None
+        return role_refusal(self.role, method=method, path=path)

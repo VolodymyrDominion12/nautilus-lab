@@ -7,7 +7,8 @@ import os
 import subprocess
 import tempfile
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC
 from decimal import Decimal
 from pathlib import Path
@@ -44,8 +45,14 @@ from nautilus_lab.api.data_health import (
 )
 from nautilus_lab.api.experiment_history import list_history, load_history_entry
 from nautilus_lab.api.journal_service import list_journal_entries, update_journal_decision
+from nautilus_lab.api.live_paper_boot import (
+    autostart_config,
+    boot_live_paper,
+    journal_from_settings,
+    live_config_from_settings,
+)
 from nautilus_lab.api.ml_runner import list_models
-from nautilus_lab.api.paper_streamer import LIVE_PAPER_SESSION, LivePaperConfig
+from nautilus_lab.api.paper_streamer import LIVE_PAPER_SESSION
 from nautilus_lab.api.research_runner import (
     default_tearsheet_path,
     load_job_result,
@@ -73,9 +80,20 @@ from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
 from nautilus_lab.interfaces.composition import settings
 
-app = FastAPI(title="Nautilus Lab API")
-
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # Resume the unfinished live paper session, or autostart one. Shutdown deliberately
+    # does NOT stop it: a session ended by SIGTERM (deploy, reboot) must resume, and only
+    # a session a person stopped is final in the journal.
+    outcome = await boot_live_paper(LIVE_PAPER_SESSION, autostart=autostart_config(settings()))
+    print(f"live paper boot: {outcome}", flush=True)
+    yield
+
+
+app = FastAPI(title="Nautilus Lab API", lifespan=_lifespan)
 REPORTS_DIR = os.path.join(ROOT_DIR, "reports")
 HYPOTHESES_DIR = os.path.join(ROOT_DIR, "research", "hypotheses")
 SPECS_DIR = os.path.join(ROOT_DIR, "specs", "strategies")
@@ -91,7 +109,11 @@ app.mount("/static_hypotheses", StaticFiles(directory=HYPOTHESES_DIR), name="sta
 SECURITY = ApiSecurity.from_values(
     origins=settings().api_allowed_origins,
     token=settings().api_token,
+    role=settings().lab_role,
 )
+
+# Persist the live paper ledger when LIVE_PAPER_JOURNAL is set (see live_paper_journal.py).
+LIVE_PAPER_SESSION.journal = journal_from_settings(settings(), root=Path(ROOT_DIR))
 
 
 @app.middleware("http")
@@ -368,6 +390,8 @@ def get_status(catalog_path: str | None = None) -> dict[str, Any]:
         "paper_robots": sorted(item.value for item in PAPER_SUPPORTED_ROBOTS),
         "is_live": False,
         "live_safe_mode": "FAIL_CLOSED",
+        "lab_role": SECURITY.role,
+        "live_paper_persisted": LIVE_PAPER_SESSION.journal is not None,
     }
 
 
@@ -1243,9 +1267,8 @@ def get_paper_live_state() -> dict[str, Any]:
 async def start_paper_live(req: PaperLiveStartRequest) -> dict[str, Any]:
     # Robot parameters, fees and breakers come from the same Settings the research runs
     # use, so the terminal rehearses the tested configuration rather than its own defaults.
-    cfg = settings()
-    fees = cfg.fee_schedule()
-    config = LivePaperConfig(
+    config = live_config_from_settings(
+        settings(),
         symbol=req.symbol,
         interval=req.interval,
         robot=req.robot,
@@ -1255,14 +1278,6 @@ async def start_paper_live(req: PaperLiveStartRequest) -> dict[str, Any]:
         take_profit_multiple=Decimal(req.take_profit_multiple),
         mode=req.mode,
         auto_trade=req.auto_trade,
-        maker_fee=fees.maker,
-        taker_fee=fees.taker,
-        fast_ema=cfg.fast_ema,
-        slow_ema=cfg.slow_ema,
-        regime=cfg.regime_params(),
-        adaptive=cfg.adaptive_ema_params(),
-        max_daily_loss=cfg.max_daily_loss,
-        max_drawdown=cfg.max_drawdown,
     )
     try:
         await LIVE_PAPER_SESSION.start(config)

@@ -481,7 +481,9 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
             # predates the taker-flow series would stay without it forever: the bars are
             # "up to date", the order-flow field is not. Backfill the full window once,
             # out loud, instead of leaving a silently degraded feature behind.
-            if inc_start is None and not taker_flow_catalog(cfg).series_exists(symbol):
+            if inc_start is None and not taker_flow_catalog(cfg).series_exists(
+                symbol, cfg.bar_interval
+            ):
                 print(f"symbol={symbol} taker-flow backfill: re-reading the full window")
                 inc_start = default_start
             if inc_start is None:

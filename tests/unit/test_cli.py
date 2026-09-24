@@ -92,8 +92,12 @@ def test_cli_robot_without_adapter_fails_closed(robot: str) -> None:
     assert main(["research", "--robot", robot, "--synthetic", "--bars", "200"]) == 1
 
 
-def test_cli_meta_label_without_model_fails_closed() -> None:
+def test_cli_meta_label_without_model_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Meta-label must not silently fall back to an untrained heuristic."""
+    # The lab's own .env may point at a real trained booster; the fail-closed contract is
+    # "no model path -> refuse", so clear both model paths instead of trusting ambient config.
+    monkeypatch.setenv("META_LABEL_MODEL_PATH", "")
+    monkeypatch.setenv("FORMULAIC_MODEL_PATH", "")
     assert main(["research", "--robot", "meta_label", "--synthetic", "--bars", "200"]) == 1
 
 

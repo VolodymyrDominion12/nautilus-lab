@@ -28,6 +28,7 @@
 | Шукаю стратегічний роудмап розвитку та покращення результатів | [21-roadmap-rozvytku.md](21-roadmap-rozvytku.md) |
 | Хочу знати, що з роудмапу вже зроблено, а що в ньому застаріло | [22-plan-realizatsii-roadmap.md](22-plan-realizatsii-roadmap.md) |
 | Хочу запустити робота в paper-режимі та побачити журнал угод | [24-paper-treydynh.md](24-paper-treydynh.md) |
+| Хочу, щоб paper-торгівля йшла 24/7 на VPS, а аналіз — локально | [26-deploy-vps.md](26-deploy-vps.md) |
 | Хочу використати MFT-модулі (VPIN, Хоукс, Келлі, GLFT...) у своєму коді | [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md) |
 | Шукаю точний синтаксис команд | [10-cli-dovidnyk.md](10-cli-dovidnyk.md) |
 | Щось упало з помилкою | [11-troubleshooting-faq.md](11-troubleshooting-faq.md) |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import glob
 import json
@@ -7,6 +8,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC
@@ -44,6 +46,13 @@ from nautilus_lab.api.data_health import (
     invalidate_data_health_cache,
 )
 from nautilus_lab.api.experiment_history import list_history, load_history_entry
+from nautilus_lab.api.health import (
+    HealthLimits,
+    Readiness,
+    check_readiness,
+    render_metrics,
+    run_watchdog,
+)
 from nautilus_lab.api.journal_service import list_journal_entries, update_journal_decision
 from nautilus_lab.api.live_paper_boot import (
     boot_sessions,
@@ -83,7 +92,8 @@ from nautilus_lab.domain.stress_slices import STRESS_SLICES
 from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
-from nautilus_lab.interfaces.composition import settings
+from nautilus_lab.infrastructure.provenance import code_manifest
+from nautilus_lab.interfaces.composition import notifier, settings
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -97,9 +107,32 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Resume every unfinished live paper session, then bring up the declared portfolio.
     # Shutdown deliberately does NOT stop them: sessions ended by SIGTERM (deploy, reboot)
     # must resume, and only a session a person stopped is final in its journal.
-    for line in await boot_sessions(LIVE_SESSIONS, settings(), root=Path(ROOT_DIR)):
+    boot_lines = await boot_sessions(LIVE_SESSIONS, settings(), root=Path(ROOT_DIR))
+    for line in boot_lines:
         print(f"live paper boot: {line}", flush=True)
+    alerts = notifier(settings())
+    if LIVE_SESSIONS.active():
+        # One message per start: a deploy or a crash-restart is visible where the alerts
+        # go, with the code revision the ledgers continue under.
+        await asyncio.to_thread(
+            alerts.notify,
+            f"live paper started: {code_manifest().summary_line()}; " + "; ".join(boot_lines),
+            "INFO",
+        )
+    watchdog: asyncio.Task[None] | None = None
+    every = settings().live_paper_watchdog_seconds
+    if every > 0:
+        watchdog = asyncio.create_task(
+            run_watchdog(
+                _readiness,
+                alerts,
+                every_seconds=every,
+                sessions=lambda: list(LIVE_SESSIONS.sessions.values()),
+            )
+        )
     yield
+    if watchdog is not None:
+        watchdog.cancel()
 
 
 app = FastAPI(title="Nautilus Lab API", lifespan=_lifespan)
@@ -330,6 +363,48 @@ def _mask_settings(config: dict[str, str | None]) -> dict[str, str]:
 @app.get("/")
 def read_root() -> dict[str, str]:
     return {"status": "ok", "message": "Nautilus Lab API is running"}
+
+
+#: Read once, like SECURITY: thresholds are deployment settings, not per-request input.
+HEALTH_LIMITS = HealthLimits(
+    message_timeout_seconds=settings().live_paper_feed_timeout_seconds,
+    closed_bar_slack_seconds=settings().live_paper_closed_bar_slack_seconds,
+    startup_grace_seconds=settings().live_paper_feed_grace_seconds,
+)
+
+
+def _readiness() -> Readiness:
+    hub = LIVE_SESSIONS.feed_hub
+    return check_readiness(
+        hub.status() if hub is not None else [],
+        LIVE_SESSIONS.sessions.values(),
+        now=time.time(),
+        limits=HEALTH_LIMITS,
+    )
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    """The process answers. Says nothing about whether it trades (see /readyz)."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz() -> JSONResponse:
+    """503 while a feed is silent or a running session cannot write its ledger.
+
+    Outside /api on purpose: the Docker health check and an external uptime monitor call
+    it without the dashboard token. It exposes symbols and ages, never balances.
+    """
+    readiness = _readiness()
+    return JSONResponse(status_code=200 if readiness.ready else 503, content=readiness.as_dict())
+
+
+@app.get("/api/metrics")
+def metrics() -> Response:
+    """Prometheus text format. Under /api: behind the token, since it shows equity."""
+    body = render_metrics(_readiness(), LIVE_SESSIONS.sessions.values(), manifest=code_manifest())
+    return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 def _default_catalog_dir() -> str:

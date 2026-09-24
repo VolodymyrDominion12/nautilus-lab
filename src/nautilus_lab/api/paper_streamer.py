@@ -258,6 +258,10 @@ class LivePaperSessionManager:
         self.config = config or LivePaperConfig()
         self._history_loader = history_loader
         self.journal = journal
+        #: Failed journal writes since start, and whether the latest write failed. The
+        #: health checks and the watchdog read these (api/health.py, docs/27 E-1.6).
+        self.journal_errors = 0
+        self.journal_failing = False
         #: Shared market data. Several sessions on one symbol+interval read one socket;
         #: without a hub the session opens its own (single-session mode, tests).
         self.feed_hub = feed_hub
@@ -979,6 +983,10 @@ class LivePaperSessionManager:
             # A full disk must not take the trading loop down with it; say so loudly.
             logger.error("Live paper journal write failed (%s): %s", event_type, exc)
             self.status_message = f"Journal write failed: {exc}"
+            self.journal_errors += 1
+            self.journal_failing = True
+        else:
+            self.journal_failing = False
 
     def _journal_fill(self, fill: LiveFill) -> None:
         self._journal_event(FILL, {"fill": asdict(fill)})
@@ -1090,7 +1098,7 @@ class LivePaperSessionManager:
                 backoff = min(backoff * 2, 30)
 
 
-_INTERVAL_SECONDS: dict[str, int] = {
+INTERVAL_SECONDS: dict[str, int] = {
     "1m": 60,
     "3m": 180,
     "5m": 300,
@@ -1109,7 +1117,7 @@ async def binance_history_loader(symbol: str, interval: str, count: int) -> list
     from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
     from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
 
-    seconds = _INTERVAL_SECONDS.get(interval)
+    seconds = INTERVAL_SECONDS.get(interval)
     if seconds is None:
         return []
     end = datetime.now(UTC)

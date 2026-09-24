@@ -309,6 +309,48 @@ equity = pd.json_normalize(ev[ev.type == "snapshot"]["equity_point"].dropna())
 0 * * * *  cd ~/PycharmProjects/nautilus-lab && VPS=lab@100.101.102.103 scripts/pull_vps.sh >/dev/null 2>&1
 ```
 
+## 7a. Моніторинг: здоров'я, алерти, метрики
+
+Код — `src/nautilus_lab/api/health.py` (docs/27 E-1.5/E-1.6).
+
+| Що | Де | Для кого |
+|---|---|---|
+| `GET /healthz` | без токена | «процес відповідає» — і все |
+| `GET /readyz` | без токена, 200/503 | Docker health check і зовнішній монітор: чи сервер **працює** |
+| `GET /api/metrics` | за токеном | Prometheus-текст: вік останнього повідомлення й закритого бару кожного фіду, реконекти, equity і помилки журналу кожної сесії |
+| watchdog | у процесі API | повідомлення в Telegram/webhook при зміні стану |
+
+`/readyz` повертає 503, коли:
+
+* фід мовчить довше `LIVE_PAPER_FEED_TIMEOUT_SECONDS` (90 с; Binance шле оновлення
+  свічки кожні ~2 с) — навіть якщо сокет формально «connected»;
+* закритий бар запізнюється більше ніж на інтервал + `LIVE_PAPER_CLOSED_BAR_SLACK_SECONDS`;
+* новий фід не дав жодного повідомлення за `LIVE_PAPER_FEED_GRACE_SECONDS`;
+* остання спроба запису журналу запущеної сесії впала (повний диск, права) — у
+  ледджері вже є дірка.
+
+Сервер без сесій — `ready`: простій не є поломкою. Контейнер із 503 стає `unhealthy`
+(`docker compose ps`); сам Docker його **не** перезапускає — сигнал іде через алерти.
+
+Watchdog кожні `LIVE_PAPER_WATCHDOG_SECONDS` (30 с) перевіряє те саме й пише в
+`TELEGRAM_*`/`ALERT_WEBHOOK_URL` лише **зміни**: «problem: …», а потім «recovered: …»;
+довгий збій Binance — два повідомлення, а не двісті. Окремо — коли в сесії **вперше**
+спрацьовує circuit breaker (денний збиток, max drawdown, VaR/CVaR), і одне повідомлення
+на кожен старт процесу з ревізією коду та списком піднятих сесій. Збій самого
+Telegram торгівлю не зупиняє.
+
+Перевірити руками:
+
+```bash
+curl -s http://100.x.y.z/readyz | python3 -m json.tool      # через Caddy
+docker compose -f deploy/docker-compose.yml ps                # STATUS: healthy / unhealthy
+curl -s -H "X-Lab-Token: $API_TOKEN" http://100.x.y.z/api/metrics | head -30
+```
+
+Чого тут **немає**: сигналу, коли мовчить сам VPS (вимкнений, без мережі) — процес, якого
+немає, нічого не надішле. Для цього — зовнішній пінг `/readyz` (uptime-монітор або cron
+на станції), docs/27 E-1.7.
+
 ## 8. Якщо щось не так
 
 | Симптом | Причина / що робити |
@@ -324,6 +366,7 @@ equity = pd.json_normalize(ev[ev.type == "snapshot"]["equity_point"].dropna())
 | `deploy_vps.sh`: `missing .env on the server` / `missing deploy/.env` | Шаблони скопіюйте самі (крок 4) — скрипт лише підказує команду і виходить |
 | Контейнер `api` не стартує, `unknown LAB_ROLE` | Опечатка в `LAB_ROLE` (дозволено `full`, `paper`) — навмисно fail closed |
 | `.env` виявився текою | `docker compose up` запустили до створення `.env`; `rmdir .env && cp deploy/vps.env.example .env` |
+| `docker compose ps` показує `unhealthy` | `curl -s http://<BIND_ADDR>/readyz` — у полі `problems` написано, який фід мовчить або яка сесія не пише журнал; те саме прийшло в Telegram, якщо його налаштовано |
 | Permission denied у `data/` (у лозі `Live paper journal write failed (...)`) | `data/` належить комусь іншому, ніж uid 1000 контейнера: `sudo chown -R 1000:1000 data reports catalog`. Поки це не зроблено, сесії йдуть у пам'ять, і після рестарту починаються з нуля |
 | Контейнер `api` не стартує: `live paper journal is not writable` | Той самий chown `data/`. Навмисно fail closed: паперовий термінал без журналу — це не «деградований режим», а порожній ledger при здоровому дашборді. Режим спостереження без журналу — порожній `LIVE_PAPER_JOURNAL` |
 | `deploy_vps.sh`: `check_exposure: refusing — BIND_ADDR=...` | Дашборд був би відкритий без замка: прив'яжіть до Tailscale (`BIND_ADDR=100.x.y.z`) або ввімкніть `DASHBOARD_AUTH=on` (розділ «Варіант із публічним доменом») |

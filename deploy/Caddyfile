@@ -27,7 +27,8 @@
 	import auth_{$DASHBOARD_AUTH:off}
 
 	# API, the live-paper WebSocket and the report/hypothesis mounts.
-	@api path /api/* /static_reports/* /static_hypotheses/* /docs /openapi.json
+	# /healthz and /readyz: for an external uptime monitor (behind basic_auth when it is on).
+	@api path /api/* /static_reports/* /static_hypotheses/* /docs /openapi.json /healthz /readyz
 	handle @api {
 		reverse_proxy api:8000
 	}

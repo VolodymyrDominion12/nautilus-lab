@@ -41,9 +41,11 @@ ARG LAB_REVISION=""
 ENV LAB_REVISION=${LAB_REVISION}
 
 EXPOSE 8000
-# `/` is outside the /api token gate, so the probe needs no secret.
+# /readyz (api/health.py), not `/`: the process answering proves nothing while a feed
+# is silent or a journal cannot be written; /readyz is 503 then and the container turns
+# `unhealthy`. It is outside the /api token gate, so the probe needs no secret.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=4)"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4)"
 
 # One worker, always: the live paper session is one object in this process. A second
 # worker would run a second, independent ledger behind the same URL.

@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     live_paper_max_sessions: int = 8
     # Distinct symbol+interval sockets to Binance at once (sessions share them).
     live_paper_max_feeds: int = 5
+    # Liveness of the paper server (api/health.py, docs/27 E-1.5/E-1.6). A feed that
+    # sends nothing for FEED_TIMEOUT, or no closed bar for interval + CLOSED_BAR_SLACK,
+    # makes /readyz 503 and the watchdog alert (Telegram/webhook settings below).
+    live_paper_feed_timeout_seconds: float = 90.0
+    live_paper_closed_bar_slack_seconds: float = 180.0
+    live_paper_feed_grace_seconds: float = 120.0
+    # How often the watchdog re-checks; 0 turns it off (e.g. on a workstation).
+    live_paper_watchdog_seconds: float = 30.0
     live_enabled: bool = False
     starting_equity: Decimal = Decimal("100000")
     risk_per_trade: Decimal = Decimal("0.005")

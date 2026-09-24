@@ -8,12 +8,17 @@ one market see exactly the same bars — the precondition for comparing them at 
 The socket opens when the first session subscribes and closes when the last one
 leaves. A subscriber that raises is logged and kept: one broken session must not
 starve the others of data.
+
+Every feed remembers when it started, when its last message arrived and when its last
+*closed* bar arrived. A socket can stay "connected" while delivering nothing; those
+timestamps are what `api/health.py` judges liveness by (docs/27 E-1.5).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
@@ -39,6 +44,8 @@ class MessageSource(Protocol):
 
 #: Opens a stream for a URL; used as `async with connect(url) as source`.
 Connect = Callable[[str], AbstractAsyncContextManager[MessageSource]]
+#: Wall-clock seconds; injected so tests can move time.
+Clock = Callable[[], float]
 
 
 def _default_connect(url: str) -> AbstractAsyncContextManager[MessageSource]:
@@ -55,12 +62,17 @@ def feed_key(symbol: str, interval: str) -> FeedKey:
 
 
 class MarketFeed:
-    def __init__(self, key: FeedKey, *, connect: Connect) -> None:
+    def __init__(self, key: FeedKey, *, connect: Connect, clock: Clock = time.time) -> None:
         self.key = key
         self.subscribers: list[FeedSubscriber] = []
         self.connected = False
         self.messages = 0
+        self.reconnects = 0
+        self.started_at: float | None = None
+        self.last_message_at: float | None = None
+        self.last_closed_at: float | None = None
         self._connect = connect
+        self._clock = clock
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -70,6 +82,8 @@ class MarketFeed:
 
     def start(self) -> None:
         if self._task is None or self._task.done():
+            if self.started_at is None:
+                self.started_at = self._clock()
             self._task = asyncio.create_task(self._run())
 
     def stop(self) -> None:
@@ -83,6 +97,10 @@ class MarketFeed:
         if update is None:
             return
         self.messages += 1
+        now = self._clock()
+        self.last_message_at = now
+        if update.get("is_closed"):
+            self.last_closed_at = now
         for subscriber in list(self.subscribers):
             try:
                 await subscriber.on_market_update(dict(update))
@@ -108,6 +126,7 @@ class MarketFeed:
                 raise
             except Exception as exc:
                 self.connected = False
+                self.reconnects += 1
                 logger.warning("Feed %s error: %s. Reconnecting in %ss", self.key, exc, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
@@ -116,10 +135,13 @@ class MarketFeed:
 class FeedHub:
     """Feeds by symbol+interval; a feed lives exactly as long as it has subscribers."""
 
-    def __init__(self, *, connect: Connect | None = None, max_feeds: int = 5) -> None:
+    def __init__(
+        self, *, connect: Connect | None = None, max_feeds: int = 5, clock: Clock = time.time
+    ) -> None:
         self.feeds: dict[FeedKey, MarketFeed] = {}
         self.max_feeds = max_feeds
         self._connect = connect or _default_connect
+        self._clock = clock
 
     def can_add(self, symbol: str, interval: str) -> bool:
         return feed_key(symbol, interval) in self.feeds or len(self.feeds) < self.max_feeds
@@ -133,7 +155,7 @@ class FeedHub:
                     f"at most {self.max_feeds} symbol+interval feeds at once; "
                     f"stop a session on another market before adding {key[0]} {key[1]}"
                 )
-            feed = MarketFeed(key, connect=self._connect)
+            feed = MarketFeed(key, connect=self._connect, clock=self._clock)
             self.feeds[key] = feed
         if subscriber not in feed.subscribers:
             feed.subscribers.append(subscriber)
@@ -156,6 +178,10 @@ class FeedHub:
                 "connected": feed.connected,
                 "sessions": len(feed.subscribers),
                 "messages": feed.messages,
+                "reconnects": feed.reconnects,
+                "started_at": feed.started_at,
+                "last_message_at": feed.last_message_at,
+                "last_closed_at": feed.last_closed_at,
             }
             for key, feed in self.feeds.items()
         ]

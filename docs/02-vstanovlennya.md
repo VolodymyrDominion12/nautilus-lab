@@ -7,7 +7,7 @@
 | Python | **3.12 або новіше** | Сам проєкт. У репозиторії вже є `.venv` з Python 3.13. |
 | [uv](https://docs.astral.sh/uv/) | будь-яка свіжа | Менеджер залежностей і запуск команд. |
 | Git | будь-яка | Контроль версій. |
-| Інтернет | — | Лише для `lab ingest` (завантаження історії з Binance). Бектести працюють офлайн. |
+| Інтернет | — | Лише для `lab ingest` (історія з Binance), `lab propose` (LLM) і живих джерел (`--live-ticks`, `--depth`, `lab paper --source live`). Бектести на каталозі працюють офлайн. |
 
 Інсталяція з нуля:
 
@@ -26,11 +26,12 @@ uv sync --extra dev           # базові залежності + тести, 
 | `research` | `arch`, `optuna`, `polars` | EGARCH-прогноз волатильності, байєсівська оптимізація параметрів (`--optuna`), Polars-мікроструктура |
 | `visualization` | `plotly`, `kaleido`, `simplejson` | HTML-тиршит (`--tearsheet`) |
 | `alerts` | `httpx` | Сповіщення в Telegram/Webhook (`--notify`) |
+| `api` | `fastapi`, `uvicorn`, `websockets`, `pyyaml`, `python-dotenv` | Дашборд і paper-термінал (див. [20](20-veb-dashbord-ta-alpha-proposer.md), [24](24-paper-treydynh.md)) |
 
 ```bash
 uv sync --extra dev                                     # мінімум для роботи й тестів
 uv sync --extra dev --extra ml --extra research          # + ML, Optuna, Polars, arch
-uv sync --extra dev --extra research --extra visualization --extra alerts   # повний стек
+uv sync --extra dev --extra research --extra visualization --extra alerts --extra api   # повний стек
 ```
 
 > **Якщо `uv` не має доступу до свого кеша** (наприклад, у обмеженому середовищі),
@@ -54,7 +55,7 @@ uv run lab research
 # 4. Той самий прогін для простої EMA-стратегії — щоб було з чим порівняти
 uv run lab research --robot ema
 
-# 5. Подивитися, які ордери зробив би робот (жоден не піде на біржу)
+# 5. Подивитися сесію робота на історії: повний журнал угод, жоден ордер не піде на біржу
 uv run lab paper --bars 500
 ```
 
@@ -78,6 +79,7 @@ uv run lab paper --bars 500
 | `TRADING_MODE` | `research` | `research` / `paper` / `live`. `live` заборонено на рівні коду. |
 | `LIVE_ENABLED` | `false` | Запобіжник-прапорець. Навіть `true` не вмикає живу торгівлю — адаптера виконання не існує. |
 | `CATALOG_PATH` | `catalog` | Тека Parquet-каталогу з історією. |
+| `CATALOG_PATHS` | порожньо | Додаткові теки каталогу через кому — по одному інтервалу в кожній (див. `Settings.all_catalog_paths()`). |
 | `BAR_INTERVAL` | `1h` | Таймфрейм: `1m`, `5m`, `15m`, `1h`, `4h`, `1d`. |
 | `INSTRUMENT_ID` | `ETH/USDT.SIM` | Основний інструмент дослідження. |
 | `BAR_TYPE` | `ETH/USDT.SIM-1-MINUTE-LAST-EXTERNAL` | Формат бару для синтетичного режиму. **Фактично не використовується:** синтетика завжди бере 1-хвилинний тип, а каталог будує `bar_type` з `INSTRUMENT_ID` + `BAR_INTERVAL`. Змінна лишена для сумісності. |
@@ -97,6 +99,26 @@ uv run lab paper --bars 500
 | `KELLY_FRACTION` | `0.25` | Частка від повного критерію Келлі (фракційний Келлі = обмежувач зверху). |
 | `MAX_VAR_99` | `0.05` | Порог історичного VaR 99% — вище нього нові входи блокуються. |
 
+### Ризик-overlays (типово вимкнені)
+
+| Змінна | За замовчуванням | Що робить |
+|--------|------------------|-----------|
+| `USE_VOL_SCALING` | `false` | Масштабувати ризик обернено до прогнозу волатильності (ніколи не збільшує його). |
+| `VOL_SCALING_TARGET` | `0.02` | Цільова волатильність на бар для `USE_VOL_SCALING`. |
+| `VOL_MODEL` | `har` | Яка модель дає прогноз: `har`, `egarch`, `gjr_garch` (останні дві — extra `research`). |
+| `VOL_REFIT_EVERY` | `24` | Як часто переоцінювати модель волатильності (у барах); між переоцінками використовується останній прогноз. |
+| `USE_FRACTIONAL_KELLY` | `false` | Обмежувати ризик фракційним Келлі за статистикою минулих угод. |
+| `KELLY_MIN_TRADES` | `30` | Мінімум закритих угод, після якого статистика вважається придатною. |
+| `USE_CVAR_BREAKER` | `false` | Блокувати нові входи за історичним CVaR 99%. |
+| `MAX_CVAR_99` | `0.05` | Поріг CVaR 99% для `USE_CVAR_BREAKER`. |
+| `USE_RATCHET` | `false` | Детермінований profit-ratchet: прокол стопа закриває позицію навіть якщо робот мовчить; підлога ніколи не опускається. |
+| `RATCHET_ARM_PCT` | `0.0125` | З якого прибутку ratchet «озброюється». |
+| `USE_PROTECTIVE_STOP` | `true` | Після кожного входу `SignalRobot` ставить reduce-only стоп-ордер на тій самій відстані, від якої рахувався розмір позиції. `false` — поведінка до 2026-09-23 (розмір позиції без обмеження збитку). |
+| `SELECTION_METRIC` | `pnl` | Що максимізує підбір на IS: `pnl`, `sharpe`, `calmar`. |
+| `DRAWDOWN_COOLDOWN_DAYS` | `0` | Через скільки днів спрацьований `MAX_DRAWDOWN` перебазовує пік і знову пускає входи; `0` — до кінця прогону. |
+| `PAIRS_REFIT_EVERY` | `0` | Робот `pairs`: переоцінювати коінтеграцію раз на N барів і закривати позицію, коли пара перестала проходити ворота; `0` — заморозити β після першого фіту. Той самий N — каденція повторних спроб, поки ворота закриті. |
+| `PAIRS_Z_ENTRY_QUANTILE` | `0` | Робот `pairs`: поріг входу як емпіричний квантиль вікна спреду (`p` у (0, 0.5)) замість фіксованого `z_entry`; `0` — вимкнено. |
+
 ### Комісії
 
 | Змінна | За замовчуванням | Що робить |
@@ -111,7 +133,7 @@ uv run lab paper --bars 500
 
 | Змінна | За замовчуванням | Що робить |
 |--------|------------------|-----------|
-| `ROBOT` | `regime` | Активний робот: `regime`, `ema`, `pairs`, `funding`, `ml_obi`, `glft`, `tri_scan` (див. застереження в [05](05-roboty.md)). |
+| `ROBOT` | `regime` | Активний робот за замовчуванням. `RobotName` знає одинадцять назв: `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `funding`, `ml_obi`, `glft`, `tri_scan`; до рушія бектесту підключено вісім із них (`BACKTEST_WIRED_ROBOTS`), решта падає fail closed (див. [05](05-roboty.md)). |
 | `ER_PERIOD` | `20` | Вікно коефіцієнта ефективності Кауфмана. |
 | `TREND_EMA_PERIOD` | `40` | Період EMA для вимірювання нахилу (тренду). |
 | `SLOPE_LOOKBACK` | `10` | За скільки барів міряти нахил EMA. |
@@ -128,12 +150,42 @@ uv run lab paper --bars 500
 | `FAST_EMA` | `10` | Швидка ковзна. |
 | `SLOW_EMA` | `20` | Повільна ковзна. Має бути більшою за швидку. |
 
+### Робот `adaptive_ema`
+
+| Змінна | За замовчуванням | Що робить |
+|--------|------------------|-----------|
+| `ADAPTIVE_PERIOD` | `40` | Базовий період EMA, крок якої залежить від ER Кауфмана. |
+| `ADAPTIVE_ER_PERIOD` | `20` | Вікно ER для цього кроку. |
+| `ADAPTIVE_SELECTIVITY` | `0.5` | Сила адаптації; `0` вимикає її — фільтр стає звичайним EMA, тобто `regime`. |
+| `ADAPTIVE_SLOPE_LOOKBACK` | `10` | За скільки барів міряти нахил EMA. |
+
+Гістерезис `ENTER_TREND_ER` / `EXIT_TREND_ER` і канали `DONCHIAN_PERIOD` / `BB_PERIOD` / `BB_K` цей робот бере з тих самих змінних, що й `regime` (`Settings.adaptive_ema_params()`).
+
+### Роботи `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `ml_obi`
+
+| Змінна | За замовчуванням | Що робить |
+|--------|------------------|-----------|
+| `VPIN_MOMENTUM_EMA_PERIOD` | `50` | Робот `vpin_momentum`: період EMA, відносно якої береться напрямок. |
+| `VPIN_MOMENTUM_ATR_MULTIPLE` | `2` | Робот `vpin_momentum`: множник ATR для трейлінг-стопа. |
+| `FORMULAIC_MODEL_PATH` | порожньо | Шлях до навченої моделі `formulaic_lgbm` (`scripts/train_formulaic_lgbm.py`). Порожньо → робот падає fail closed, а не підміняється евристикою. |
+| `FORMULAIC_THRESHOLD` | `0.55` | Поріг імовірності класифікатора. |
+| `META_LABEL_MODEL_PATH` | порожньо | Шлях до моделі `meta_label` (`scripts/train_meta_label.py`); без неї робот відмовляється працювати. |
+| `META_LABEL_THRESHOLD` | `0.55` | Поріг імовірності meta-label. |
+| `ML_OBI_MODEL_PATH` | порожньо | Шлях до моделі `ml_obi`; без неї використовується евристичний класифікатор. |
+| `ML_OBI_THRESHOLD` | `0.55` | Поріг імовірності для сигналів за книгою. |
+
 ### Валідація й VPIN
 
 | Змінна | За замовчуванням | Що робить |
 |--------|------------------|-----------|
 | `EMBARGO_BARS` | `10` | Розрив у барах між in-sample і out-of-sample. |
 | `USE_BAR_VPIN` | `false` | Увімкнути VPIN-фільтр режиму для робота `regime`. |
+| `USE_TICK_VPIN` | `false` | VPIN-фільтр на **окремих угодах** (`catalog/data/agg_trade/`, заливається `lab ingest --trades`). Дозволений лише для `regime`, `meta_label`, `vpin_momentum`; для інших роботів CLI відмовляється працювати, а не мовчки ігнорує прапорець. |
+| `USE_HAWKES` | `false` | Фільтр за інтенсивністю процесу Хоукса на тих самих тіках. Дозволений лише для `regime` і `meta_label`. |
+| `HAWKES_BASELINE` | `0.1` | Базова інтенсивність процесу. |
+| `HAWKES_ALPHA` | `0.5` | Сила самозбудження (стрибок після події). |
+| `HAWKES_BETA` | `1.0` | Швидкість затухання самозбудження. |
+| `HAWKES_TOXIC_THRESHOLD` | `2.0` | Інтенсивність, вище якої потік вважається токсичним. |
 | `VPIN_BUCKET_VOLUME` | `1000` | Обсяг одного «кошика» VPIN (у базовій валюті). |
 | `VPIN_TOXIC_THRESHOLD` | `0.7` | Поріг токсичності потоку: VPIN ≥ 0.7 → токсично. |
 
@@ -160,10 +212,60 @@ uv run lab paper --bars 500
 > найближчим часом. `.env` уже в `.gitignore`, але ключі з нього варто видалити (а якщо вони
 > колись були справжні — перевипустити на біржі). Проєкт для research-режиму не потребує жодних ключів.
 
+### Журнал дослідження
+
+| Змінна | За замовчуванням | Що робить |
+|--------|------------------|-----------|
+| `JOURNAL_ENABLED` | `false` | Дописувати рядок у журнал після кожного прогону (прапорець `--journal` робить те саме для одного прогону). |
+| `JOURNAL_PATH` | `research/journal.md` | Таблиця журналу для людини. |
+| `JOURNAL_JSONL_PATH` | `research/journal.jsonl` | Машинний лог тих самих рядків. |
+
+### Офлайн-контур LLM (`lab propose`)
+
+| Змінна | За замовчуванням | Що робить |
+|--------|------------------|-----------|
+| `LLM_API_KEY` | порожньо | Ключ до OpenAI-сумісного ендпоінта; порожньо → `lab propose` падає fail closed. |
+| `LLM_BASE_URL` | `https://api.deepseek.com/v1` | Адреса ендпоінта (працює будь-який сумісний, зокрема локальний сервер). |
+| `LLM_MODEL` | `deepseek-chat` | Ідентифікатор моделі. |
+| `LLM_TEMPERATURE` | `0.2` | Температура вибірки. |
+| `LLM_TIMEOUT_SECONDS` | `120` | Таймаут запиту. |
+| `LLM_PROMPTS_DIR` | `research/prompts` | Тека з шаблонами промптів. |
+| `LLM_HYPOTHESES_DIR` | `research/hypotheses` | Тека, куди пишуться артефакти гіпотез. |
+
+Модель живе лише в офлайн-контурі: жоден робот її не викликає (див. [14](14-llm-model-u-torhivli.md)).
+
+### Дашборд-API (extra `api`)
+
+| Змінна | За замовчуванням | Що робить |
+|--------|------------------|-----------|
+| `API_ALLOWED_ORIGINS` | порожньо | Дозволені Origin для `/api` через кому; порожньо = типові з `api/security.py` (Vite dev/preview і власний порт API). |
+| `API_TOKEN` | порожньо | Спільний секрет: якщо заданий, кожен `/api`-запит мусить нести заголовок `X-Lab-Token`. |
+| `LAB_ROLE` | `full` | Що цьому процесу дозволено: `full` — дослідницька робоча станція, `paper` — сервер, який тримає лише paper-термінал (research, ingest, ML, `lab propose` і запис налаштувань відхиляються). Невідоме значення → сервіс не стартує. |
+
+Деталі — у [20](20-veb-dashbord-ta-alpha-proposer.md) і [26](26-deploy-vps.md).
+
+### Live paper термінал
+
+| Змінна | За замовчуванням | Що робить |
+|--------|------------------|-----------|
+| `LIVE_PAPER_JOURNAL` | порожньо | Файл журналу сесії: кожен філ і кожен закритий бар дописуються туди, і незавершена сесія відновлюється при старті API; порожньо — журнал живе лише в памʼяті. |
+| `LIVE_PAPER_AUTOSTART` | `false` | Стартувати сесію при старті API, якщо відновлювати нічого. |
+| `LIVE_PAPER_SYMBOL` | `ETHUSDT` | Символ автозапущеної сесії. |
+| `LIVE_PAPER_INTERVAL` | `1h` | Інтервал барів автозапущеної сесії. |
+| `LIVE_PAPER_ROBOT` | `regime` | Робот автозапущеної сесії. |
+| `LIVE_PAPER_STARTING_EQUITY` | `10000` | Стартовий капітал сесії. |
+| `LIVE_PAPER_TAKE_PROFIT_MULTIPLE` | `2` | Множник тейк-профіту. |
+| `LIVE_PAPER_PORTFOLIO` | порожньо | YAML-портфель сесій (`deploy/paper_portfolio.yaml`); заданий — замінює `LIVE_PAPER_AUTOSTART`. |
+| `LIVE_PAPER_SESSIONS_DIR` | порожньо | Тека з журналами сесій; порожньо = `sessions/` поруч із `LIVE_PAPER_JOURNAL`. |
+| `LIVE_PAPER_MAX_SESSIONS` | `8` | Скільки сесій може працювати одночасно. |
+| `LIVE_PAPER_MAX_FEEDS` | `5` | Скільки різних пар символ+інтервал тримають WebSocket-зʼєднання одночасно. |
+
+Деталі — у [24](24-paper-treydynh.md).
+
 ## 4. Перевірка, що все працює
 
 ```bash
-uv run pytest                       # 167 тестів, включно з локальним рушієм (без мережі)
+uv run pytest                       # 825 тестів, включно з локальним рушієм (без мережі)
 uv run ruff check --fix && uv run ruff format   # стиль і форматування
 uv run mypy src tests               # сувора типізація (strict = true)
 ```
@@ -176,20 +278,31 @@ uv run mypy src tests               # сувора типізація (strict = 
 ```
 nautilus-lab/
 ├── README.md                         короткий вступ
-├── Стратегії MFT Криптоторгівлі 2026.md   вихідний дослідницький документ (джерело ідей)
+├── AGENTS.md                         правила роботи в репозиторії
 ├── docs/                             <- ця документація
+│   └── research/                     вихідні дослідницькі документи (джерело ідей)
 ├── .env                              ваші локальні налаштування (не в git)
 ├── .env.example                      шаблон налаштувань з коментарями
 ├── pyproject.toml                    залежності, налаштування ruff/mypy/pytest
 ├── catalog/                          Parquet-каталог завантаженої історії (не в git)
 │   └── data/
 │       ├── bar/<INSTRUMENT>-<TF>-LAST-EXTERNAL/*.parquet   свічки
-│       └── currency_pair/<INSTRUMENT>/*.parquet            описи інструментів
+│       ├── currency_pair/<INSTRUMENT>/*.parquet            описи інструментів
+│       ├── taker_flow/<SYMBOL>/*.parquet                   обсяг тейкерів із klines
+│       ├── agg_trade/<SYMBOL>/*.parquet                    агреговані угоди (`--trades`)
+│       ├── funding/<SYMBOL>/*.parquet                      платежі фандингу (`--funding`)
+│       └── orderbook/<SYMBOL>/*.parquet                    знімки L2 (`--depth`)
+├── specs/                            специфікації роботів і компонентів + `_validator.py`
+├── scripts/                          офлайн-скрипти (навчання моделей, експерименти)
 ├── src/nautilus_lab/
 │   ├── domain/                       чиста логіка (без мережі, без Nautilus)
 │   ├── application/                  сценарії використання, ризик, walk-forward
 │   ├── infrastructure/               біржа, каталог, рушій бектесту, синтетика
-│   └── interfaces/                   CLI `lab` і збірка залежностей
+│   ├── interfaces/                   CLI `lab` і збірка залежностей
+│   └── api/                          HTTP-шар дашборда й paper-термінала (extra `api`)
+├── frontend/                         веб-дашборд (див. [20](20-veb-dashbord-ta-alpha-proposer.md))
+├── deploy/                           Docker/Compose/VPS (див. [26](26-deploy-vps.md))
+├── research/                         журнал досліджень, промпти й артефакти гіпотез
 └── tests/
     ├── unit/                         швидкі тести чистої логіки
     └── integration/                  прогон реального рушія Nautilus на локальних даних

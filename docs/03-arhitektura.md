@@ -7,7 +7,8 @@
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │  interfaces/            CLI `lab`, збірка залежностей (composition)    │
-│  знає про всі шари, єдина точка входу                                  │
+│  api/ + frontend/       FastAPI `/api/*` + WebSocket, React-SPA        │
+│  дві точки входу, обидві знають про всі шари                           │
 └───────────────┬───────────────────────────────────────────────────────┘
                 │ створює об'єкти, передає налаштування
 ┌───────────────▼───────────────────────────────────────────────────────┐
@@ -33,11 +34,25 @@
 - заміна біржі чи рушія не чіпає жодного рядка логіки;
 - `Settings` (читання `.env`) живе лише в `infrastructure` і передається в домен параметрами.
 
-Перевірити це можна однією командою:
+**Дві точки входу, один набір сценаріїв.** `lab` у терміналі
+(`interfaces/cli.py`) і веб-додаток (`api/app.py` + статика `frontend/`) викликають
+ті самі use cases з `application/` — окремої «серверної» копії логіки немає.
+Розгортання веб-додатка на VPS описано в `deploy/` (Dockerfile.api, Dockerfile.web,
+Caddyfile, docker-compose.yml) і в [26-deploy-vps.md](26-deploy-vps.md).
+
+Перевірити інваріант домену можна однією командою:
 
 ```bash
 grep -rn "nautilus_trader" src/nautilus_lab/domain/    # нічого не знайде
 grep -rn "Settings" src/nautilus_lab/domain/           # нічого не знайде
+```
+
+Станом на зараз `domain/` не має **жодного** стороннього імпорту — лише stdlib
+(`decimal`, `datetime`, `enum`, `math`, `itertools`, `collections.abc`, `typing`).
+Перевірити повністю:
+
+```bash
+grep -rn "^from \|^import " src/nautilus_lab/domain/ | grep -v nautilus_lab.domain
 ```
 
 ## 2. Головні типи даних
@@ -149,36 +164,82 @@ BacktestReport  →  друк у консоль
 Для робота `pairs` ланцюг майже той самий, але замість `SignalRobot` працює `SpreadRobot`
 (`spread_strategy.py`), який чекає, доки зійдуться часові мітки обох ніг, і надсилає **два** ордери.
 
+### 3.1 Другий вхід: веб-додаток і паперовий термінал
+
+Той самий набір сценаріїв, але замість `argparse` — HTTP і WebSocket:
+
+```
+frontend/ (React + Vite SPA)  ──fetch /api/*──►  api/app.py: FastAPI
+                                                   │  middleware: Origin + X-Lab-Token
+  ▼                                                │  + LAB_ROLE (full | paper) — api/security.py
+два типи роботи:
+  │  A) важкі прогони (research, ingest, ML-тренування) — окремим процесом:
+  │     api/run_research_job.py / run_paper_job.py / run_ml_job.py
+  │     → application/run_walk_forward.py тощо, результат у reports/
+  │     (слот на задачу — один, повторний запуск відхиляється)
+  │  B) живий паперовий термінал — у процесі сервера:
+  │     api/market_feed.py: MarketFeed — ОДИН сокет Binance на symbol+interval,
+  │                            спільний для всіх сесій (FeedHub)
+  │     → infrastructure/binance_ws.py: BinanceKlineStream / parse_kline_message
+  │     → api/paper_streamer.py: LivePaperSessionManager — доменний робот,
+  │       application/risk.py, симульовані філи в пам'яті (ордерів на біржу немає)
+  │     → WebSocket /api/paper/live-stream  ──►  браузер (INIT_STATE + оновлення)
+  │     → infrastructure/live_paper_journal.py: журнал сесії, що переживає рестарт
+  ▼
+api/live_sessions.py: SessionRegistry — реєстр сесій, resume після SIGTERM
+```
+
+Важлива відмінність від CLI: тут є **мережа в реальному часі** (публічний
+Binance WebSocket) і процес, що живе довго. Виконання живих ордерів як не було,
+так і немає — це той самий паперовий контур, лише з потоковими барами замість
+каталогу (див. [24-paper-treydynh.md](24-paper-treydynh.md)).
+
 ## 4. Що робить кожен шар (детально)
 
 ### `domain/` — чиста логіка
 
 | Підгрупа | Модулі | Роль |
 |----------|--------|------|
-| Базові типи | `bars.py`, `signals.py`, `errors.py`, `money.py`, `trading_mode.py`, `windows.py` | Бар, сигнал, помилки, гроші, режими, ковзне вікно |
-| Індикатори | `ema.py`, `atr.py`, `windows.py`, `volatility.py` | EMA (з SMA-сідом), ATR Вайлдера, HAR-RV |
-| Класифікація режиму | `regime.py` | `RegimeClassifier` (ER Кауфмана + нахил EMA + гістерезис), `RegimeParams`, `RobotName` |
-| Стратегії | `donchian.py`, `mean_reversion.py`, `ema_crossover.py`, `regime_router.py` | Пробій, повернення до середнього, перетин EMA, маршрутизатор між ними |
+| Базові типи | `bars.py`, `signals.py`, `errors.py`, `money.py`, `trading_mode.py`, `windows.py`, `ticks.py` | Бар, сигнал, помилки, гроші, режими, ковзне вікно, тик (`AggTrade`) |
+| Індикатори | `ema.py`, `atr.py`, `windows.py`, `volatility.py`, `quantiles.py` | EMA (з SMA-сідом), ATR Вайлдера, HAR-RV, емпіричний квантиль |
+| Класифікація режиму | `regime.py` | `RegimeClassifier` (ER Кауфмана + нахил EMA + гістерезис), `RegimeParams`, `RobotName`, `BACKTEST_WIRED_ROBOTS`, `TICK_VPIN_ROBOTS`, `HAWKES_ROBOTS` |
+| Стратегії | `donchian.py`, `mean_reversion.py`, `ema_crossover.py`, `regime_router.py`, `adaptive_ema.py`, `vpin_momentum.py`, `buy_and_hold.py` | Пробій, повернення до середнього, перетин EMA, маршрутизатор між ними, адаптивне згладжування, VPIN-моментум, контроль buy&hold |
 | Пари | `pairs/cointegration.py`, `pairs/ou.py`, `pairs/pairs_trading.py`, `pairs/params.py` | Коінтеграція (OLS + справжній ADF: t-відношення, квантили МакКіннона, лаги за BIC), процес О-У, торгівля спредом |
-| Мікроструктура | `order_book.py`, `microstructure.py`, `vpin.py`, `hawkes.py`, `ml_obi_strategy.py` | Знімок книги, OBI/WOFI/fade, VPIN-кошики, інтенсивність Хоукса, ML-стратегія |
+| Мікроструктура | `order_book.py`, `microstructure.py`, `vpin.py`, `hawkes.py` | Знімок книги, OBI/WOFI/fade, VPIN-кошики, інтенсивність Хоукса |
+| ML-стратегії | `ml_classifier.py`, `ml_obi_strategy.py`, `formulaic_lgbm_strategy.py`, `meta_label_strategy.py` | Протокол класифікатора напрямку, ML-стратегія на OBI/WOFI, формульні ознаки + LightGBM, мета-мітка поверх первинного робота |
 | Інші стратегії | `funding.py`, `glft.py`, `triangular_arb.py` | Funding cash-and-carry, GLFT-котировки, пошук від'ємних циклів |
-| Ризик | `risk.py`, `portfolio_risk.py`, `kill_switch.py` | Ліміти, Келлі, VaR/CVaR, вимикач |
-| Методологія | `walk_forward.py`, `stress_slices.py`, `metrics.py`, `align.py` | Вікна IS/OOS, стрес-періоди, метрики, вирівнювання серій |
+| Крос-секційні | `xsmom.py`, `align.py`, `windowing.py` | Крос-секційний моментум, вирівнювання серій, вікна барів і прогрів |
+| Позиція та виходи | `position_plan.py`, `marking.py`, `triple_barrier.py`, `ratchet_stop.py`, `drawdown_cooldown.py` | План утримання, маркування відкритих лотів, потрійний бар'єр, храповик-стоп, пауза після просадки |
+| Офлайн-контур | `formulaic_alphas.py`, `factor_dsl.py`, `hypothesis.py` | 12 формульних ознак, DSL рецептів факторів, контракт гіпотези з лінтером вигаданих ознак |
+| Ризик | `risk.py`, `risk_overlay.py`, `portfolio_risk.py`, `kill_switch.py` | Ліміти, оверлей (vol-scaling, Келлі, CVaR), Келлі, VaR/CVaR, вимикач |
+| Методологія | `walk_forward.py`, `stress_slices.py`, `metrics.py`, `overfitting.py`, `deflated_sharpe.py`, `counterfactual.py` | Вікна IS/OOS, стрес-періоди, метрики, PBO/CSCV, дефльований Шарп, контрфактичні барами |
 
 ### `application/` — сценарії
 
 | Модуль | Роль |
 |--------|------|
-| `dtos.py` | `BacktestRequest`, `BacktestReport`, `WalkForwardRequest/Report`, `SelectedParams`, протоколи `ResearchBacktestPort`, `BarFeed` |
+| `dtos.py` | `BacktestRequest`, `BacktestReport`, `WalkForwardRequest/Report`, `SelectedParams`, `PaperSessionReport`, `OverfitAuditReport`, протоколи `ResearchBacktestPort`, `BarFeed`, `TickFeed`, `OrderBookFeed`, `PaperBacktestPort` |
 | `run_research_backtest.py` | Один прогін на всій вибірці + перевірка мінімальної кількості барів |
-| `run_walk_forward.py` | Повний цикл IS/OOS: підбір → один запуск на OOS → звіт |
-| `param_grid.py` | Сітка параметрів для кожного робота |
+| `run_walk_forward.py` | Повний цикл IS/OOS: підбір → один запуск на OOS → звіт; `execute_multi()` — N ковзних фолдів |
+| `param_grid.py` | Сітка параметрів для кожного робота (окремі гілки для `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ema`; решта — спільна сітка) |
+| `select_params.py` | `RunParamSelection` — підбір параметрів з holdout-вікном і embargo, окремо від walk-forward |
 | `score.py` | Оцінка кандидата на in-sample (`ending_balance`) |
 | `risk.py` | `size_position`, `stop_distance`, `evaluate_entry`, `effective_risk_fraction`, `require_simulated_mode` |
+| `run_overfitting_audit.py` | Аудит перенавчання: матриця «блоки × конфігурації» → PBO/CSCV |
+| `promotion_gate.py` | `evaluate_gate()` — ворота допуску: чи виміряна перевага над buy&hold, чи пройдено PBO-аудит |
 | `ingest_historical_bars.py` | Завантажити klines і записати в каталог |
-| `run_paper.py` | Прогін у «паперовому» режимі: лог гіпотетичних ордерів |
+| `ingest_funding_history.py` | Завантажити ставки фандингу у `ParquetFundingCatalog` |
+| `ingest_agg_trades.py` / `collect_live_agg_trades.py` | Агреговані угоди: історичний ingest і збір із живого потоку |
+| `ingest_orderbook.py` | Знімки книги → `ParquetOrderBookCatalog` |
+| `catalog_queries.py` | Запити до каталогу: хвіст серії, старт інкрементального ingest |
+| `run_paper.py` | `RunPaperSession` — паперова сесія (рушій + журнал гіпотетичних філів); `RunPaperResearch` — лише прев'ю ордерів; `require_paper_support()` |
 | `train_classifier.py` | Purged K-fold із embargo + розмітка напрямку (`up`/`down`/`flat`) |
+| `train_formulaic.py` / `train_meta_label.py` / `train_obi.py` | Побудова датасету й тренування LightGBM для трьох ML-роботів |
+| `xsmom_backtest.py` / `run_xsmom.py` | Крос-секційний моментум: бектест і walk-forward з PBO-аудитом |
+| `evaluate_recipe.py` | Оцінка формульного рецепта (IC) на історії |
 | `scan_triangular.py` | Сканер трикутних циклів (без виконання) |
+| `journal.py` | Append-only журнал дослідження: рядок у `research/journal.md` + JSONL |
+| `propose_alphas.py` / `run_alpha_proposal.py` | Офлайн-цикл пропозиції альф і його запуск як job для API |
 | `optuna_optimizer.py` | `OptunaParamOptimizer` — байєсівський (TPE) підбір параметрів на in-sample замість сітки |
 
 ### `infrastructure/` — адаптери
@@ -189,8 +250,17 @@ BacktestReport  →  друк у консоль
 | `timeframe.py` | `1h` → `1-HOUR`, побудова `bar_type` |
 | `binance_klines.py` | Публічний REST Binance, пагінація по 1000 свічок, `UrllibJsonClient` |
 | `binance_funding.py` | Публічна історія ставок фінансування (fapi) |
+| `binance_agg_trades.py` | Публічні агреговані угоди (REST) |
+| `binance_orderbook.py` | `BinanceLiveOrderBook` — знімок книги |
+| `binance_ws.py` | Публічний **WebSocket** Binance: `BinanceKlineStream` (закриті бари) і `BinanceAggTradeStream`; `ReconnectPolicy`, парсери повідомлень |
+| `http_resilience.py` | `ResilientJsonClient` — вага лімітів, `Retry-After`, backoff |
+| `agg_trades_catalog.py`, `orderbook_catalog.py`, `funding_catalog.py`, `taker_flow_catalog.py` | Parquet-каталоги окремих серій: тики, книга, фандинг, потік тейкерів |
+| `live_bar_feed.py` | `SeededLiveBarFeed` — прогрів із історії + живі закриті бари |
+| `live_paper_journal.py` | Журнал паперових сесій: знімки, філи, resume після рестарту |
+| `paper_sessions.py` | `session_record()`, `append_session()` — реєстр завершених сесій для API |
 | `lightgbm_classifier.py` | `LightGBMDirectionClassifier` (опційно) + `HeuristicDirectionClassifier` (fallback) |
-| `egarch_forecast.py` | EGARCH(1,1) прогноз волатильності через `arch` (опційно) |
+| `egarch_forecast.py`, `vol_forecast.py` | EGARCH(1,1) через `arch` і вибір прогнозатора волатильності (HAR / EGARCH) |
+| `llm_client.py` | `OpenAICompatibleChatClient` — чат-комплішени OpenAI-сумісного ендпоінта (офлайн-контур) |
 | `alerts.py` | `AlertNotifier`, `NullAlertNotifier`, `TelegramAlertNotifier`, `WebhookAlertNotifier`, `CompositeAlertNotifier`, `build_notifier()` — сповіщення про завершення прогонів |
 | `orderbook_microstructure.py` | Мікроструктура на Polars: `compute_order_book_imbalance()`, `compute_micro_price()`, `compute_microstructure_dataframe()` |
 | `paper_trading.py` | `PaperTradingLogger` — журнал гіпотетичних ордерів |
@@ -204,14 +274,34 @@ BacktestReport  →  друк у консоль
 | `nautilus/signal_strategy.py` | `SignalRobot` — адаптер однолегової стратегії до Nautilus |
 | `nautilus/spread_strategy.py` | `SpreadRobot` — адаптер двуногової стратегії |
 
+### `api/` — веб-шар (FastAPI)
+
+| Модуль | Роль |
+|--------|------|
+| `app.py` | Сам застосунок: усі роути `/api/*` (research, ingest, catalog, settings, ml, paper, scan, propose, journal, command-center), WebSocket `/api/paper/live-stream`, статичні монти `/static_reports` і `/static_hypotheses` |
+| `security.py` | `ApiSecurity` — три ворота: `Origin`, токен `X-Lab-Token`, роль `LAB_ROLE` (`full` \| `paper`) |
+| `market_feed.py` | `MarketFeed` / `FeedHub` — один сокет на `symbol+interval`, спільний для всіх сесій |
+| `paper_streamer.py` | `LivePaperSessionManager` — жива паперова сесія: доменний робот, ризик, симульовані філи, смуга equity; `LIVE_PAPER_ROBOTS` |
+| `live_sessions.py` | `SessionRegistry` — реєстр сесій, resume незавершених, ліміт кількості |
+| `live_paper_boot.py` | Старт сесій із `.env` і з декларованого портфеля при піднятті застосунку |
+| `paper_runner.py` | `execute_paper()` — batch-прогін паперової сесії як окремий job |
+| `research_runner.py` | `ResearchJobConfig`, `execute_research()` — важкий прогін у дочірньому процесі |
+| `run_research_job.py`, `run_paper_job.py`, `run_ml_job.py` | Точки входу дочірніх процесів (`python -m ...`), які запускає `app.py` |
+| `ml_runner.py` | `execute_ml_train()` і `list_models()` |
+| `catalog_service.py`, `data_health.py`, `command_center.py` | Опис каталогу, здоров'я даних, зведення для головного екрана |
+| `experiment_history.py` | Архів прогонів у `reports/` |
+| `journal_service.py` | Читання журналу й зміна ручного рішення |
+| `serializers.py` | `Decimal` → JSON: метрики, walk-forward, PBO, дефльований Шарп |
+| `settings_schema.py`, `settings_coerce.py` | Схема `.env` для UI, валідація і застосування оновлень |
+
 ### `interfaces/` — вхід
 
 | Модуль | Роль |
 |--------|------|
-| `cli.py` | argparse-команди `ingest`, `research`, `paper`, `scan`, `live`; друк звітів |
-| `composition.py` | Збірка залежностей: `settings()`, `catalog()`, `notifier()`, `*_use_case()`, `*_request()` |
+| `cli.py` | argparse-команди `ingest`, `research`, `paper`, `scan`, `propose`, `ml train`, `xsmom`, `live`; друк звітів |
+| `composition.py` | Збірка залежностей: `settings()`, `catalog()`, `research_feed()`, `notifier()`, `*_use_case()`, `*_request()` |
 
-## 5. Чому саме так (три рішення, які варто розуміти)
+## 5. Чому саме так (п'ять рішень, які варто розуміти)
 
 **1. Стратегія не знає розміру позиції.**
 Домен повертає лише напрямок. Розмір рахує `size_position()` з ризику і стопу.
@@ -230,8 +320,43 @@ BacktestReport  →  друк у консоль
 на вході в `RunResearchBacktest.execute()` і `RunWalkForward.execute()`, а також у `_build_robot()`.
 Тому `--robot funding` дає помилку з кодом 1, а не тихий запуск `regime` з правдоподібним звітом.
 
+**5. Веб-шар — це привід, а не друга реалізація.**
+`api/` не має власної логіки стратегій чи метрик: він складає ті самі об'єкти
+(`interfaces/composition.py`) і викликає ті самі use cases. Живий паперовий термінал
+тримає **один** сокет на ринок (`market_feed.MarketFeed`) і роздає його всім сесіям,
+щоб два роботи на одному символі бачили однакові бари. Важкі прогони винесені
+в дочірні процеси (`api/run_*_job.py`), а сервер на VPS працює в ролі `LAB_ROLE=paper`,
+яка забороняє все, крім читання й керування живими сесіями.
+
+## 5.1 Відомі відхилення від правила шарів
+
+Правило «стрілки лише всередину» виконується для `domain/` бездоганно, але не для
+кожного модуля `application/`: частина use case імпортує адаптери напряму замість
+протоколів `domain/ports.py`:
+
+```
+src/nautilus_lab/application/catalog_queries.py:7     from nautilus_lab.infrastructure.nautilus.instrument import ...
+src/nautilus_lab/application/catalog_queries.py:8     from nautilus_lab.infrastructure.nautilus.parquet_catalog import ...
+src/nautilus_lab/application/catalog_queries.py:9     from nautilus_lab.infrastructure.settings import Settings
+src/nautilus_lab/application/catalog_queries.py:10    from nautilus_lab.infrastructure.timeframe import ...
+src/nautilus_lab/application/ingest_orderbook.py:5    from nautilus_lab.infrastructure.binance_orderbook import ...
+src/nautilus_lab/application/ingest_orderbook.py:6    from nautilus_lab.infrastructure.orderbook_catalog import ...
+src/nautilus_lab/application/run_alpha_proposal.py:17 from nautilus_lab.infrastructure.settings import Settings
+src/nautilus_lab/application/run_paper.py:45          from nautilus_lab.infrastructure.lightgbm_classifier import ...
+src/nautilus_lab/application/run_paper.py:46          from nautilus_lab.infrastructure.paper_trading import ...
+```
+
+Це не «тиха» помилка — код працює — але такий модуль уже не можна тестувати підміною
+протоколу. Крім того, `interfaces/cli.py` імпортує `infrastructure.settings`,
+`infrastructure.paper_sessions` і `infrastructure.llm_client` безпосередньо, тож
+`composition.py` — не єдина точка збірки залежностей (див. точний перелік у
+[12-karta-fayliv.md](12-karta-fayliv.md)).
+
 ## 6. Далі
 
 - UML-діаграми шарів, класів і сценаріїв → [uml/README.md](uml/README.md)
 - Повний перелік файлів з описами → [12-karta-fayliv.md](12-karta-fayliv.md)
 - Як додати свій шар у цю архітектуру → [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)
+- Веб-дашборд і alpha proposer → [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md)
+- Паперовий термінал → [24-paper-treydynh.md](24-paper-treydynh.md)
+- Розгортання на VPS (Docker Compose, Caddy) → [26-deploy-vps.md](26-deploy-vps.md)

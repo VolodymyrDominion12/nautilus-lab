@@ -224,6 +224,20 @@ out-of-sample aggregate profitable=2/4 mean=0.58% median=1.26% worst=-6.23% best
 baseline buy&hold mean=2.50% oos_fills=341
 ```
 
+Після цих рядків поточна версія друкує ще три (їх немає в наведеному вище лозі —
+той прогін старіший, і саме тому блок лишено як історичний приклад):
+
+```
+breakeven_cost mean_bps=... folds_measured=K/N     # скільки комісії прогін витримав би
+... risk_breaches blocked=N <причина>=<кількість>  # лише якщо хоч один вхід заблоковано
+promotion_gate=PROMOTE|REJECT|INCOMPLETE (...)     # ворота допуску, див. 25
+```
+
+`promotion_gate` для багатовіконного прогону без `--pbo` майже завжди буде `INCOMPLETE`:
+`--folds` бачить лише половину доказів (PBO і DSR приходять із `--pbo`), а `not measured`
+ніколи не читається як пройдена умова. Це не помилка прогону — це чесний вердикт
+«доказів поки не вистачає» ([25](25-xsmom-ta-vorota-dopusku.md)).
+
 Три речі, які тут видно і яких не видно на єдиній нарізці:
 
 1. **Розкид між фолдами величезний.** Від −6.23% до +6.01%. Одне середнє число ховає цю
@@ -463,24 +477,31 @@ Telegram notification failed with HTTP 404: {"ok":false,"error_code":404,"descri
 ## Крок 9. Paper-режим і фінальний чекліст
 
 ```bash
-uv run lab paper --bars 500
-uv run lab paper --robot ema --bars 500
-```
-
-Реальний вивід:
-
-```
-paper_orders=289 (no exchange submission)
-2024-01-01T00:49:00+00:00 ETH/USDT.SIM buy qty=13.045 reason=donchian breakout long
-...
+uv run lab paper --robot regime --bars 1500 --journal     # останні 1500 барів каталогу
+uv run lab paper --robot vpin_momentum --bars 400 --select-on-is
+uv run lab paper --robot regime --source live --live-bars 5   # + закриті бари з публічного WS
 ```
 
 Що важливо знати про `paper`:
-- Це **не** бектест: немає рушія, немає виконання, немає оновлення капіталу.
-  Просто «прожени сигнали й запиши, які ордери були б надіслані».
-- Працює лише на синтетичних барах і лише для роботів `regime` та `ema`.
-- Не веде стан позиції, тому може записати кілька «buy» підряд (як на виводі вище).
-  Це очікувана спрощеність, а не сигнал до торгівлі.
+- Це **сесія на тому самому рушії**, що й бектест: ті самі комісії, та сама модель філів, і
+  повний реєстр — кожен філ, кожна позиція, реалізований і нереалізований PnL, переоцінка
+  відкритої позиції на останньому барі. Ордери нікуди не надсилаються.
+- Але це **не** out-of-sample звіт: сесія нічого не підбирає, вона проганяє ту конфігурацію,
+  яку їй дали. Місце в циклі — між «дослідження каже, що це кандидат» і «дати йому торкатися
+  справжнього майданчика».
+- Джерело барів задається `--source`: `catalog` (реальна історія), `synthetic` (лише тести)
+  або `live` (публічний WebSocket після прогріву каталогом).
+- Якщо робот із дефолтними параметрами не торгує, додай `--select-on-is`: параметри
+  підбираються на історії **перед** вікном сесії, з розривом-embargo. Без цього `fills=0` —
+  чесний результат, а не зламаний режим.
+- Підтримуються всі вісім роботів, підключених до рушія (той самий набір, що
+  `BACKTEST_WIRED_ROBOTS`); робот без адаптера падає явно.
+- Сесії дописуються в `reports/paper/sessions.jsonl` (`--journal`). Деталі, виміряні числа й
+  живий paper-термінал — [24-paper-treydynh.md](24-paper-treydynh.md).
+
+Старий вивід `paper_orders=289 (no exchange submission)` належить окремому прев'ю
+(`RunPaperResearch`), яке рахує лише сигнали й не веде позицію; `lab paper` запускає
+сесію (`RunPaperSession`), а не прев'ю.
 
 ### Чекліст «результату можна вірити»
 
@@ -520,4 +541,9 @@ paper_orders=289 (no exchange submission)
 - Зрозуміти, як кожен робот ухвалює рішення → [05-roboty.md](05-roboty.md)
 - Розібратися, звідки беруться розміри позицій → [06-ryzyk-metryky.md](06-ryzyk-metryky.md)
 - Зробити свою стратегію → [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)
+- Прогнати робота в paper-сесії та побачити журнал угод → [24-paper-treydynh.md](24-paper-treydynh.md)
+- Перевірити гіпотезу на кошику монет (`lab xsmom`) і побачити ворота допуску → [25-xsmom-ta-vorota-dopusku.md](25-xsmom-ta-vorota-dopusku.md)
+- Навчити ML-модель для робота (`lab ml train`) → [19-ml-steking-vidpovidnist.md](19-ml-steking-vidpovidnist.md)
+- Працювати не з консолі, а з веб-дашборду → [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md)
+- Тримати paper 24/7 на сервері → [26-deploy-vps.md](26-deploy-vps.md)
 - Щось упало → [11-troubleshooting-faq.md](11-troubleshooting-faq.md)

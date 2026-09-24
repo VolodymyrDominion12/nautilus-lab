@@ -12,7 +12,10 @@
 **Типовий режим — research / симуляція. `lab live` завжди fail closed.** Адаптера
 виконання не існує: це не «ще не налаштовано», а свідомий запобіжник.
 
-Єдина точка входу — CLI `lab` (`src/nautilus_lab/interfaces/cli.py`).
+Точки входу — CLI `lab` (`src/nautilus_lab/interfaces/cli.py`) і FastAPI-дашборд
+(`src/nautilus_lab/api/app.py`, запускається `uvicorn nautilus_lab.api.app:app`).
+Обидві збирають ті самі use cases через `interfaces/composition.py` — другого
+бектесту в проєкті не існує.
 
 ## Правила роботи
 
@@ -42,9 +45,11 @@
 | Шар | Тека | Що там |
 |-----|------|--------|
 | Domain | `src/nautilus_lab/domain/` | сигнали, стратегії, ризик, метрики, `ports.py` |
-| Application | `src/nautilus_lab/application/` | use cases: ingest, research, walk-forward, PBO-аудит, Optuna, журнал |
-| Infrastructure | `src/nautilus_lab/infrastructure/` | Binance REST, Parquet-каталог, Nautilus `BacktestEngine`, `Settings` |
+| Application | `src/nautilus_lab/application/` | use cases: ingest, research, walk-forward, PBO-аудит, Optuna, журнал, ворота допуску |
+| Infrastructure | `src/nautilus_lab/infrastructure/` | Binance REST + WS, Parquet-каталоги, Nautilus `BacktestEngine`, `Settings`, paper-сесії |
 | Interfaces | `src/nautilus_lab/interfaces/` | `cli.py` і `composition.py` — єдина точка зборки залежностей |
+| API | `src/nautilus_lab/api/` | FastAPI-дашборд: **ті самі** use cases, плюс живі paper-сесії й шлюз безпеки |
+| Frontend | `frontend/` | React + Vite UI; власної логіки бектесту не має |
 
 Залежності завжди йдуть **усередину**, до `domain/`. Отже:
 
@@ -54,15 +59,20 @@
 - **Стратегія не знає розміру позиції**: `domain/` повертає лише напрямок
   (`Signal`), розмір рахує `application/risk.py`.
 - Лише **закриті** бари (`RollingWindow.prior()`) і `Decimal`, не `float`.
+- API не дублює логіку: зміна поведінки для CLI і для дашборду йде в
+  `application/`/`domain/`, а не в `api/app.py`.
 
 ## Дані
 
-`uv run lab ingest` тягне **публічні** Binance-klines (`api/v3/klines`, без ключів)
-у Parquet-каталог. Один каталог — один ingest: інший інтервал (`BAR_INTERVAL`) чи
-інший інструмент = **нова тека** через `--catalog`.
+`uv run lab ingest` тягне **публічні** дані Binance (без ключів) у Parquet-каталог:
+klines типово, а також `--trades` (агреговані угоди), `--funding` (ставки фінансування)
+і `--depth` (живі L2-знімки через WebSocket). Один каталог — один ingest: інший
+інтервал (`BAR_INTERVAL`) чи інший інструмент = **нова тека** через `--catalog`.
 
 ```bash
 uv run lab ingest --start 2025-01-01 --symbols ETHUSDT,BTCUSDT
+uv run lab ingest --incremental --symbols ETHUSDT          # долити нові бари
+uv run lab ingest --trades --live-ticks 20 --symbols ETHUSDT   # тіки для VPIN/Хоукса
 ```
 
 ## Основні команди
@@ -71,16 +81,18 @@ uv run lab ingest --start 2025-01-01 --symbols ETHUSDT,BTCUSDT
 uv run lab research --synthetic --bars 3000     # smoke без мережі
 uv run lab research                             # walk-forward regime по каталогу
 uv run lab research --robot ema                 # baseline, з яким треба порівнювати
-uv run lab research --robot regime --folds 4    # чи витримує нарізку на 4 вікна
-uv run lab research --robot regime --pbo        # аудит перенавчання PBO/CSCV
+uv run lab research --robot regime --folds 4    # чи витримує нарізку на 4 вікна (+ ворота)
+uv run lab research --robot regime --pbo        # аудит перенавчання PBO/CSCV (не разом з --optuna)
 uv run lab research --optuna --trials 30        # байєсівський підбір (extra research)
 uv run lab research --tearsheet reports/t.html  # HTML-тиршит (extra visualization)
-uv run lab paper                                # лог гіпотетичних ордерів, без виконання
+uv run lab paper --robot regime --journal       # paper-сесія: повний журнал, ордерів немає
+uv run lab xsmom --symbols BTCUSDT,ETHUSDT --folds 6 --pbo   # кошик + ворота допуску
+uv run lab ml train --model-type meta_label --output models/meta_label.txt  # extra ml
 uv run lab live                                 # завжди помилка, код 1
 ```
 
-Extras: `dev`, `ml` (lightgbm), `research` (optuna, arch, polars),
-`visualization` (plotly, kaleido), `alerts` (httpx).
+Extras: `dev`, `api` (fastapi, uvicorn, websockets — для дашборду), `ml` (lightgbm),
+`research` (optuna, arch, polars), `visualization` (plotly, kaleido), `alerts` (httpx).
 
 ## Якість
 
@@ -123,9 +135,10 @@ uv run pytest tests/unit/test_specs.py -q       # те саме + покритт
    Спека, яка розійшлася з кодом, гірша за відсутню: вона впевнено бреше.
 2. **Додав робота в `RobotName` — додай спеку.** Валідатор і тест покриття
    падають навмисно, доки її немає. Це і є `spec before code`, перевірене машиною.
-3. **`grid_source` — не формальність.** `param_grid.py` має гілки лише для
-   `pairs`, `vpin_momentum`, `formulaic_lgbm`, `ema`; решта тихо бере сітку
-   `regime`. Робот без власної гілки підбирає чужі параметри й виглядає працюючим.
+3. **`grid_source` — не формальність.** `param_grid.py` має власні гілки для
+   `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ema`;
+   решта (`regime`, `ml_obi`) бере сітку `regime`. Робот без власної гілки підбирає
+   чужі параметри й виглядає працюючим.
 4. **`status` відображає реальність.** `validated` вимагає виміряної переваги над
    buy&hold. `candidate` («не доведено») ≠ `rejected` («доведено, що не працює»).
    Станом на зараз жоден робот не має `validated` — це задокументований результат.

@@ -12,10 +12,13 @@
 | 🔴 | Не реалізовано |
 | ⚪ | Поза межами коду (організаційне, податкове, інфраструктурне) |
 
-Позначка 🟡 означає, що модуль можна викликати лише з коду: роботи `funding`, `ml_obi`, `glft`, `tri_scan`
+Позначка 🟡 означає, що модуль можна викликати лише з коду: роботи `funding`, `glft`, `tri_scan`
 **не підключені до рушія бектесту** і тепер завершуються явною помилкою
 (`robot 'funding' has no backtest adapter yet...`), а не тихим запуском `regime`.
-Перелік підключених роботів — `BACKTEST_WIRED_ROBOTS` у `domain/regime.py`.
+`ml_obi` більше не в цьому переліку: він **підключений** до рушія (`BACKTEST_WIRED_ROBOTS`) і
+вимагає поданої книги ордерів (`OrderBook feed must be provided to use ML_OBI`).
+Повний перелік підключених роботів — `BACKTEST_WIRED_ROBOTS` у `domain/regime.py`:
+`regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ml_obi`.
 
 ---
 
@@ -38,32 +41,38 @@ MFT-документ визначає MFT як горизонт «хвилини
 
 ## 1. Мікроструктура ринку та потік ордерів (розділ 1)
 
-### 1.1. Процеси Хоукса — 🟡
+### 1.1. Процеси Хоукса — ✅ opt-in (фільтр режиму) / 🔴 (решта)
 
 | Що в документі | Що в коді |
 |----------------|-----------|
-| Багатовимірний процес Хоукса, ядро (експоненційне/степеневе), самозбудження та взаємне збудження | `domain/hawkes.py::ExponentialHawkes` — **одновимірна** оцінка з експоненційним ядром: `decay = exp(−β·dt)`, стан покупців і продавців окремо, прапорець `toxic_flow` при перевищенні порогу |
-| Прогноз «токсичних потоків», адаптивне розширення спредів, випереджальний шорт | Логіки використання немає — є лише оцінювач інтенсивності |
+| Багатовимірний процес Хоукса, ядро (експоненційне/степеневе), самозбудження та взаємне збудження | `domain/hawkes.py::ExponentialHawkes` — **одновимірна** оцінка з експоненційним ядром: `decay = exp(−β·dt)`, стан покупців і продавців окремо, прапорець `toxic_flow` при перевищенні порогу. Взаємне збудження в класі є як параметр `cross_alpha` (типово `0`), але `Settings` його не виставляє, тож підключена оцінка лишається одновимірною |
+| Прогноз «токсичних потоків», адаптивне розширення спредів, випереджальний шорт | ✅ **токсичний потік підключено як фільтр режиму**: `RegimeRouter._effective_regime()` при `toxic_flow` підміняє `range` на трендовий за знаком нахилу EMA — та сама гілка, що й у VPIN. 🔴 Адаптивного розширення спредів і випереджального шорту немає |
 | Закон квадратного кореня впливу мета-ордерів | 🔴 Немає (потрібні мета-ордери, а не бари) |
 
-Що робити: клас готовий до вживання (див. [09](09-mft-moduli-pryklady.md)), але для серйозної
-роботи потрібні **tick-дані** (`on_trade(side, dt_seconds)`) — у бектесті за замовчуванням
-подаються лише бари. Найпростіший місток: будувати псевдо-події з бару (open→close) і годувати
-`ExponentialHawkes` — грубо, але дає робочу стратегію «вхід при сплеску токсичності».
+Підключення: ✅ CLI `uv run lab research --robot regime --hawkes` (+ `HAWKES_BASELINE`, `HAWKES_ALPHA`,
+`HAWKES_BETA`, `HAWKES_TOXIC_THRESHOLD`). Прапорець діє лише для роботів із `HAWKES_ROBOTS`
+(`regime`, `meta_label`) — для решти CLI відмовляє явно, а не мовчки ігнорує його.
 
-### 1.2. VPIN — ✅ (знак зі справжнього потоку, роздільність баровa)
+Дані: оцінювач споживає **справжній потік угод** (`--hawkes` вимагає тієї ж серії aggTrades, що й
+`--tick-vpin`: `lab ingest --trades` або `lab ingest --live-ticks`). Будувати псевдо-події з бару
+(open→close) більше не потрібно — це був обхідний шлях, поки тіків у каталозі не було.
+
+### 1.2. VPIN — ✅ (два рівні роздільності: бар і тік)
 
 | Що в документі | Що в коді |
 |----------------|-----------|
-| Кошики рівного обсягу, дисбаланс ініційованих покупок/продажів, VPIN як фільтр режимів | `domain/vpin.py::BarVpin` — кошики за обсягом, знаковий обсяг беруть зі **справжнього поля 9 klines** (`takerBuyBaseAssetVolume`, Фаза 4 у [23](23-infrastruktura-danyh-plan.md)), а tick-rule (порівняння `close` з `close` попереднього бару) лишається фолбеком для барів, де поле невідоме; значення `|buy − sell| / total`, `toxic` при `≥ VPIN_TOXIC_THRESHOLD` |
+| Кошики рівного обсягу, дисбаланс ініційованих покупок/продажів, VPIN як фільтр режимів | `domain/vpin.py` — дві реалізації: `BarVpin` (барові кошики; знаковий обсяг беруть зі **справжнього поля 9 klines** `takerBuyBaseAssetVolume`, Фаза 4 у [23](23-infrastruktura-danyh-plan.md), а tick-rule (порівняння `close` з `close` попереднього бару) лишається фолбеком для барів, де поле невідоме) і `TickVpin` (кошики з окремих угод). Значення в обох — `|buy − sell| / total`, `toxic` при `≥ VPIN_TOXIC_THRESHOLD` |
 | Перемикання mean-reversion → momentum при сплеску VPIN | Реалізовано в `RegimeRouter._effective_regime()`: якщо VPIN токсичний, а класифіковано `range`, режим підміняється на трендовий за знаком нахилу EMA |
-| Підключення | ✅ CLI: `uv run lab research --bar-vpin` (+ `VPIN_BUCKET_VOLUME`, `VPIN_TOXIC_THRESHOLD`) |
+| Підключення | ✅ CLI: `uv run lab research --bar-vpin` (барові кошики) і `--tick-vpin` (кошики з aggTrades; вимагає серії потоку з `lab ingest --trades` або `lab ingest --live-ticks`). Спільні змінні: `VPIN_BUCKET_VOLUME`, `VPIN_TOXIC_THRESHOLD` |
 
-Обмеження: роздільність лишається баровою — усередині бару не видно ні порядку угод, ні їхніх
-міток часу, тож кошик наповнюється цілим баром, а частка buy/sell розподіляється пропорційно
-по кошиках усередині нього (див. `BarVpin._fill_split`). Поріг кошика задається
-в одиницях базової валюти й потребує підбору під інструмент (для ETH типовий обсяг бару 1h —
-сотні ETH, тому `VPIN_BUCKET_VOLUME=1000` може бути завеликим; перевірте на своїх даних).
+Обмеження **барового** режиму (`--bar-vpin`): роздільність лишається баровою — усередині бару не
+видно ні порядку угод, ні їхніх міток часу, тож кошик наповнюється цілим баром, а частка
+buy/sell розподіляється пропорційно по кошиках усередині нього (див. `BarVpin._fill_split`).
+Поріг кошика задається в одиницях базової валюти й потребує підбору під інструмент (для ETH
+типовий обсяг бару 1h — сотні ETH, тому `VPIN_BUCKET_VOLUME=1000` може бути завеликим;
+перевірте на своїх даних). Це саме обмеження знімає `--tick-vpin`: він рахує кошики з
+справжнього потоку угод, а не з бару, і тому діє лише для роботів із `TICK_VPIN_ROBOTS`
+(`regime`, `meta_label`, `vpin_momentum`).
 
 **Виміряно 2026-09-21 на ETHUSDT 1h (2024-01-01…2026-09-18, 23 808 барів).** Медіанний VPIN на
 справжньому потоці — **0.087** (p90 0.222, максимум 0.694), тоді як tick-rule-проксі на тій
@@ -83,27 +92,28 @@ MFT-документ визначає MFT як горизонт «хвилини
 
 ## 2. Машинне навчання (розділ 2)
 
-### 2.1. LightGBM/XGBoost + OBI — 🟡
+### 2.1. LightGBM/XGBoost + OBI — ✅ підключено / 🔴 виміру немає
 
 | Що в документі | Що в коді |
 |----------------|-----------|
 | 50 рівнів книги, WOFI, liquidity fade velocity, класифікація «up/down/flat» на 5–10 хвилин | `domain/microstructure.py`: `order_book_imbalance(depth=10)`, `weighted_order_flow_imbalance(depth=5)`, `liquidity_fade_velocity(depth=5)` |
 | LightGBM як основний інструмент | `infrastructure/lightgbm_classifier.py::LightGBMDirectionClassifier` (потрібен extra `ml`), а також `HeuristicDirectionClassifier` — rule-based заміна, коли LightGBM немає |
-| Стратегія на цих ознаках | `domain/ml_obi_strategy.py::MlObiStrategy` — поріг ймовірності 0.55 |
-| Дані L2 | 🔴 Немає фіду книги ордерів: `OrderBookSnapshot` можна створити лише вручну або з власного джерела |
-| Навчання моделі | 🔴 Немає пайплайну: ні збору датасету, ні розмітки, ні збереження/завантаження бустера (клас приймає готовий `model_path`) |
+| Стратегія на цих ознаках | ✅ `domain/ml_obi_strategy.py::MlObiStrategy` — поріг ймовірності `ML_OBI_THRESHOLD` (типово 0.55); робот `ml_obi` у `BACKTEST_WIRED_ROBOTS` і вимагає поданої книги (`OrderBook feed must be provided to use ML_OBI`) |
+| Дані L2 | ✅ `infrastructure/binance_orderbook.py::BinanceLiveOrderBook` — WebSocket `@depth20@100ms` для живих знімків; `lab ingest --depth` пише їх у `catalog/data/orderbook/` (`infrastructure/orderbook_catalog.py`). **Історії за минулі роки немає** — фід живий і починається з моменту запуску |
+| Навчання моделі | ✅ `application/train_obi.py` (`build_obi_dataset`, `train_obi_lightgbm`) + `lab ml train --model-type obi`; збережений бустер читає `LightGBMDirectionClassifier` через `ML_OBI_MODEL_PATH`. 🔴 Виміру немає (`specs/strategies/ml_obi.yaml::evidence.measured: false`) |
 
-Це найбільший «розрив» між документом і кодом. Щоб його закрити, потрібні:
-1. запис книги ордерів (у Nautilus це `subscribe_order_book_deltas` на живому фіді або
-   `OrderBookDelta` дані в каталозі);
-2. генератор ознак (уже є) і розмітка (`application/train_classifier.py::label_direction`);
-3. навчання поза бектестом (окремий скрипт) і завантаження бустера через `model_path`.
+Це вже **не найбільший розрив** між документом і кодом: усі три ланки (фід книги, генератор ознак,
+навчання) існують, і робот підключений до рушія. Обмеження змістилося з коду на **дані**: книга
+пишеться лише наживо, тож датасет для навчання треба спершу зібрати. Що лишається зробити:
+1. накопичити історію знімків книги (`lab ingest --depth`) — це календарний час, а не робота;
+2. навчити й виміряти: `lab ml train --model-type obi` → `lab research --robot ml_obi --folds 4`
+   проти buy&hold (у спеці `measured: false`, тому чисел тут немає).
 
 ### 2.2. Запобігання перенавчанню — ✅ частково / 🟡 / 🔴
 
 | Що в документі | Що в коді |
 |----------------|-----------|
-| Purged K-Fold з embargo | ✅ `application/train_classifier.py::purged_k_fold(length, n_splits, embargo)` — **викликається** з `application/train_formulaic.py::train_formulaic_lightgbm` (разом із `label_direction` для розмітки) |
+| Purged K-Fold з embargo | ✅ `application/train_classifier.py::purged_k_fold(length, *, n_splits=5, embargo=10, sample_times=None, label_ends=None)` — **викликається** з `application/train_formulaic.py`, `application/train_meta_label.py` і `application/train_obi.py` (разом із `label_direction` для розмітки). З `sample_times`/`label_ends` тренувальний рядок викидається за **перекриттям горизонту мітки**, а не лише за сусіднім індексом; embargo міряється в барах |
 | Embargo між тренуванням і тестом | ✅ повністю підключено: `EMBARGO_BARS` (типово 10) у `anchored_window()`, прапорці `--embargo-bars`; у звіті видно розрив між IS і OOS |
 | Walk-forward замість одного бектесту | ✅ `RunWalkForward`: підбір на IS, **один** прогін на OOS; `--folds N` дає N ковзних фолдів і агрегат |
 | Стресові ринкові події (COVID-2020, FTX-2022, ETF-2024) | ✅ визначені як `StressSliceName` + CLI `--slice`; працюють, якщо період є в каталозі |
@@ -176,7 +186,7 @@ ETH/USDT 1h, каталог 2024-01-01…2026-09-14, 8 блоків × 6 кон�
 |----------------|-----------|
 | `z = (spread − mean)/std` | ✅ |
 | Вхід при `|z| ≥ Z_ENTRY`, вихід при `z → Z_EXIT` | ✅ `z_entry` (оптимізується: 1.5 / 2 / 2.5), `z_exit = 0.5` |
-| Коригування порогів під «товсті хворих» (fat tails) | 🔴 пороги фіксовані, розподіл не моделюється |
+| Коригування порогів під «товсті хвости» (fat tails) | ✅ opt-in: `PairsParams.z_entry_quantile` (`PAIRS_Z_ENTRY_QUANTILE`) замінює фіксований `z_entry` на **емпіричні квантилі** вікна, з якого зроблено фіт (`domain/quantiles.py::empirical_quantile`, пороги перераховано в одиниці z тією ж парою `(mean, sigma)`). Вікно — те саме фітоване, не розширюване, тож підгляду немає. При `0` (типово) діє фіксований поріг, і `z_entry` тоді ігнорується повністю |
 | Time stops | ✅ (див. 3.2) |
 
 **Практичний підсумок:** ADF-ворота тепер працюють, і `pairs` справді торгує (раніше тут було `fills=0`
@@ -194,8 +204,8 @@ ETH/USDT 1h, каталог 2024-01-01…2026-09-14, 8 блоків × 6 кон�
 
 | Що в документі | Що в коді |
 |----------------|-----------|
-| Резервна ціна, зсув від інвентарю, оптимальні глибини bid/ask | ✅ `domain/glft.py::GlftMarketMaker.quote(mid, inventory, volatility, ts_utc)` → `QuoteIntent` |
-| Формули GLFT у закритому вигляді | ✅ спрощено: `half_spread = mid·bps/10000 + γ·σ²`, `reservation = mid − γ·inventory`, `bid/ask = reservation ± half_spread` |
+| Резервна ціна, зсув від інвентарю, оптимальні глибини bid/ask | ✅ `domain/glft.py::GlftMarketMaker.quote(*, mid, inventory, volatility, ts_utc)` → `QuoteIntent` (усі аргументи — лише за іменем) |
+| Формули GLFT у закритому вигляді | ✅ спрощено: `half_spread = mid·base_half_spread_bps/10000 + γ·σ²`, `reservation = mid − γ·σ²·inventory`, `bid/ask = reservation ± half_spread` |
 | Термінального часу немає (perpetuals) | ✅ модель без горизонту |
 | Облік інвентарю | 🔴 у бектесті інвентар не передається — `QuoteIntent` ніхто не споживає |
 | Модель черги лімітного ордера (queue position) | 🔴 (саме тому `bar_execution=True` і лише ринкові ордери) |
@@ -224,7 +234,7 @@ ETH/USDT 1h, каталог 2024-01-01…2026-09-14, 8 блоків × 6 кон�
 | Ризик негативного фандингу | ✅ вихід при `funding_rate < 0` (`close_on_negative`) |
 | Ризик розходження базису / шорт-сквізу | ✅ ворота `basis_max` (0.005) на вході й вихід при перевищенні |
 | Крос-біржовий арбітраж (Binance/Bybit/OKX/Hyperliquid) | 🔴 одна біржа |
-| Дані фандингу | ✅ `infrastructure/binance_funding.py` (публічний `/fapi/v1/fundingRate`) |
+| Дані фандингу | ✅ `infrastructure/binance_funding.py` (публічний `/fapi/v1/fundingRate`), `lab ingest --funding` пише їх у `catalog/data/funding/` (`infrastructure/funding_catalog.py`, `application/ingest_funding_history.py`) |
 | Інструменти перпетуалів у симуляції | ✅ `ETHUSDT-PERP.SIM` (`CryptoPerpetual`, комісії USDⓈ-M VIP0: 0.0002/0.0005) |
 | Ставка фандингу в рушії бектесту | 🔴 рушій не нараховує фандинг — стратегію можна перевіряти лише за ціною |
 
@@ -247,9 +257,9 @@ ETH/USDT 1h, каталог 2024-01-01…2026-09-14, 8 блоків × 6 кон�
 | Що в документі | Що в коді |
 |----------------|-----------|
 | HAR-RV (денні/тижневі/місячні компоненти) | ✅ `domain/volatility.py::HarRealizedVolatility` — `0.4·RV_d + 0.35·RV_w + 0.25·RV_m`; для 1h-барів компоненти: 24 / 168 / 720 барів |
-| EGARCH(1,1) | 🟡 `infrastructure/egarch_forecast.py` — через пакет `arch` (extra `research`), потрібно ≥60 точок |
-| GJR-GARCH | 🔴 (`arch` його вміє — треба інша специфікація моделі) |
-| Зменшення розміру при зростанні волатильності | 🟡 `vol_scaled_risk_fraction(base, forecast_vol, target_vol)` — функція є, у роботах не викликається |
+| EGARCH(1,1) | ✅ `infrastructure/egarch_forecast.py::egarch_forecast_volatility` — через пакет `arch` (extra `research`), потрібно ≥60 точок. Вибір моделі — `VOL_MODEL` (`VolModel`: `har` типово, `egarch`, `gjr_garch`), фіт не на кожному барі (`infrastructure/vol_forecast.py`) |
+| GJR-GARCH | ✅ `infrastructure/egarch_forecast.py::gjr_garch_forecast_volatility` — `vol="GARCH", p=1, o=1, q=1` (асиметрія через член `o`). Підключено як `VOL_MODEL=gjr_garch`; без extra `research` повертає `None`, а не падає |
+| Зменшення розміру при зростанні волатильності | ✅ opt-in: `vol_scaled_risk_fraction(base, forecast_vol, target_vol)` викликається з `application/risk.py::resolve_risk_fraction` при `USE_VOL_SCALING=true` (+ `VOL_SCALING_TARGET`, типово 0.02). Прогноз σ дає `infrastructure/vol_forecast.py` за `VOL_MODEL` |
 | ATR-скейлінг стопу (реально підключено) | ✅ `stop_distance()`: `ATR(14) × 2`, інакше `STOP_PCT` |
 | LightGBM-NN гібрид | 🔴 |
 
@@ -257,7 +267,7 @@ ETH/USDT 1h, каталог 2024-01-01…2026-09-14, 8 блоків × 6 кон�
 
 | Що в документі | Що в коді |
 |----------------|-----------|
-| Фракційний Келлі 0.25–0.5 | ✅ `fractional_kelly_cap(win_rate, reward_risk, fraction)`; `KELLY_FRACTION=0.25`. 🟡 Але `effective_risk_fraction()` викликається без статистики, тому **зараз не активний** |
+| Фракційний Келлі 0.25–0.5 | ✅ opt-in: `fractional_kelly_cap(win_rate, reward_risk, fraction)`; `KELLY_FRACTION=0.25`. Активується `USE_FRACTIONAL_KELLY=true`, і лише коли в робота є статистика (`>= KELLY_MIN_TRADES`, типово 30 угод): `application/risk.py::resolve_risk_fraction` передає `TradeStats` у `effective_risk_fraction()`, який обмежує `RISK_PER_TRADE` зверху келлі-капом |
 | Обмеження розміру однієї позиції 0.5–2% AUM | ✅ `RISK_PER_TRADE=0.005` (0.5%) + обмеження плеча 1x (`equity/price`) |
 | VaR на 99% | ✅ `historical_var()` — і **підключено** як circuit breaker у `evaluate_entry()` (`MAX_VAR_99=0.05`) |
 | Conditional VaR (expected shortfall) | 🟡 `historical_cvar()` реалізовано, у запобіжниках не використовується |
@@ -279,20 +289,23 @@ ETH/USDT 1h, каталог 2024-01-01…2026-09-14, 8 блоків × 6 кон�
 | Автоматичне відстеження VIP-рівня за обсягом | 🔴 (немає обліку обсягів за 30 днів і таблиць рівнів) |
 | Знижка на BNB, знижки Bybit/Hyperliquid | ⚪ організаційне |
 
-### 7.2. Підключення, ліміти, колокація — 🔴 переважно немає
+### 7.2. Підключення, ліміти, колокація — ✅ частково (публічні стріми й ліміти) / 🔴 решта
 
 | Що в документі | Що в коді |
 |----------------|-----------|
-| WebSocket (`wss://`) для ticker/depth | 🔴 Лише REST |
-| Ping/Pong кожні 3 хвилини | 🔴 |
-| Облік `X-MBX-USED-WEIGHT-1M`, backoff на 429, уникати 418 | 🔴 (запити поодинокі, пагінація по 1000 свічок ліміт не перевищує) |
+| WebSocket (`wss://`) для ticker/depth | ✅ публічні стріми є: `infrastructure/binance_ws.py::BinanceKlineStream` (лише **закриті** бари) і `BinanceAggTradeStream` (угоди), `infrastructure/binance_orderbook.py::BinanceLiveOrderBook` (`@depth20@100ms`); REST (`binance_klines.py`, `binance_agg_trades.py`) лишається для історії. ⚪ користувацьких (signed) стрімів немає: ключів виконання проєкт не має |
+| Ping/Pong кожні 3 хвилини | ⚪ не потрібен явно: `websockets` тримає з'єднання сам, а власний реконект обмежений експоненційно (`BinanceKlineStream`), тож обрив не перетворюється на цикл перепідключень |
+| Облік `X-MBX-USED-WEIGHT-1M`, backoff на 429, уникати 418 | ✅ `infrastructure/http_resilience.py`: проактивна пауза за власним лічильником `X-MBX-USED-WEIGHT-1M` з відповіді, реактивна повага до `Retry-After` на 429 (інакше експоненційний backoff), 418 у списку повторюваних статусів; коли бюджет спроб вичерпано — `RateLimitedError`, а не тихо коротка серія |
 | Колокація в AWS Tokyo (0.6–1.5 мс) | ⚪ інфраструктурне; проєкт запускається локально |
 | Модель затримки | ✅ спрощено: `LatencyModel(base_latency_nanos=50_000_000)` = 50 мс на кожен ордер |
 | Модель виконання | ✅ `FillModel(prob_fill_on_limit=1.0, prob_slippage=0.25, random_seed=42)`, `bar_execution=True` |
 | `hftbacktest`-стиль: позиція в черзі, наносекундна затримка | 🔴 |
 
-Практичний висновок: **мікроструктурні стратегії в цьому проєкті перевіряти не можна** —
-симуляція виконання занадто груба для них. Для барових стратегій (як `regime`, `ema`) точність достатня.
+Практичний висновок: **дані для мікроструктурних стратегій тепер є, а симуляція виконання — ні**.
+Публічні стріми книги (`@depth20@100ms`) і угод пишуться в каталог, і `ml_obi` підключено до
+рушія, але `FillModel` далі виконує лімітні ордери з імовірністю 1.0 без позиції в черзі: сигнал
+на книзі вимірюється, а **виконання** того сигналу — ні. Для барових стратегій (як `regime`, `ema`)
+точність достатня.
 
 ---
 
@@ -326,21 +339,21 @@ ETH/USDT 1h, каталог 2024-01-01…2026-09-14, 8 блоків × 6 кон�
 | Розділ MFT | Статус | Ключовий файл |
 |------------|--------|----------------|
 | Вступ (HFT/MFT/LFT) | ✅ позиціонування | `docs/01-osnovy.md` |
-| 1.1 Хоукс | 🟡 | `domain/hawkes.py` |
+| 1.1 Хоукс | ✅ opt-in (фільтр режиму) / 🔴 решта | `domain/hawkes.py`, `domain/regime_router.py`, `--hawkes` |
 | 1.2 VPIN | ✅ | `domain/vpin.py`, `domain/regime_router.py` |
-| 2.1 LightGBM + OBI | 🟡 | `domain/ml_obi_strategy.py`, `microstructure.py` |
+| 2.1 LightGBM + OBI | ✅ підключено, виміру немає | `domain/ml_obi_strategy.py`, `application/train_obi.py`, `infrastructure/binance_orderbook.py` |
 | 2.2 Purged K-fold / PBO | ✅ | `application/train_classifier.py`, `domain/overfitting.py`, `--pbo` |
 | 3.1 Коінтеграція | ✅ | `domain/pairs/cointegration.py` (ADF-статистика + МакКіннон) |
 | 3.2 О-У і half-life | ✅ | `domain/pairs/ou.py` |
-| 3.3 Z-оцінка, time stop | ✅ | `domain/pairs/pairs_trading.py` |
+| 3.3 Z-оцінка, time stop | ✅ | `domain/pairs/pairs_trading.py` (+ `domain/quantiles.py` для opt-in квантильних порогів) |
 | 4.1 GLFT | 🟡 | `domain/glft.py` |
 | 4.2 DRL | 🔴 | — |
 | 5.1 Funding arbitrage | 🟡 | `domain/funding.py`, `infrastructure/binance_funding.py` |
 | 5.2 Трикутний арбітраж | ✅ сканер | `domain/triangular_arb.py` |
-| 6.1 HAR-RV / EGARCH | 🟡 | `domain/volatility.py`, `infrastructure/egarch_forecast.py` |
-| 6.2 Келлі / VaR / kill switch | ✅ частково | `domain/portfolio_risk.py`, `application/risk.py` |
+| 6.1 HAR-RV / EGARCH / GJR-GARCH | ✅ opt-in | `domain/volatility.py`, `infrastructure/egarch_forecast.py`, `infrastructure/vol_forecast.py` |
+| 6.2 Келлі / VaR / kill switch | ✅ opt-in | `domain/portfolio_risk.py`, `application/risk.py` |
 | 7.1 Комісії | ✅ | `domain/fees.py` |
-| 7.2 WebSocket / колокація | 🔴 | — |
+| 7.2 Публічні стріми / ліміти | ✅ частково | `infrastructure/binance_ws.py`, `http_resilience.py` |
 | HPO (Optuna TPE) | ✅ | `application/optuna_optimizer.py` |
 | Тиршит / звітність | ✅ | `backtest_runner.py`, прапорець `--tearsheet` |
 | Сповіщення (Telegram/webhook) | ✅ | `infrastructure/alerts.py` |
@@ -351,22 +364,22 @@ ETH/USDT 1h, каталог 2024-01-01…2026-09-14, 8 блоків × 6 кон�
 | # | Завдання | Користь | Складність | Де описано |
 |---|----------|---------|------------|------------|
 | 1 | ✅ **Зроблено:** замінити спрощений ADF на справжній — оживити `pairs` | 🔥 висока | 🟢 низька | [05 §3.1](05-roboty.md), [12](12-karta-fayliv.md) |
-| 2 | Активувати фракційний Келлі (передавати статистику угод) | висока | 🟢 низька | [07 §6](07-yak-stvoryty-strategiyu.md#6-приклад-3-підключити-келлі-та-vol-scaling) |
+| 2 | ✅ **Зроблено (opt-in):** фракційний Келлі — `USE_FRACTIONAL_KELLY=true` передає `TradeStats` у `effective_risk_fraction()` (поріг `KELLY_MIN_TRADES`, типово 30 угод) | висока | 🟢 низька | [07 §6](07-yak-stvoryty-strategiyu.md#6-приклад-3-підключити-келлі-та-vol-scaling) |
 | 3 | ✅ **Зроблено (opt-in):** vol-scaling (HAR-RV → розмір позиції) через `USE_VOL_SCALING` | висока | 🟢 низька | [06 §5](06-ryzyk-metryky.md#5-var-cvar-і-волатильність), [13 §8](13-ai-2026-vidpovidnist.md) |
 | 4 | ✅ **Зроблено (без Kalman):** періодична переоцінка коінтеграції (rolling refit) — `PAIRS_REFIT_EVERY`; динамічний β через фільтр Калмана ще ні | висока | 🟠 середня | [13 §8](13-ai-2026-vidpovidnist.md), [05 §3.4](05-roboty.md) |
 | 5 | ✅ **Зроблено:** робот на VPIN-імпульсі (`vpin_momentum`) | середня | 🟢 низька | [07 §3](07-yak-stvoryty-strategiyu.md) |
 | 6 | Funding-робот: завантажити фандинг, нараховувати його в бектесті | середня | 🟠 середня | [08 §5.1](#51-funding-rate-arbitrage-cash-and-carry--) |
-| 7 | Дані книги ордерів (L2) + ML-пайплайн LightGBM | висока | 🔴 висока | [08 §2.1](#21-lightgbmxgboost--obi--) |
+| 7 | ✅ **Зроблено:** дані книги ордерів (L2) + ML-пайплайн LightGBM (`lab ingest --depth`, `lab ml train --model-type obi`, `--robot ml_obi`). **Залишок:** накопичити історію книги й виміряти робота (у спеці `measured: false`) | висока | 🟢 низька (залишок) | [08 §2.1](#21-lightgbmxgboost--obi--) |
 | 8 | Маркет-мейкінг із лімітними ордерами та моделлю черги | висока | 🔴 висока | [08 §4.1](#41-avellaneda-stoikov--glft--) |
-| 9 | WebSocket-фід у реальному часі + paper-режим на живих даних | середня | 🔴 висока | [08 §7.2](#72-підключення-ліміти-колокація---переважно-немає) |
+| 9 | ✅ **Зроблено:** WebSocket-фід у реальному часі (`binance_ws.py`, `binance_orderbook.py`) + paper-режим на живих даних (`lab paper`) | середня | 🔴 висока | [08 §7.2](#72-підключення-ліміти-колокація--частково-публічні-стріми-й-ліміти--решта) |
 | 10 | Підключити Polars-мікроструктуру до ознак ML-робота (`orderbook_microstructure` → `MlObiStrategy`) | середня | 🟢 низька | [09 §14](09-mft-moduli-pryklady.md#14-polars-мікроструктура-обчислення-на-даних-книги) |
 | 11 | Сповіщення з `evaluate_entry` при спрацюванні circuit breaker (зараз `AlertNotifier` викликається лише з CLI) | середня | 🟢 низька | [09 §15](09-mft-moduli-pryklady.md#15-сповіщення-telegram-і-webhook) |
 | 12 | ✅ **Зроблено:** PBO/CSCV — audit перенавчання (`--pbo`) | 🔥 висока | 🟢 низька | [15](15-audit-vypravlennya.md), [10 §`--pbo`](10-cli-dovidnyk.md) |
 | 13 | Динамічний β через фільтр Калмана (продовження пункту 4) | висока | 🟢 низька | [08 §3.1](#31-коінтеграція-проти-кореляції--) |
-| 14 | GJR-GARCH поруч з EGARCH (`arch` його вміє) | середня | 🟢 дуже низька | [08 §6.1](#61-моделі-волатильності--) |
-| 15 | Пороги z під товсті хворих (емпіричний квантиль замість фіксованого `z_entry`) | середня | 🟢 низька | [08 §3.3](#33-z-оцінка-і-генерація-сигналів--) |
+| 14 | ✅ **Зроблено:** GJR-GARCH поруч з EGARCH — `gjr_garch_forecast_volatility`, вибір через `VOL_MODEL` | середня | 🟢 дуже низька | [08 §6.1](#61-моделі-волатильності--) |
+| 15 | ✅ **Зроблено (opt-in):** пороги z під товсті хвости — `PAIRS_Z_ENTRY_QUANTILE` (емпіричний квантиль замість фіксованого `z_entry`) | середня | 🟢 низька | [08 §3.3](#33-z-оцінка-і-генерація-сигналів--) |
 | 16 | VIP-рівні комісій за 30-денним обсягом | середня | 🟢 низька | [08 §7.1](#71-комісії-та-vip-рівні---базово) |
-| 17 | Багатовимірний Хоукс (взаємне збудження) | середня | 🟠 середня | [08 §1.1](#11-процеси-хоукса---) |
+| 17 | Багатовимірний Хоукс: терм взаємного збудження в класі вже є (`ExponentialHawkes(cross_alpha=...)`), але `Settings` його не виставляє — залишок у тому, щоб його відкрити й виміряти | середня | 🟢 низька | [08 §1.1](#11-процеси-хоукса--opt-in-фільтр-режиму--решта) |
 | 18 | Johansen для кошиків ≥3 активів (спершу додати 3-й символ в ingest) | середня | 🔴 висока | [08 §3.1](#31-коінтеграція-проти-кореляції--), [13 §6](13-ai-2026-vidpovidnist.md) |
 
 **Пункт 1 — виконано (поза чергою «що робити далі»).** Обраний підхід відрізняється від початкового

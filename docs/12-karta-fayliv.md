@@ -18,7 +18,9 @@
 | `errors.py` | `DomainError`, `InvalidBarError`, `InvalidWindowError`, `CatalogEmptyError`, `InvalidRiskError`, `RobotNotWiredError`, `InvalidHypothesisError`, `LiveTradingDisabledError`, `PaperTradingNotReadyError` | Помилки; політика fail-closed. `InvalidHypothesisError` — лише офлайн-контур пропозицій альф |
 | `money.py` | `Money` | Негрошова сума (не від'ємна), `risk_amount(fraction)` |
 | `trading_mode.py` | `TradingMode` | `RESEARCH` / `PAPER` / `LIVE` |
+| `ticks.py` | `AggTrade` | Одна агрегована угода з публічного потоку: `instrument_id`, `ts_utc`, `agg_id`, `price`/`qty` (рядки — точне десяткове подання Binance), `is_buyer_maker`; властивості `is_aggressive_buy/sell` |
 | `windows.py` | `RollingWindow` | Ковзне вікно закритих значень; `values()`, `prior()` (усе, крім щойно закритого бару — захист від look-ahead) |
+| `windowing.py` | `bar_span()`, `within_bars()`, `warmup_tail()` | Межі серії барів, вибірка подій усередині вікна, хвіст для прогріву індикаторів |
 
 ### Індикатори та волатильність
 
@@ -27,17 +29,20 @@
 | `ema.py` | `ExponentialMovingAverage` | EMA з SMA-сідом; `initialized`, `value`, `update(price)` |
 | `atr.py` | `AverageTrueRange` | ATR на закритих барах (просте середнє справжніх діапазонів) |
 | `volatility.py` | `HarRealizedVolatility`, `vol_scaled_risk_fraction()` | HAR-RV прогноз (денні/тижневі/місячні компоненти) і масштабування ризику під цільову волатильність |
+| `quantiles.py` | `empirical_quantile()` | Емпіричний квантиль на `Decimal` — база для VaR/CVaR, без numpy |
 
 ### Класифікація режиму і стратегії
 
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
-| `regime.py` | `MarketRegime`, `RobotName`, `BACKTEST_WIRED_ROBOTS`, `require_backtest_support()`, `RegimeParams`, `RegimeSnapshot`, `RegimeClassifier` | Класифікатор тренд/флет (ER Кауфмана + нахил EMA + гістерезис); перелік роботів і перевірка, чи має робот адаптер у рушії |
+| `regime.py` | `MarketRegime`, `RobotName`, `BACKTEST_WIRED_ROBOTS`, `TICK_VPIN_ROBOTS`, `HAWKES_ROBOTS`, `require_backtest_support()`, `tick_filters_supported()`, `RegimeParams`, `RegimeSnapshot`, `RegimeClassifier` | Класифікатор тренд/флет (ER Кауфмана + нахил EMA + гістерезис); перелік роботів і перевірка, чи має робот адаптер у рушії. `TICK_VPIN_ROBOTS` / `HAWKES_ROBOTS` — роботи, чий режимний фільтр читає тикову серію, коли увімкнено `use_tick_vpin` / `hawkes` |
 | `donchian.py` | `UptrendBreakout`, `DowntrendBreakout` | Пробій каналу Дончіана з виходом за EMA |
 | `mean_reversion.py` | `RangeMeanReversion` | Повернення до середнього за смугами Боллінджера |
 | `ema_crossover.py` | `EmaCrossover` | Класичний перетин EMA, завжди в ринку |
 | `regime_router.py` | `RegimeRouter` | Класифікує бар → викликає відповідну стратегію; `FLAT` при зміні режиму; VPIN-фільтр |
 | `adaptive_ema.py` | `AdaptiveEmaParams`, `AdaptiveEma`, `AdaptiveEmaSnapshot`, `AdaptiveEmaRouter`, `efficiency_ratio_of()` | Селективне згладжування (скалярна форма ідеї Mamba): крок EMA залежить від efficiency ratio, `selectivity=0` відтворює сталий крок тотожно. Той самий роутер і ті самі ноги, що в `regime` — єдиною змінною експерименту лишається фільтр |
+| `vpin_momentum.py` | `VpinMomentum` | Моментум у напрямку інформованого (токсичного) потоку + трейлінг-стоп за ATR; `min_hold_bars` забороняє виходити надто рано |
+| `buy_and_hold.py` | `BuyAndHold`, `HOLD_ROBOT` | Контрольний робот «купив і тримає»: просить лонг на кожному закритому барі — планка для порівняння з будь-яким паперовим результатом (у живому терміналі — робот `hold`) |
 
 ### Пари (статистичний арбітраж)
 
@@ -56,8 +61,10 @@
 | `microstructure.py` | `order_book_imbalance()`, `weighted_order_flow_imbalance()`, `liquidity_fade_velocity()` | OBI, WOFI, швидкість зникнення ліквідності |
 | `vpin.py` | `VpinState`, `BarVpin` | VPIN на барових кошиках рівного обсягу; `toxic` за порогом |
 | `hawkes.py` | `HawkesIntensity`, `ExponentialHawkes` | Інтенсивність потоку угод (самозбудження), прапорець токсичності |
-| `ml_classifier.py` | `DirectionProbabilities`, `DirectionClassifier` | Протокол класифікатора напрямку |
+| `ml_classifier.py` | `DirectionProbabilities`, `DirectionClassifier`, `SuccessClassifier` | Протоколи класифікатора напрямку і класифікатора успіху (мета-мітка) |
 | `ml_obi_strategy.py` | `MlObiStrategy` | Сигнал за OBI/WOFI/fade із порогом імовірності |
+| `formulaic_lgbm_strategy.py` | `FormulaicLgbmStrategy` | Сигнал за бустером на формульних ознаках із порогом імовірності |
+| `meta_label_strategy.py` | `MetaLabelStrategy`, `PrimaryRobot`, `encode_meta_features()` | Мета-мітка: первинний робот пропонує бік, класифікатор підтверджує або відкидає вхід |
 | `formulaic_alphas.py` | `FEATURE_NAMES`, `MIN_HISTORY`, `FormulaicAlphaEngine` | 12 формульних ознак на закритих барах (WorldQuant-style). `FEATURE_NAMES` — публічний контракт порядку ознак: на нього спираються промпти, валідація гіпотез і набір для LightGBM, тому нова ознака не може тихо зламати схему |
 | `hypothesis.py` | `Hypothesis`, `parse_hypotheses()`, `unknown_identifiers()`, `rejected_names()`, `ALLOWED_FORMULA_FUNCTIONS`, `MAX_HORIZON_BARS` | Контракт гіпотези з офлайн-контуру: обов'язкові поля, межі горизонту, нормалізація знаку, і **лінтер вигаданих ознак** — токени формули, яких немає ні серед `FEATURE_NAMES`, ні серед дозволених функцій |
 
@@ -69,20 +76,32 @@
 | `glft.py` | `GlftParams`, `GlftMarketMaker` | Котировки GLFT зі зсувом від інвентарю |
 | `triangular_arb.py` | `FxEdge`, `TriangularOpportunity`, `find_negative_cycles()` | Беллман-Форд: пошук циклів від'ємної ваги |
 
+### Крос-секційні роботи, план позиції та виходи
+
+| Файл | Публічні символи | Призначення |
+|------|------------------|-------------|
+| `xsmom.py` | `Weighting`, `XsMomParams`, `momentum_score()`, `realized_vol()`, `target_weights()` | Крос-секційний моментум: оцінка за lookback зі скіпом, обернено-волатильні ваги, обмеження `top_n` |
+| `position_plan.py` | `Holding`, `PositionPlan`, `holding_from_signed_qty()`, `plan_for_signal()` | Що сигнал означає для **уже наявної** позиції: `exit_position` (вихід не питає ризик — інакше відмова заморожує збиткову позицію) і `wants_entry` (лише це проходить крізь `evaluate_entry`) |
+| `marking.py` | `OpenLot`, `lot_unrealized_pnl()`, `unrealized_pnl()`, `marked_equity()` | Маркування відкритих лотів за ціною для equity, що враховує нереалізоване |
+| `triple_barrier.py` | `BarrierTouch`, `TripleBarrierConfig`, `TripleBarrierOutcome`, `rolling_volatility()`, `label_triple_barrier()` | Розмітка «потрійним бар'єром» (тейк / стоп / час) для ML-датасетів |
+| `ratchet_stop.py` | `RatchetParams`, `RatchetState`, `initial_ratchet()`, `update_ratchet()`, `ratchet_hit()`, `step_ratchet()` | Храповик-стоп: рівень лише підтягується за ціною, ніколи не відпускається |
+| `drawdown_cooldown.py` | `PeakState`, `on_refusal()`, `advance()`, `DRAWDOWN_REASON` | Кулдаун після спрацювання просадки: пік перебазовується на поточний equity через N днів блокування, щоб перервана просадка не глушила торгівлю до кінця історії (`0` — стара постійна поведінка) |
+
 ### Ризик і методологія
 
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
 | `risk.py` | `RiskLimits`, `AccountSnapshot`, `RiskDecision` | Жорсткі ліміти, стан рахунку, рішення про вхід |
+| `risk_overlay.py` | `RiskOverlay` | Опційні надбудови над лімітами: vol-scaling, дробовий Келлі, CVaR-вимикач |
 | `portfolio_risk.py` | `fractional_kelly_cap()`, `historical_var()`, `historical_cvar()` | Фракційний Келлі, історичні VaR/CVaR |
 | `kill_switch.py` | `KillSwitch`, `NoOpKillSwitch` | Протокол аварійної зупинки (у research — заглушка) |
-| `metrics.py` | `BacktestMetrics`, `compute_metrics()`, `buy_and_hold_return()` | Комісії, максимальна просадка, оборот, `sharpe_like`; `buy_and_hold_return()` — дохідність простого утримання інструменту за вікно (планка для кожного фолда walk-forward) |
+| `metrics.py` | `SelectionMetric`, `BacktestMetrics`, `compute_metrics()`, `breakeven_cost()`, `buy_and_hold_return()` | Комісії, максимальна просадка, оборот, `sharpe_like`; `breakeven_cost()` — який результат потрібен, щоб лише покрити витрати; `buy_and_hold_return()` — дохідність простого утримання інструменту за вікно (планка для кожного фолда walk-forward) |
 | `walk_forward.py` | `WalkForwardWindow`, `WalkForwardSplit`, `bars_in_range()`, `split_by_window()`, `anchored_window()`, `rolling_windows()` | Вікна IS/OOS, embargo, нарізка барів (без підглядання); `rolling_windows()` — N ковзних фолдів (вікно підбору зсувається на один OOS-блок уперед, останній фолд забирає остачу від ділення націло) |
 | `overfitting.py` | `CscvResult`, `probability_of_backtest_overfitting()` | PBO/CSCV: із матриці `блоки × конфігурації` рахує частку симетричних розбиттів, де переможець in-sample упав у нижню половину out-of-sample. Дошка розбиттів, де всі конфігурації рівні, **пропускається** (нічия не обирає нічого), тому неінформативна матриця дає `undefined`, а не «PBO=1» |
 | `stress_slices.py` | `StressSliceName`, `StressSlice`, `STRESS_SLICES`, `resolve_stress_slice()` | `covid2020`, `ftx2022`, `etf2024` |
 | `align.py` | `align_bars_inner_join()`, `split_aligned_by_window()` | Вирівнювання кількох серій за часом (inner join) |
 | `fees.py` | `FeeSchedule` | Розклад комісій; `binance_spot_vip0()`, `binance_usdm_vip0()` |
-| `ports.py` | `PublicBarFeed`, `BarCatalog`, `JsonHttpClient`, `FundingRateFeed`, `OrderBookSnapshotFeed`, `ChatCompleter` | Протоколи, які реалізує infrastructure. `ChatCompleter` — **лише офлайн-дослідження**: жодна стратегія не має залежати від нього |
+| `ports.py` | `PublicBarFeed`, `BarCatalog`, `JsonHttpClient`, `JsonTransport`, `JsonResponse`, `FundingRateFeed`, `FundingCatalog`, `TakerFlowCatalog`, `OrderBookSnapshotFeed`, `AggTradesFeed`, `AggTradesCatalog`, `ChatCompleter` | Протоколи, які реалізує infrastructure. `ChatCompleter` — **лише офлайн-дослідження**: жодна стратегія не має залежати від нього |
 
 ---
 
@@ -90,22 +109,35 @@
 
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
-| `dtos.py` | `BacktestRequest`, `BacktestReport`, `IngestRequest`, `IngestReport`, `WalkForwardRequest`, `WalkForwardReport`, `WalkForwardFold`, `MultiWindowReport`, `SelectedParams`, `ResearchBacktestPort`, `BarFeed`, `selected_from_request()`, `apply_selected()` | Усі структури даних; протоколи рушія й фіду; застосування підібраних параметрів. `WalkForwardFold` — один ковзний фолд; `MultiWindowReport` — агрегат OOS: `oos_returns`, `profitable_folds`, `mean_oos_return`, `median_oos_return`, `worst_oos_return`, `best_oos_return`, `mean_buy_and_hold_return`, `total_oos_fills`, `beats_buy_and_hold()` (`None`, коли щось із двох боків не вимірюється) і `summary_line()` |
+| `dtos.py` | `BacktestRequest`, `BacktestReport`, `IngestRequest`, `IngestReport`, `IngestAggTradesRequest/Report`, `FundingIngestRequest/Report`, `WalkForwardRequest`, `WalkForwardReport`, `WalkForwardFold`, `MultiWindowReport`, `SelectedParams`, `OverfitAuditRequest`, `OverfitAuditReport`, `PaperFill`, `PaperPosition`, `PaperSessionReport`, `ResearchBacktestPort`, `PaperBacktestPort`, `BarFeed`, `TickFeed`, `OrderBookFeed`, `selected_from_request()`, `apply_selected()`, `index_of_best_configuration()` | Усі структури даних; протоколи рушія й фідів; застосування підібраних параметрів. `WalkForwardFold` — один ковзний фолд; `MultiWindowReport` — агрегат OOS: `oos_returns`, `profitable_folds`, `mean_oos_return`, `median_oos_return`, `worst_oos_return`, `best_oos_return`, `mean_buy_and_hold_return`, `total_oos_fills`, `beats_buy_and_hold()` (`None`, коли щось із двох боків не вимірюється) і `summary_line()` |
 | `run_research_backtest.py` | `RunResearchBacktest` | Один прогін; перевірка мінімуму барів (`_minimum_bars`) |
 | `run_walk_forward.py` | `RunWalkForward` | Повний цикл IS/OOS із grid search; `_require_warmup()`; `execute_multi()` — багатовіконний прогін: окремий walk-forward на кожен фолд і агрегат OOS (відхиляє `folds < 2` і явне `window`; працює і для `pairs`) |
 | `run_walk_forward.py` (там же) | `window_return()` | Дохідність одного вікна за `starting_equity`. Публічна, бо CLI записує в журнал OOS-число єдиного спліту за тим самим означенням, що й ковзні фолди |
-| `param_grid.py` | `iter_param_grid()` | Сітки: regime 6, ema 4, pairs 3 |
+| `param_grid.py` | `iter_param_grid()` | Сітки: `pairs` 3, `vpin_momentum` 3, `formulaic_lgbm` 3, `meta_label` 3, `adaptive_ema` 9 (3 періоди × 3 selectivity), `ema` 4, решта — спільна сітка 6 (3 періоди Дончіана × 2 коефіцієнти Боллінджера) |
+| `select_params.py` | `ParamSelection`, `RunParamSelection` | Підбір параметрів з окремим holdout-вікном і embargo — окремо від walk-forward, щоб вибір і звіт не змішувались |
 | `score.py` | `in_sample_score()` | Оцінка кандидата = `ending_balance` (відсутній → −1) |
 | `risk.py` | `size_position()`, `stop_distance()`, `evaluate_entry()`, `effective_risk_fraction()`, `require_simulated_mode()` | Розмір позиції, стоп, запобіжники, Келлі-обмеження, заборона live |
+| `catalog_queries.py` | `bar_interval_to_timedelta()`, `catalog_tail()`, `incremental_ingest_start()` | Запити до каталогу: скільки барів уже є і звідки продовжувати ingest |
 | `ingest_historical_bars.py` | `IngestHistoricalBars` | Fetch → write у каталог; перевірки й звіт |
 | `ingest_funding_history.py` | `IngestFundingHistory` | Fetch ставок фандингу → `ParquetFundingCatalog`; звіт містить `missing_index_price` (скільки розрахунків лишилось без індексу) |
-| `run_paper.py` | `RunPaperResearch` | Лог гіпотетичних ордерів (без рушія) |
-| `train_classifier.py` | `PurgedFold`, `purged_k_fold()`, `label_direction()` | Purged K-fold із embargo і розмітка напрямку |
-| `scan_triangular.py` | `scan_triangular_opportunities()` | Обгортка над пошуком циклів (fee на кожне ребро) |
-| `optuna_optimizer.py` | `OptunaParamOptimizer` | Байєсівська оптимізація (TPE) на in-sample: `optimize(request, run_is)` → `(params, report, trials)`. Окремі гілки простору пошуку для `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`; `exit_trend_er` обмежений зверху через `enter_trend_er`, бо `RegimeParams` вимагає `enter > exit` |
+| `ingest_agg_trades.py` | `IngestAggTrades`, `utc_slices()` | Історичний ingest агрегованих угод вікнами → `ParquetAggTradesCatalog` |
+| `collect_live_agg_trades.py` | `LiveAggTradeSource`, `LiveTickReport`, `CollectLiveAggTrades` | Збір тиків із живого потоку в той самий каталог |
+| `ingest_orderbook.py` | `IngestOrderBook` | Знімки книги → `ParquetOrderBookCatalog` |
+| `run_paper.py` | `RunPaperSession`, `RunPaperResearch`, `PAPER_SUPPORTED_ROBOTS`, `require_paper_support()` | `RunPaperSession` — паперова сесія на рушії (філи, equity, журнал); `RunPaperResearch` — лише прев'ю «які ордери були б», без рахунку й PnL |
 | `run_overfitting_audit.py` | `RunOverfitAudit`, `BlockRunner` | Аудит перенавчання: ріже історію на `blocks` послідовних блоків, проганяє кожну конфігурацію сітки на кожному блоці (окремо для однолегових роботів і для `pairs` — там усі ноги ріжуться за однаковими індексами), будує матрицю й віддає її в `probability_of_backtest_overfitting()` |
-| `propose_alphas.py` | `AlphaProposalRequest`, `AlphaProposalRun`, `SYSTEM_PROMPT`, `load_prompt_template()`, `render_prompt()`, `extract_json_block()`, `propose_alphas()`, `write_artifact()`, `artifact_slug()`, `summarise()`, `endpoint_host_of()` | Офлайн-цикл пропозиції альф: шаблон + 12 ознак + дата відсічення → один виклик моделі → валідація за контрактом гіпотези → JSON-артефакт із provenance (модель, хеш промпту, as-of, сира відповідь, блок `review` зі `status: pending`). Ключів в артефакті немає — лише хост |
+| `promotion_gate.py` | `WalkForwardEvidence`, `CheckStatus`, `GateCriteria`, `GateCheck`, `GateVerdict`, `evaluate_gate()` | Ворота допуску: перевіряють, що перевага над buy&hold виміряна, а PBO-аудит пройдено, перш ніж робот потрапить у paper |
+| `evaluate_recipe.py` | `RecipeScore`, `feature_rows()`, `score_recipe()`, `pearson()` | Оцінка формульного рецепта на історії (IC та пов'язані метрики) |
+| `xsmom_backtest.py` | `XsMomRun`, `run_xsmom()`, `require_aligned()` | Бектест крос-секційного моментуму з ребалансуванням і витратами |
+| `run_xsmom.py` | `XsMomGrid`, `XsMomRequest`, `XsMomFold`, `XsMomWalkForwardReport`, `run_xsmom_walk_forward()`, `run_xsmom_audit()` | Walk-forward і PBO-аудит для `lab xsmom` |
+| `train_classifier.py` | `PurgedFold`, `purged_k_fold()`, `label_direction()` | Purged K-fold із embargo і розмітка напрямку |
+| `train_formulaic.py` | `FormulaicDataset`, `FormulaicTrainReport`, `build_formulaic_dataset()`, `train_formulaic_lightgbm()` | Датасет на формульних ознаках і тренування бустера для `formulaic_lgbm` |
+| `train_meta_label.py` | `MetaLabelDataset`, `MetaLabelTrainReport`, `build_meta_label_dataset()`, `train_meta_label_lightgbm()` | Датасет мета-мітки (успіх/невдача первинного входу) і тренування |
+| `train_obi.py` | `ObiDataset`, `ObiTrainReport`, `build_obi_dataset()`, `train_obi_lightgbm()` | Датасет на OBI/WOFI і тренування бустера для `ml_obi` |
+| `scan_triangular.py` | `scan_triangular_opportunities()` | Обгортка над пошуком циклів (fee на кожне ребро) |
 | `journal.py` | `JournalEntry`, `record_run()`, `append_row()`, `append_record()`, `load_records()`, `ROWS_START`, `ROWS_END`, `PENDING`/`ACCEPTED`/`REJECTED`/`RERUN` | Append-only журнал дослідження: рядок у `research/journal.md` + JSON у `research/journal.jsonl`. Існуючі рядки не переписуються (ручне рішення переживає наступний прогін), а без маркерів `journal:rows:start/end` запис падає з `JournalFormatError`, а не вгадує місце |
+| `propose_alphas.py` | `AlphaProposalRequest`, `AlphaProposalRun`, `SYSTEM_PROMPT`, `load_prompt_template()`, `render_prompt()`, `extract_json_block()`, `propose_alphas()`, `write_artifact()`, `artifact_slug()`, `summarise()`, `endpoint_host_of()` | Офлайн-цикл пропозиції альф: шаблон + 12 ознак + дата відсічення → один виклик моделі → валідація за контрактом гіпотези → JSON-артефакт із provenance (модель, хеш промпту, as-of, сира відповідь, блок `review` зі `status: pending`). Ключів в артефакті немає — лише хост |
+| `run_alpha_proposal.py` | `ProposeJobConfig`, `execute_propose()` | Обгортка `lab propose` / `POST /api/propose` як один job із результатом для API |
+| `optuna_optimizer.py` | `OptunaParamOptimizer` | Байєсівська оптимізація (TPE) на in-sample: `optimize(request, run_is)` → `(params, report, trials)`. Окремі гілки простору пошуку для `pairs`, `ema`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`; `regime` (і будь-який інший робот) іде гілкою за замовчуванням. Там `exit_trend_er` обмежений зверху через `enter_trend_er`, бо `RegimeParams` вимагає `enter > exit` — інакше третина trials гинула на інваріанті й нічого не вчила семплер |
 
 ---
 
@@ -113,14 +145,24 @@
 
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
-| `settings.py` | `Settings` | Pydantic-конфіг із `.env`; `risk_limits()`, `fee_schedule()`, `regime_params()`, `pairs_params()` |
+| `settings.py` | `Settings` | Pydantic-конфіг із `.env`; `risk_limits()`, `fee_schedule()`, `regime_params()`, `adaptive_ema_params()`, `pairs_params()`, `risk_overlay()`, `all_catalog_paths()`; роль застосунку `LAB_ROLE` (`full` \| `paper`) і токен `API_TOKEN` |
 | `timeframe.py` | `NAUTILUS_BAR_SPEC`, `nautilus_bar_type()`, `interval_from_bar_type()` | `1h` → `1-HOUR`, побудова `bar_type`; `interval_from_bar_type()` — обернена функція, шукає специфікацію як **цілий сегмент** `-SPEC-` (підрядковий пошук читав `15-MINUTE` як `5-MINUTE`) |
 | `binance_klines.py` | `BinancePublicKlines`, `UrllibJsonClient`, `parse_binance_kline()` | Публічний REST klines із пагінацією |
 | `http_resilience.py` | `ResilientJsonClient`, `UrllibJsonTransport`, `RateLimitPolicy`, `parse_used_weight()`, `parse_retry_after()` | Керування лімітами: читає `X-MBX-USED-WEIGHT-1M` і вичікує вікно при ≥90% ліміту, поважає `Retry-After` на 429, повторює 418/5xx з backoff, кидає `RateLimitedError` замість обрізаної серії; неретрайний статус → `MarketDataError` |
 | `binance_funding.py` | `BinancePublicFunding` | Історія ставок фінансування (fapi) з пагінацією понад стелю 1000 розрахунків; `index_price` джойниться з `indexPriceKlines` за годиною розрахунку і лишається `None`, якщо не зійшовся |
+| `binance_agg_trades.py` | `BinancePublicAggTrades` | Публічні агреговані угоди (REST) з пагінацією; парсер рядка → `AggTrade` |
+| `binance_orderbook.py` | `BinanceLiveOrderBook` | Знімок книги замовлень із публічного ендпоінта |
+| `binance_ws.py` | `BinanceKlineStream`, `BinanceAggTradeStream`, `parse_kline_message()`, `parse_agg_trade_message()`, `binance_stream_url()`, `agg_trade_stream_url()`, `ReconnectPolicy`, `KlinePayloadError`, `KlineStreamUnavailableError` | Публічний **WebSocket** Binance: закриті klines і потік aggTrades; політика перепідключення з backoff, парсери відкидають незакриті бари |
 | `funding_catalog.py` | `ParquetFundingCatalog` | Parquet-серія фандингу в `<catalog>/data/funding/<SYMBOL>/`; злиття за часом розрахунку (ідемпотентно), `Decimal` зберігається рядком, запис через `os.replace` |
+| `agg_trades_catalog.py` | `ParquetAggTradesCatalog` | Parquet-серія агрегованих угод; round-trip `AggTrade` без втрати точності |
+| `orderbook_catalog.py` | `ParquetOrderBookCatalog` | Parquet-серія знімків книги замовлень |
+| `taker_flow_catalog.py` | `ParquetTakerFlowCatalog` | Parquet-серія тейкерського потоку: `takerBuyBaseAssetVolume` з kline, яке не переживає round-trip через нативний `Bar` Nautilus. Окрема серія на `(symbol, interval)`, `Decimal` збережено рядком |
+| `live_bar_feed.py` | `LiveBarSource`, `LiveCollectionResult`, `LiveBarCollector`, `SeededLiveBarFeed` | Прогрів із історії + живі закриті бари: робот починає не «холодним» |
+| `live_paper_journal.py` | `LivePaperJournal`, `ResumableSession`, `SessionRecord` | Журнал паперових сесій: знімки, філи, resume після рестарту процесу |
+| `paper_sessions.py` | `session_record()`, `append_session()` | Реєстр завершених паперових сесій для API |
 | `lightgbm_classifier.py` | `HeuristicDirectionClassifier`, `LightGBMDirectionClassifier` | Rule-based fallback і опційний LightGBM |
 | `egarch_forecast.py` | `egarch_forecast_volatility()` | EGARCH(1,1) через `arch`; `None`, якщо недоступно |
+| `vol_forecast.py` | `VolForecaster`, `HarVolForecaster`, `ArchVolForecaster`, `build_vol_forecaster()` | Вибір прогнозатора волатильності за `VolModel`: HAR-RV або EGARCH |
 | `alerts.py` | `AlertNotifier`, `NullAlertNotifier`, `TelegramAlertNotifier`, `WebhookAlertNotifier`, `CompositeAlertNotifier`, `build_notifier()` | Сповіщення про завершення прогону; `httpx`, fail-safe |
 | `llm_client.py` | `OpenAICompatibleChatClient`, `LlmRequestError` | Чат-комплішени будь-якого OpenAI-сумісного ендпоінта (хмарний API або локальний сервер відкритих ваг). Тільки stdlib, без SDK; без `LLM_API_KEY` конструктор падає закрито; будь-яка несподівана форма відповіді → `LlmRequestError` |
 | `orderbook_microstructure.py` | `compute_order_book_imbalance()`, `compute_micro_price()`, `compute_microstructure_dataframe()` | Мікроструктура на float/Polars (векторні обчислення), окремо від доменної версії на `Decimal` |
@@ -141,8 +183,37 @@
 
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
-| `cli.py` | `main()`, `parse_utc()`, `parse_date()` | argparse-команди `ingest`, `research`, `paper`, `scan`, `propose`, `live`; друк звітів. `research --journal` і `propose --journal` дописують рядок у журнал дослідження |
-| `composition.py` | `settings()`, `catalog()`, `research_use_case()`, `walk_forward_use_case()`, `ingest_use_case()`, `overfit_audit_use_case()`, `llm_completer()`, `alpha_proposal_request()`, `journal_paths()`, `notifier()`, `research_request()`, `ingest_request()`, `walk_forward_request()`, `overfit_audit_request()` | Єдина точка збірки залежностей. `llm_completer()` — офлайн-контур, поза гарячим шляхом: без ключа падає закрито |
+| `cli.py` | `main()`, `parse_utc()`, `parse_date()` | argparse-команди `ingest`, `research`, `paper`, `scan`, `propose`, `ml train --model-type {formulaic,meta_label,obi}`, `xsmom`, `live`; друк звітів. `research --journal` і `propose --journal` дописують рядок у журнал дослідження |
+| `composition.py` | `settings()`, `catalog()`, `taker_flow_catalog()`, `orderbook_catalog()`, `research_feed()`, `notifier()`, `research_use_case()`, `walk_forward_use_case()`, `ingest_use_case()`, `ingest_funding_use_case()`, `ingest_agg_trades_use_case()`, `ingest_orderbook_use_case()`, `collect_live_agg_trades_use_case()`, `overfit_audit_use_case()`, `paper_use_case()`, `param_selection_use_case()`, `live_paper_use_case()`, `llm_completer()`, `alpha_proposal_request()`, `journal_paths()`, `research_request()`, `ingest_request()`, `funding_ingest_request()`, `ingest_agg_trades_request()`, `paper_request()`, `walk_forward_request()`, `overfit_audit_request()` | Точка збірки залежностей. `llm_completer()` — офлайн-контур, поза гарячим шляхом: без ключа падає закрито. Це **не** єдина точка збірки: `cli.py` і частина `application/` імпортують адаптери напряму (див. розділ 5.1 у [03-arhitektura.md](03-arhitektura.md)) |
+
+---
+
+## `api/` — веб-шар (FastAPI)
+
+Застосунок `nautilus_lab.api.app:app` під `uvicorn` (див. `deploy/Dockerfile.api`).
+Тут немає власної логіки стратегій: шар лише складає ті самі об'єкти, що й CLI,
+і віддає їх у `application/`.
+
+| Файл | Публічні символи | Призначення |
+|------|------------------|-------------|
+| `app.py` | `app`, `read_root()`, `get_status()`, `get_catalogs()`, `get_catalog()`, `get_catalog_bars()`, Pydantic-моделі запитів `ResearchRunRequest`, `IngestRunRequest`, `SettingsUpdate`, `MLTrainRequest`, `PaperRunRequest`, `PaperLiveStartRequest`, `JournalPatchRequest`, `ProposeRequest` | FastAPI-застосунок: REST `/api/*` (status, catalogs, catalog, data, strategies, reports, research, ingest, settings, command-center, journal, ml, paper, scan, propose, hypotheses) і WebSocket `/api/paper/live-stream`. Статичні монти `/static_reports` (тиршити) і `/static_hypotheses` — без токена, бо iframe не вміє слати заголовок. Слот на важку задачу один: повторний клік відхиляється, а не запускає другий процес |
+| `security.py` | `ApiSecurity`, `role_refusal()`, `TOKEN_HEADER`, `ROLE_FULL`, `ROLE_PAPER`, `KNOWN_ROLES`, `PAPER_ROLE_WRITES`, `DEFAULT_ALLOWED_ORIGINS` | Три ворота: `Origin` (браузерні крос-сайт запити заборонено), токен `X-Lab-Token` (або `?token=` для WebSocket) і роль `LAB_ROLE`. Роль `paper` лишає доступними читання й керування живими сесіями, а research/ingest/ML/запис `.env` відхиляє |
+| `market_feed.py` | `MarketFeed`, `FeedHub`, `FeedKey`, `FeedSubscriber`, `feed_key()` | Один сокет Binance на `symbol+interval`, спільний для всіх сесій: два роботи на одному ринку бачать однакові бари, а не два різні потоки |
+| `paper_streamer.py` | `LivePaperSessionManager`, `LivePaperConfig`, `LivePosition`, `LiveFill`, `LiveBar`, `LiveEquityPoint`, `LIVE_PAPER_ROBOTS`, `WARMUP_BARS`, `parse_kline_message()`, `config_to_dict()`, `config_from_dict()`, `binance_history_loader()` | Жива паперова сесія: доменний робот + `application/risk.py`, симульовані філи в пам'яті, смуга equity, розсилка підписникам. Ордерів на біржу не надсилає — біржовий WebSocket тут лише джерело даних |
+| `live_sessions.py` | `SessionRegistry`, `SessionRecord`, `_record_name()`, `_max_drawdown_pct()` | Реєстр сесій: створення, пошук за id або іменем, ліміт кількості, resume незавершених, читання історії з журналів |
+| `live_paper_boot.py` | `boot_live_paper()`, `boot_sessions()`, `autostart_config()`, `registry_from_settings()`, `live_config_from_settings()`, `journal_from_settings()`, `sessions_dir_from_settings()`, `parse_portfolio()`, `load_portfolio()` | Підняття сесій при старті застосунку: з `.env` або з декларованого портфеля (`LIVE_PAPER_PORTFOLIO`) |
+| `paper_runner.py` | `PaperRunConfig`, `execute_paper()`, `session_payload()` | Batch-прогін паперової сесії як окремий job |
+| `research_runner.py` | `ResearchJobConfig`, `execute_research()`, `config_from_job()`, `write_job_artifacts()`, `load_job_result()`, `summary_from_result()`, `default_tearsheet_path()` | Важкий прогін у дочірньому процесі: конфіг → use case → артефакти `last_run.*` у `reports/` |
+| `run_research_job.py`, `run_paper_job.py`, `run_ml_job.py` | `main()` | Точки входу дочірніх процесів, які запускає `app.py` (`--config-json`, `--reports-dir`) |
+| `ml_runner.py` | `MLTrainConfig`, `execute_ml_train()`, `list_models()` | Тренування LightGBM як job і перелік збережених моделей |
+| `catalog_service.py` | `describe_catalog()`, `describe_catalog_cached()`, `list_catalogs()`, `load_catalog_bars()`, `resolve_catalog_path()`, `invalidate_catalog_cache()`, `repo_root()` | Опис каталогу для UI: інструменти, діапазони, кількість барів |
+| `data_health.py` | `describe_data_health()`, `describe_data_health_cached()`, `invalidate_data_health_cache()` | Здоров'я даних по кожній серії: бари, тики, книга, фандинг, тейкерський потік |
+| `command_center.py` | `build_command_center()`, `scan_triangular_demo()` | Зведення для головного екрана: стан job-ів, останній прогін, журнал, здоров'я даних |
+| `experiment_history.py` | `archive_job_result()`, `list_history()`, `load_history_entry()`, `history_dir()` | Архів прогонів у `reports/history/` |
+| `journal_service.py` | `list_journal_entries()`, `update_journal_decision()`, `journal_summary()` | Читання журналу й зміна ручного рішення (єдине місце, де рядок журналу переписується) |
+| `serializers.py` | `serialize_metrics()`, `serialize_costs()`, `serialize_backtest()`, `serialize_walk_forward()`, `serialize_fold()`, `serialize_multi_window()`, `serialize_pbo()`, `serialize_deflated_sharpe()`, `build_job_result()`, `tearsheet_url()`, `pct()` | `Decimal` → JSON без втрати точності; рядок порівняння з buy&hold |
+| `settings_schema.py` | `SettingField`, `SettingGroup`, `settings_schema_payload()`, `normalize_env_key()`, `validate_settings_update()`, `mask_secret()` | Схема `.env` для UI, валідація оновлень, маскування секретів |
+| `settings_coerce.py` | `apply_setting_overrides()` | Застосування оновлених значень до `Settings` із приведенням типів |
 
 ---
 

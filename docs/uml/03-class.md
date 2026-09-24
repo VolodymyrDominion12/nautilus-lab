@@ -71,6 +71,8 @@ classDiagram
         PAIRS
         VPIN_MOMENTUM
         FORMULAIC_LGBM
+        META_LABEL
+        ADAPTIVE_EMA
         FUNDING
         ML_OBI
         GLFT
@@ -202,8 +204,12 @@ classDiagram
     RegimeRouter --> RangeMeanReversion
 ```
 
-Підключені до бектесту (`BACKTEST_WIRED_ROBOTS`): `RegimeRouter`, `EmaCrossover`, `PairsTrading`,
-`VpinMomentum`, `FormulaicLgbmStrategy`. `GlftMarketMaker` і `FundingCashAndCarry` — будівельні блоки без адаптера.
+Підключені до бектесту (`BACKTEST_WIRED_ROBOTS`, вісім назв): `RegimeRouter`, `EmaCrossover`,
+`PairsTrading`, `VpinMomentum`, `FormulaicLgbmStrategy`, `MetaLabelStrategy`,
+`AdaptiveEmaRouter`, `MlObiStrategy`. `GlftMarketMaker`, `FundingCashAndCarry` і
+`find_negative_cycles` (трикутний арбітраж) — будівельні блоки без адаптера: спроба
+запустити їх падає явно (`robot '...' has no backtest adapter yet`), а не підміняється
+іншим роботом.
 
 ## Application DTO і порти
 

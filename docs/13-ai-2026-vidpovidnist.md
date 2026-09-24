@@ -23,7 +23,9 @@
 
 ШІ-документ описує індустріальний арсенал 2026: LLM-альфи, PatchTST/Mamba, Deep Hawkes,
 PPO-портфелі, автономні агенти на Uniswap v4. **nautilus-lab** — research-пісочниця на
-годинних барах з трьома класичними роботами і fail-closed live.
+годинних барах, де до рушія підключено вісім роботів (`regime`, `ema`, `pairs`,
+`vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ml_obi` —
+`domain/regime.py::BACKTEST_WIRED_ROBOTS`) і з fail-closed live.
 
 Корисне ядро документа для цього проєкту:
 
@@ -40,8 +42,8 @@ PPO-портфелі, автономні агенти на Uniswap v4. **nautilu
 | Що в документі | Стан у коді |
 |----------------|-------------|
 | LLM генерує formulaic alphas | 🔴 у торговому циклі (немає мережі в domain) |
-| PPO зважує альфи в портфелі | 🟡 замінник: `ensemble_vote` / мета-мітка — майбутнє |
-| Офлайн дослідження гіпотез | ✅ `application/train_formulaic.py` + `domain/formulaic_alphas.py` |
+| PPO зважує альфи в портфелі | 🔴 немає й замінника: функції `ensemble_vote` у коді **не існує** (згадка в цьому документі була хибною). Найближче, що є — гейт `meta_label` поверх `regime`, але це фільтр входів однієї підстратегії, а не зважування альф у портфелі |
+| Офлайн дослідження гіпотез | ✅ `application/propose_alphas.py` (+ `lab propose`, `scripts/propose_alphas.py`) і контракт гіпотези `domain/hypothesis.py`; DSL-оцінка — `application/evaluate_recipe.py` над `domain/factor_dsl.py` |
 | Робот на формульних ознаках + LightGBM | ✅ `formulaic_lgbm` (потрібен `FORMULAIC_MODEL_PATH`) |
 
 **Правило:** LLM не викликається з `on_bar`. Модель навчається офлайн, у бектест
@@ -65,9 +67,9 @@ PPO-портфелі, автономні агенти на Uniswap v4. **nautilu
 
 | Що в документі | Стан |
 |----------------|------|
-| LightGBM + OBI/WOFI | 🟡 `ml_obi` — domain only, немає L2-фіду |
-| Deep Multivariate Hawkes | 🟡 `ExponentialHawkes` — одновимірний |
-| VPIN як фільтр режиму | ✅ `RegimeRouter` + `--bar-vpin` |
+| LightGBM + OBI/WOFI | ✅ підключено, виміру немає: `ml_obi` у `BACKTEST_WIRED_ROBOTS`, книга ордерів пишеться `lab ingest --depth`, навчання — `lab ml train --model-type obi` |
+| Deep Multivariate Hawkes | 🟡 `ExponentialHawkes` — підключений лише як **фільтр режиму** (`--hawkes`), і оцінка в ньому одновимірна: терм взаємного збудження `cross_alpha` у класі є, але `Settings` його не виставляє |
+| VPIN як фільтр режиму | ✅ `RegimeRouter` + `--bar-vpin` (барові кошики) / `--tick-vpin` (кошики з aggTrades) |
 | VPIN momentum робот | ✅ `vpin_momentum` |
 
 ---
@@ -108,9 +110,9 @@ PPO-портфелі, автономні агенти на Uniswap v4. **nautilu
 | CVaR breaker | ✅ opt-in `USE_CVAR_BREAKER` |
 | Fractional Kelly | ✅ opt-in `USE_FRACTIONAL_KELLY` |
 | HAR-RV vol-scaling | ✅ opt-in `USE_VOL_SCALING` |
-| CFA / ensemble | 🟡 `ensemble_vote` — заплановано після валідації окремих роботів |
+| CFA / ensemble | 🔴 жодного ансамблю й жодного `ensemble_vote` у коді немає — і це свідома позиція (див. [17 §3](17-ml-ansambli-vidpovidnist.md), [19 §5](19-ml-steking-vidpovidnist.md)): ансамбль знижує дисперсію навколо переваги, якої поки немає |
 | PBO / CSCV | ✅ `domain/overfitting.py` + `application/run_overfitting_audit.py`, прапорець `--pbo` (див. [15](15-audit-vypravlennya.md), [08 §2.2](08-mft-2026-vidpovidnist.md)) |
-| Turnover / cost-aware selection | 🔴 `in_sample_score()` ранжує за `ending_balance` і **ігнорує** `fees_paid` та `turnover`, які `compute_metrics()` уже рахує — найдешевший важіль із цього документа |
+| Turnover / cost-aware selection | ✅ частково: `application/score.py::in_sample_score()` віднімає `turnover_haircut * turnover` (`DEFAULT_TURNOVER_HAIRCUT = 0.0005`) від `ending_balance`, тож вибір параметрів на IS уже cost-aware. `fees_paid` при цьому **не** віднімається вдруге — комісії вже сидять у балансі. 🔴 Оборот не входить у саму метрику звіту як окремий вердикт: OOS-рішення ухвалюють OOS-дохідність проти buy&hold, PBO і DSR |
 
 ---
 
@@ -118,12 +120,12 @@ PPO-портфелі, автономні агенти на Uniswap v4. **nautilu
 
 | Розділ ШІ-документа | Статус | Ключовий файл |
 |---------------------|--------|----------------|
-| LLM formulaic alphas | 🟡 офлайн | `application/train_formulaic.py` |
+| LLM formulaic alphas | 🟡 офлайн | `application/propose_alphas.py`, `domain/hypothesis.py` |
 | PPO зважування | 🔴 | — |
 | PatchTST / Mamba | 🔴 | — |
-| LightGBM + OBI | 🟡 | `domain/ml_obi_strategy.py` |
+| LightGBM + OBI | ✅ підключено, виміру немає | `domain/ml_obi_strategy.py`, `application/train_obi.py` |
 | VPIN | ✅ | `domain/vpin.py`, `vpin_momentum` |
-| Hawkes | 🟡 | `domain/hawkes.py` |
+| Hawkes | ✅ opt-in фільтр режиму | `domain/hawkes.py`, `--hawkes` |
 | Коінтеграція + rolling refit | ✅ | `domain/pairs/pairs_trading.py` |
 | DRL портфель | 🔴 | — |
 | Kelly / vol / CVaR overlays | ✅ opt-in | `application/risk.py`, adapters |

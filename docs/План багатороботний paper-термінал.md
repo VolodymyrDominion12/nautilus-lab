@@ -2,6 +2,20 @@
 
 Sep 24, 2026 · @Volodymyr
 
+> **Стан реалізації (звірено з кодом).** План майже повністю втілено:
+> `SessionRegistry` зі словником `session_id → менеджер` — `api/live_sessions.py:71`;
+> `MarketFeed`/`FeedHub`, один сокет на пару символ+інтервал — `api/market_feed.py`;
+> журнал на сесію (`sessions_dir/<session_id>.jsonl`) з відновленням незавершених —
+> `api/live_sessions.py:118–161`; робот-бенчмарк `hold` — `api/paper_streamer.py`
+> (`HOLD_ROBOT`); ліміти `LIVE_PAPER_MAX_SESSIONS` (8) і `LIVE_PAPER_MAX_FEEDS` (5) —
+> `infrastructure/settings.py`; портфель — `GET /api/paper/portfolio`.
+> Розбіжності з текстом плану: WebSocket називається `GET /api/paper/live-stream`
+> (у плані — `/api/paper/stream`), роль `LAB_ROLE=paper` дозволяє саме
+> `POST /api/paper/sessions` і чотири контроли живої сесії (`api/security.py`,
+> `PAPER_ROLE_WRITES`), а не «усі шляхи сесій». Пункт 6 (опційне скидання
+> запобіжника max drawdown з часом) у живому контурі не реалізовано — у бектесті цю
+> роль грає `DRAWDOWN_COOLDOWN_DAYS`, і типово він `0`.
+
 Пропоную замінити одну глобальну сесію на менеджер із 3–5 незалежних сесій, у кожної з яких власний робот, журнал і віртуальний рахунок. Над ними — екран «Портфель», де всі роботи видно однією таблицею. Порядок: спершу бекенд (без нього UI немає що показувати), потім портфель і термінал сесії, далі порівняння й сповіщення.
 
 Чому саме так:

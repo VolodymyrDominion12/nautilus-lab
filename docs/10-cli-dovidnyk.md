@@ -10,11 +10,13 @@ uv run lab <команда> [прапорці]
 
 | Команда | Що робить | Код виходу при помилці |
 |---------|-----------|------------------------|
-| `lab ingest` | Завантажує публічні klines Binance у Parquet-каталог | 1 |
+| `lab ingest` | Завантажує публічні klines (або фандинг, aggTrades, знімки книги) у Parquet-каталог | 1 |
 | `lab research` | Бектест/симуляція (основний шлях; за замовчуванням walk-forward) | 1 |
-| `lab paper` | Лог гіпотетичних ордерів, без виконання | 1 |
+| `lab paper` | Paper-сесія: заморожена конфігурація вперед, повний реєстр філів, ордери нікуди не йдуть | 1 |
 | `lab scan` | Дослідницькі сканери (трикутний арбітраж) | 1 |
 | `lab propose` | Офлайн-опитування LLM про гіпотези альф (не торгує) | 1 |
+| `lab ml train` | Purged-K-Fold тренування моделі (`formulaic`, `meta_label`, `obi`) → файл у `models/` | 1 |
+| `lab xsmom` | Крос-секційний моментум по кошику спот-монет: walk-forward (+ аудит `--pbo`) | 1 |
 | `lab live` | **Завжди помилка** (жива торгівля вимкнена) | 1 завжди |
 
 Успіх будь-якої команди → код виходу `0`, повідомлення про помилки друкуються в `stderr`.
@@ -24,8 +26,9 @@ uv run lab <команда> [прапорці]
 ## `lab ingest`
 
 ```
-usage: lab ingest [-h] [--start START] [--end END] [--catalog CATALOG] [--symbols SYMBOLS]
-                  [--incremental] [--funding]
+usage: lab ingest [-h] [--start START] [--end END] [--catalog CATALOG]
+                  [--symbols SYMBOLS] [--incremental] [--funding] [--trades]
+                  [--live-ticks MINUTES] [--depth]
 ```
 
 | Прапорець | Типово | Опис |
@@ -34,8 +37,30 @@ usage: lab ingest [-h] [--start START] [--end END] [--catalog CATALOG] [--symbol
 | `--end` | зараз | Кінець вікна (**виключно**, UTC) |
 | `--catalog` | `CATALOG_PATH` з `.env` (`catalog`) | Тека каталогу |
 | `--symbols` | `BINANCE_SYMBOLS` з `.env` (`ETHUSDT,BTCUSDT`) | Символи через кому |
-| `--incremental` | вимкнено | Дозавантажити лише те, що після останнього збереженого бару |
+| `--incremental` | вимкнено | Дозавантажити лише те, що після останнього збереженого бару (див. нижче) |
 | `--funding` | вимкнено | Вантажити **ставки фандингу** замість klines (див. нижче) |
+| `--trades` | вимкнено | Вантажити **aggTrades (тіки)** замість klines у `<catalog>/data/agg_trade/` (див. нижче) |
+| `--live-ticks MINUTES` | — | Разом із `--trades`: збирати aggTrades з публічного WebSocket рівно `MINUTES` хвилин замість проходу по REST-історії |
+| `--depth` | вимкнено | Живий ingest знімків L2-книги по WebSocket у `<catalog>/data/orderbook/`; працює до переривання |
+
+`--funding`, `--trades` і `--depth` — **взаємовиключні режими**: у `_run_ingest`
+перевірка йде в порядку `--funding` → `--trades` → `--depth`, перший заданий прапорець
+і визначає, що саме вантажиться (решта ігнорується).
+
+Ще один рядок виводу з'являється з `--incremental`, коли серія вже свіжа:
+
+```
+symbol=ETHUSDT up-to-date (incremental skip)
+```
+
+`--live-ticks` валідує аргумент: нуль або від'ємне число — помилка
+`--live-ticks must be a positive number of minutes` (код 1).
+
+`--depth` підтримує **один** символ: якщо передати кілька, друкується
+`Warning: Only one symbol supported for --depth currently. Using <SYMBOL>.` і береться перший.
+Якщо символів немає — `At least one symbol required.` (код 1). Перед стартом друкується
+`Starting live L2 orderbook ingest for <SYMBOL> to <каталог> ...`, після `Ctrl+C` —
+`Ingestion interrupted by user.` і код виходу `0`.
 
 Що робить: публічний REST `https://api.binance.com/api/v3/klines`, пагінація по 1000 свічок,
 без API-ключів. Інтервал беруть із `BAR_INTERVAL` (типово `1h`). Записує бари й опис інструмента в каталог.
@@ -108,6 +133,52 @@ symbol=ETHUSDT funding=1878 missing_index_price=0 first=2025-01-01T00:00:00.0150
 > ⚠️ **Один каталог — один ingest.** Повторний запуск із вікном, що перекривається, створить
 > дублікати барів і зламає всі наступні `lab research`. Деталі: [04](04-tsykl-doslidzhennya.md#крок-1-ingest--завантаження-історії).
 
+### `lab ingest --trades` — aggTrades (тіки) для справжнього VPIN і Hawkes
+
+Вантажить агреговані трейди (публічний `api/v3/aggTrades`, без ключів) у
+`<catalog>/data/agg_trade/<SYMBOL>/` — один Parquet-файл на добу UTC. Тікова серія потрібна
+тим фільтрам, які не можна порахувати на барному обсязі: `--tick-vpin` і `--hawkes`
+(див. [24](24-paper-treydynh.md) і [25](25-xsmom-ta-vorota-dopusku.md)).
+
+Прогрес друкується по днях, бо тікове вікно міряється годинами завантаження
+(числа нижче — формат рядків, не результат конкретного прогону):
+
+```
+  2025-01-01 trades=<за добу>
+  2025-01-02 trades=<за добу>
+symbol=ETHUSDT trades=<усього> first=<ISO> last=<ISO> catalog=/.../catalog
+```
+
+```bash
+uv run lab ingest --trades --start 2025-01-01 --end 2025-01-08 --symbols ETHUSDT
+```
+
+### `lab ingest --trades --live-ticks MINUTES` — тіки з живого WebSocket
+
+Замість проходу по REST-історії збирає aggTrades із публічного WebSocket рівно `MINUTES`
+хвилин і зупиняється за дедлайном (обмежений збирач навмисно: необмежений процес ніхто не
+наважиться зупинити). Прогрес — один рядок на символ, підсумок — `summary_line()`
+(формат, не результат конкретного прогону):
+
+```
+  ETHUSDT trades=<N> last=<ISO>
+live ticks symbol=ETHUSDT trades=<N> batches=<B> window=[<ISO>, <ISO>] stop=duration reached catalog=/.../catalog
+```
+
+```bash
+uv run lab ingest --trades --live-ticks 30 --symbols ETHUSDT
+```
+
+### `lab ingest --depth` — знімки L2-книги
+
+Живий ingest знімків глибини книги з публічного WebSocket у `<catalog>/data/orderbook/`.
+**Працює до переривання** (це не обмежений у часі збирач), тому його зупиняють `Ctrl+C`.
+Потрібен для робота `ml_obi`; `lab paper --source live` для нього не підтримується.
+
+```bash
+uv run lab ingest --depth --symbols ETHUSDT
+```
+
 ---
 
 ## `lab research`
@@ -121,14 +192,16 @@ usage: lab research [-h] [--bars BARS]
                     [--oos-start OOS_START] [--oos-end OOS_END]
                     [--is-fraction IS_FRACTION] [--catalog CATALOG]
                     [--slice SLICE] [--embargo-bars EMBARGO_BARS] [--bar-vpin]
-                    [--tearsheet TEARSHEET] [--optuna] [--trials TRIALS]
+                    [--tick-vpin] [--hawkes] [--tearsheet TEARSHEET]
+                    [--optuna] [--trials TRIALS]
                     [--folds FOLDS] [--notify] [--pbo] [--pbo-blocks PBO_BLOCKS]
+                    [--journal]
 ```
 
 | Прапорець | Типово | Опис |
 |-----------|--------|------|
 | `--bars` | `3000` | Кількість барів для синтетичного режиму |
-| `--robot` | `ROBOT` з `.env` (`regime`) | Який робот запускати. Підключені до рушія (7 із 11 значень `RobotName`): `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`. `funding`, `ml_obi`, `glft`, `tri_scan` **падають з помилкою** (код 1), бо адаптера ще немає — див. [05](05-roboty.md#0-таблиця-стану-читати-першою) |
+| `--robot` | `ROBOT` з `.env` (`regime`) | Який робот запускати. Підключені до рушія (8 із 11 значень `RobotName`): `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ml_obi`. `funding`, `glft`, `tri_scan` **падають з помилкою** (код 1), бо адаптера ще немає — див. [05](05-roboty.md#0-таблиця-стану-читати-першою) |
 | `--synthetic` | вимкнено | Синтетичні бари замість каталогу (мережа не потрібна). Режим **повного прогону**, не walk-forward |
 | `--full-sample` | вимкнено | Один прогін каталогу на всій серії. **Не** є out-of-sample звітом |
 | `--walk-forward` | увімкнено для каталогу | Підбір на in-sample, звіт на out-of-sample |
@@ -138,7 +211,9 @@ usage: lab research [-h] [--bars BARS]
 | `--catalog` | `CATALOG_PATH` | Тека каталогу |
 | `--slice` | — | Стрес-період: `covid2020`, `ftx2022`, `etf2024` |
 | `--embargo-bars` | `EMBARGO_BARS` (`10`) | Розрив між IS і OOS |
-| `--bar-vpin` | вимкнено | Увімкнути VPIN-фільтр режиму (робот `regime`) |
+| `--bar-vpin` | вимкнено | Увімкнути **барний** VPIN-фільтр режиму (VPIN рахується на барному обсязі — проксі) |
+| `--tick-vpin` | вимкнено | Увімкнути **тіковий** VPIN-фільтр режиму; потрібна серія aggTrades у каталозі (`lab ingest --trades`) |
+| `--hawkes` | вимкнено | Увімкнути тіковий фільтр режиму на процесі Хоукса; теж потрібна серія aggTrades |
 | `--tearsheet PATH` | — | Зберегти інтерактивний HTML-звіт (тиршит) за вказаним шляхом |
 | `--optuna` | вимкнено | Замінити перебір сітки на байєсівську оптимізацію (Optuna TPE) на in-sample |
 | `--trials N` | `20` | Кількість спроб Optuna (працює лише з `--optuna`) |
@@ -491,9 +566,13 @@ uv run lab research --synthetic --bars 5000 --folds 2
 ```bash
 uv run lab research --robot regime --pbo               # 8 блоків (типово)
 uv run lab research --robot regime --pbo --pbo-blocks 4
-uv run lab research --robot regime --pbo --optuna --trials 30
 uv run lab research --robot regime --synthetic --bars 2000 --pbo --pbo-blocks 4
 ```
+
+> ⚠️ **`--optuna` і `--trials` у режимі `--pbo` ігноруються.** Шлях `--pbo` у `cli.py`
+> викликає `overfit_audit_request()`, який не має параметрів Optuna, тож комбінація
+> `--pbo --optuna --trials 30` тихо виконує **сітковий** аудит. Optuna та PBO —
+> окремі прогони: спершу підбір (`--optuna`), потім аудит (`--pbo`).
 
 Замість одного walk-forward цей режим рахує **ймовірність перенавчання бектесту**
 (Probability of Backtest Overfitting) методом CSCV:

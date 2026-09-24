@@ -5,6 +5,14 @@
 > правильний, але його технічний аудит Фази 1 писався за старішого стану коду:
 > частина пунктів уже реалізована, а один запропонований фрагмент коду містить
 > помилку. Цей документ фіксує розбіжності та перепріоритизований беклог.
+>
+> **Повторна звірка з кодом — 2026-09-24.** Після виконання S0–S7, Фаз 1–4
+> [23-infrastruktura-danyh-plan.md](23-infrastruktura-danyh-plan.md) і появи
+> paper-термінала, дашборда та деплою статуси §2, §3, §5 і §7 перевірені заново.
+> Частина пунктів, поданих тут або в `docs/21` як «треба зробити», уже
+> реалізована; кожен рядок нижче тепер несе фактичний стан із посиланням на
+> файл коду. Нових чисел не додано: усе виміряне — прогонами гейтів
+> 2026-09-24, решта позначена як «не виміряно».
 
 ---
 
@@ -17,6 +25,10 @@
 Тому перед початком роботи кожне технічне твердження Фази 1 було звірено з
 кодом. Результат — у §2. Три пункти виявилися вже виконаними, один — таким, що
 запропоноване виправлення **погіршило б** систему.
+
+Повторна звірка 2026-09-24 додала до цього списку ще шість уже виконаних
+пунктів (§2, стовпець «Вердикт»), перелік можливостей, яких на момент написання
+не існувало взагалі (§2.2), стан передумов Фаз 2–5 (§5.1) і стан спринтів (§7).
 
 **Головний принцип плану:** жодна нова можливість не змінює поведінку за
 замовчуванням. Усі нові механізми — opt-in, бо вже задокументовані результати
@@ -31,18 +43,18 @@
 |---|---|---|---|
 | §3.1 Cost-aware score | `in_sample_score()` повертає лише `ending_balance`, ігнорує `fees_paid` | `score.py:13-31` вже віднімає `turnover_haircut * metrics.turnover` (типово 5 bps). Є тест `test_factor_research.py::test_in_sample_score_does_not_double_count_fees` | ❌ **Застаріло** |
 | §3.1 запропонований код | `net_pnl - 2.0 * fees_paid` | **Хибно**: комісії вже зменшили `ending_balance`, тому `net_pnl` їх уже містить. Відняти `fees_paid` ще раз = подвійний облік. Docstring наявної функції це прямо забороняє | 🚫 **Не реалізовувати** |
-| §3.2 Келлі — no-op | `win_rate`/`payoff_ratio` не передаються | `TradeStats` накопичується в `signal_strategy.py:237` (`_flatten`) і передається в `resolve_risk_fraction(stats=self._trade_stats)` (`:186-191`); те саме у `spread_strategy.py:149` | ⚠️ **Частково застаріло** |
-| §1.1 DSR «розрахунок» як нове | — | `domain/deflated_sharpe.py` існує, `cli.py:521` друкує `deflated_sharpe.summary_line()` | ✅ **Уже є** |
-| §1.1 підключені роботи | лише `regime`, `ema`, `pairs` | `BACKTEST_WIRED_ROBOTS` = 7: `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema` | ❌ **Застаріло** |
-| §3.3 GJR-GARCH | «додати поряд з EGARCH» | `egarch_forecast.py` містить **лише** `egarch_forecast_volatility()`, і **вона ніде не викликається** в `src/` (лише визначення + юніт-тест). Vol-scaling у стратегії йде через `HarRealizedVolatility` | ⚠️ **Глибша проблема** |
-| §3.4 Real-time CB alerts | викликати нотифікатор у момент спрацювання | `AlertNotifier` викликається лише в кінці прогону (`cli.py:326-523`) | ✅ **Актуально** |
-| §3.5 Емпіричні квантилі | замінити фіксовані пороги | `pairs_trading.py` використовує фіксовані `z_entry`/`z_exit` (рядки 82-93) | ✅ **Актуально** |
-| §4.1 Funding robot | «повна інтеграція» | `domain/funding.py` і `infrastructure/binance_funding.py` — **повністю сироти**: нуль імпортів у `interfaces/`, `application/`, `spread_strategy.py`. Не в `BACKTEST_WIRED_ROBOTS`. Немає ingest-шляху для funding rates | ✅ **Актуально, великий** |
-| §5.1 5m/15m | перейти на нижчі ТФ | `BAR_INTERVAL=1h`; у каталозі лише `-1-HOUR-` серії | ✅ **Актуально** |
-| §7.2 Синхронізація docs↔код | розширити `_validator.py` | `_validator.py` перевіряє лише `specs/`, Markdown у `docs/` не парсить | ✅ **Актуально** |
-| §7.3 CI/CD | налаштувати GitHub Actions | Теки `.github/workflows` **не існує** | ✅ **Актуально** |
-| §10 DoD | критерії валідації | `breakeven_cost` (`domain/metrics.py`) і DSR рахуються й друкуються, але **автоматичного гейта немає** — критерії лишаються ручними | ⚠️ **Частково** |
-| — | (не згадано в роудмапі) | **Тестова база червона**: `470 passed, 1 error` — `test_cli_propose_journal.py` патчить `cli.llm_completer`, якого в `cli.py` немає | 🔴 **Блокер** |
+| §3.2 Келлі — no-op | `win_rate`/`payoff_ratio` не передаються | `TradeStats` створюється в `signal_strategy.py:171`, наповнюється в `:303`, передається в `resolve_risk_fraction(stats=self._trade_stats)` (`signal_strategy.py:407-410`); те саме у `spread_strategy.py:103` (створення), `:266` (запис), `:158-161` (передача). Підключення є; відкритим лишається **вимір** (S5) | ❌ **Застаріло** (підключено, не виміряно) |
+| §1.1 DSR «розрахунок» як нове | — | `domain/deflated_sharpe.py` існує, `cli.py:854` друкує `report.deflated_sharpe.summary_line()` | ✅ **Уже є** |
+| §1.1 підключені роботи | лише `regime`, `ema`, `pairs` | `BACKTEST_WIRED_ROBOTS` (`domain/regime.py:35-46`) = **8**: `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ml_obi`. Поза рушієм лишаються `funding`, `glft`, `tri_scan` | ❌ **Застаріло** (8, не 7) |
+| §3.3 GJR-GARCH | «додати поряд з EGARCH» | Обидві моделі **підключено**: `infrastructure/vol_forecast.py::ArchVolForecaster` кличе `egarch_forecast_volatility`/`gjr_garch_forecast_volatility`, модель вибирає `VOL_MODEL` (`har`/`egarch`/`gjr_garch`) із `VOL_REFIT_EVERY`; `har` лишається типовим. Прапорець доходить до `SignalRobot` | ✅ **Уже є** (спринт S2) |
+| §3.4 Real-time CB alerts | викликати нотифікатор у момент спрацювання | Спрацювання більше не губиться: `RiskBreachTally` (`application/risk.py:50`) → `BacktestReport.risk_breaches` → рядок `risk_breaches blocked=...` (`cli.py:1222-1232`). Але `AlertNotifier` і далі кличеться лише **в кінці** прогону (`cli.py:855-866`): це звітність, а не стрімінг — межу прямо зафіксовано в `specs/components/risk-layer.yaml` | ⚠️ **Частково**: облік є, алерта в момент події немає |
+| §3.5 Емпіричні квантилі | замінити фіксовані пороги | Зроблено: `domain/quantiles.py` (квантиль типу 7 на `Decimal`), `PairsParams.z_entry_quantile` (`domain/pairs/params.py:19-29`), гілка в `PairsTrading` (`domain/pairs/pairs_trading.py:110-127`), `PAIRS_Z_ENTRY_QUANTILE` у `.env.example`. Типово `0` = старі фіксовані `z_entry`/`z_exit` | ✅ **Уже є** (спринт S1) |
+| §4.1 Funding robot | «повна інтеграція» | **Розрив «даних» закрито**: `application/ingest_funding_history.py`, `infrastructure/funding_catalog.py`, `lab ingest --funding`; фід `BinancePublicFunding` створюється в `interfaces/composition.py:405` і пагінується понад 1000 розрахунків. **Розрив «адаптера» лишився**: `funding` не в `BACKTEST_WIRED_ROBOTS`, нарахування фандингу в рушії немає → `specs/strategies/funding.yaml` лишається `blocked` | ⚠️ **Частково застаріло** (дані — є, адаптер — ні) |
+| §5.1 5m/15m | перейти на нижчі ТФ | `BAR_INTERVAL=1h` (`infrastructure/settings.py:125`); у каталозі серії `*-1-HOUR-*` і `*-1-DAY-*` для 7 символів, 5m/15m немає | ✅ **Актуально** |
+| §7.2 Синхронізація docs↔код | розширити `_validator.py` | Зроблено: `specs/_validator.py::check_docs_alignment` звіряє таблицю `docs/05-roboty.md` із `BACKTEST_WIRED_ROBOTS` і `RobotName`; тест `tests/unit/test_specs.py::test_docs_agree_with_backtest_wired_robots` | ✅ **Уже є** (спринт S6) |
+| §7.3 CI/CD | налаштувати GitHub Actions | `.github/workflows/ci.yml` **існує** й блокуючий: ruff check, ruff format --check, mypy, `specs/_validator.py`, pytest, smoke-бектест, виконання зошита. Лише крок `pytest --cov` лишається `continue-on-error` (він **проходить**: 80.50% ≥ 80, підпис у workflow оновлено) | ✅ **Уже є** (спринт S4) |
+| §10 DoD | критерії валідації | Гейт **є і друкується автоматично**: `application/promotion_gate.py::evaluate_gate` віддає рядок `promotion_gate=PROMOTE\|REJECT\|INCOMPLETE` у кожному walk-forward і xsmom-прогоні (`cli.py:855`, `:1148`, `:1210`). Пороги — `GateCriteria` (`promotion_gate.py:56-64`), описані в `docs/25` §4; `breakeven_cost` і DSR лишаються **окремими довідковими рядками**, а не перевірками гейта | ✅ **Уже є** (код), критерії переїхали в код зі `docs/21` §10 |
+| — | (не згадано в роудмапі) | **Тестову базу зелено**: 825 passed, `ruff check` — `All checks passed`, `ruff format --check` — 297 файлів, `mypy src tests` — 229 файлів без зауважень, `specs/_validator.py` — 22 спеки, `pytest --cov` — **80.50%** ≥ `fail_under = 80`. Причину початкового червоного тесту закрито в S0 | ✅ **Закрито** (спринт S0) |
 
 ### 2.1. Чому §3.1 у роудмапі хибний (важливо)
 
@@ -61,6 +73,33 @@ penalized_pnl = net_pnl - (turnover_penalty * result.fees_paid)
 
 Отже §3.1 закривається **документом і тестом**, а не новим кодом.
 
+### 2.2. Чого не було на момент написання: реалізоване після
+
+Ці можливості не згадані ні тут, ні в `docs/21` — вони з'явилися в коді пізніше.
+Якщо десь у роудмапі, беклозі чи в сусідньому документі вони подані як «треба
+зробити», це застаріло: нижче — фактичний стан із посиланням на файл коду.
+
+| Можливість | Стан | Де в коді |
+|---|---|---|
+| Інкрементальний ingest | ✅ працює | `lab ingest --incremental`; `application/catalog_queries.py::incremental_ingest_start` |
+| Серія тіків (aggTrades) | ✅ реалізовано (покриття каталогу — 1 доба ETHUSDT) | `lab ingest --trades`, `application/ingest_agg_trades.py`, `infrastructure/agg_trades_catalog.py` |
+| Серія фандингу | ✅ реалізовано (7 символів у каталозі) | `lab ingest --funding`, `application/ingest_funding_history.py`, `infrastructure/funding_catalog.py` |
+| Серія L2-стакану | ✅ реалізовано, **живим збором** (2 доби в каталозі) | `lab ingest --depth` (WS `@depth20@100ms`), `infrastructure/binance_orderbook.py`, `infrastructure/orderbook_catalog.py` |
+| Серія реального потоку тейкерів | ✅ працює | `infrastructure/taker_flow_catalog.py`, `OhlcvBar.taker_buy_base_volume` |
+| Живі WS-збирачі | ✅ працюють | `infrastructure/binance_ws.py`, `infrastructure/live_bar_feed.py`, `application/collect_live_agg_trades.py`, `deploy/collect_ticks.sh` |
+| Крос-секційний momentum | ✅ реалізовано, ❌ **відхилено виміром** | `lab xsmom`, `domain/xsmom.py`, `application/run_xsmom.py`, `application/xsmom_backtest.py`; результат — `docs/25` §6 |
+| Ворота допуску | ✅ працюють | `application/promotion_gate.py`; друкуються в `lab research --pbo` і `lab xsmom --pbo`; пороги — `docs/25` §4 |
+| Аудит перенавчання PBO/CSCV і DSR | ✅ працюють | `lab research --pbo`, `domain/overfitting.py`, `domain/deflated_sharpe.py` |
+| Breakeven-cost | ✅ працює | `BacktestReport.mean_breakeven_cost` (`application/dtos.py:301-318`), рядок `breakeven_cost mean_bps=...` (`cli.py:1202`), спека `specs/components/breakeven-cost.yaml` |
+| Paper-сесії | ✅ працюють, живуть і на VPS | `lab paper` (`--source catalog\|synthetic\|live`), `application/run_paper.py`, `infrastructure/paper_sessions.py`, `api/paper_streamer.py`; `docs/24` |
+| Веб-дашборд із живими сесіями | ✅ працює | FastAPI `src/nautilus_lab/api/app.py` (`/api/data`, `/api/paper/sessions`, `/api/command-center`, …), фронтенд `frontend/`; `docs/20` |
+| Деплой (docker compose, Caddy) | ✅ є | `deploy/docker-compose.yml`, `deploy/Dockerfile.api`, `deploy/Caddyfile`, `scripts/deploy_vps.sh`, `scripts/pull_vps.sh`; `docs/26` |
+| ML-пайплайни | ✅ працюють | `lab ml train --model-type {formulaic,meta_label,obi}`, `application/train_formulaic.py`, `train_meta_label.py`, `train_obi.py` |
+
+Застереження, яке тут важливіше за список: **наявність коду ≠ виміряна перевага.**
+Жоден робот досі не має статусу `validated`; `adaptive_ema` — `rejected`, `funding`
+і `glft` — `blocked`, `xsmom` відхилено виміром (`docs/25` §6), решта — `candidate`.
+
 ---
 
 ## 3. Перепріоритизований беклог Фази 1
@@ -68,15 +107,15 @@ penalized_pnl = net_pnl - (turnover_penalty * result.fees_paid)
 Порядок змінений проти §8 роудмапу: спершу блокер (червона база), потім
 реально відкриті пункти, потім дешеві інженерні перемоги.
 
-| # | Задача | Джерело | Складність | Чому такий пріоритет |
-|:-:|---|---|---|---|
-| **S0** | Зелений baseline тестів | знайдено аудитом | 🟢 Дуже низька | На червоній базі неможливо відрізнити свій баг від наявного |
-| **S1** | Емпіричні квантилі z-score у `pairs` | §3.5 | 🟢 Низька | Чистий домен, повністю тестується офлайн, без мережі |
-| **S2** | `VOL_MODEL`: GJR-GARCH **і** підключення EGARCH | §3.3 | 🟠 Середня | Роудмап просив «додати поряд», але EGARCH теж не підключений — інакше був би другий сирота |
-| **S3** | Real-time алерти при спрацюванні circuit breaker | §3.4 | 🟢 Низька | Критично для моніторингу, fail-open за конструкцією |
-| **S4** | CI пайплайн (GitHub Actions) | §7.3 | 🟢 Низька | Дешево, але вмикає машинну перевірку всіх правил проєкту |
-| **S5** | Вимірювання фракційного Келлі | §3.2 | 🟠 Середня | Не «активація» (вже підключено), а **вимір**: чи дає щось на OOS |
-| **S6** | Синхронізація docs↔код у `_validator.py` | §7.2 | 🟠 Середня | Ловить саме той клас дрейфу, який породив §2 цього документу |
+| # | Задача | Джерело | Складність | Чому такий пріоритет | Стан (2026-09-24) |
+|:-:|---|---|---|---|---|
+| **S0** | Зелений baseline тестів | знайдено аудитом | 🟢 Дуже низька | На червоній базі неможливо відрізнити свій баг від наявного | ✅ закрито — 825 passed |
+| **S1** | Емпіричні квантилі z-score у `pairs` | §3.5 | 🟢 Низька | Чистий домен, повністю тестується офлайн, без мережі | ✅ закрито — `domain/quantiles.py`, `PAIRS_Z_ENTRY_QUANTILE` |
+| **S2** | `VOL_MODEL`: GJR-GARCH **і** підключення EGARCH | §3.3 | 🟠 Середня | Роудмап просив «додати поряд», але EGARCH теж не підключений — інакше був би другий сирота | ✅ закрито — `infrastructure/vol_forecast.py`, `domain/volatility.py` |
+| **S3** | Real-time алерти при спрацюванні circuit breaker | §3.4 | 🟢 Низька | Критично для моніторингу, fail-open за конструкцією | ⚠️ частково — облік спрацювань є (`RiskBreachTally`), алерта **в момент** події немає (межа задокументована в `specs/components/risk-layer.yaml`) |
+| **S4** | CI пайплайн (GitHub Actions) | §7.3 | 🟢 Низька | Дешево, але вмикає машинну перевірку всіх правил проєкту | ✅ закрито — `.github/workflows/ci.yml` |
+| **S5** | Вимірювання фракційного Келлі | §3.2 | 🟠 Середня | Не «активація» (вже підключено), а **вимір**: чи дає щось на OOS | ⏳ не розпочато: у `research/journal.md` немає жодного рядка про `USE_FRACTIONAL_KELLY`, виміру не існує |
+| **S6** | Синхронізація docs↔код у `_validator.py` | §7.2 | 🟠 Середня | Ловить саме той клас дрейфу, який породив §2 цього документу | ✅ закрито — `specs/_validator.py::check_docs_alignment` + тест у `tests/unit/test_specs.py` |
 
 ### 3.1. Критерії приймання кожного спринта
 
@@ -133,14 +172,35 @@ penalized_pnl = net_pnl - (turnover_penalty * result.fees_paid)
 - **Фаза 2 (Funding).** Передумова — не «написати стратегію» (вона є), а
   **ingest-шлях** для `fapi/v1/fundingRate` у Parquet-каталог і P&L-оверлей
   нарахування фандінгу кожні 8 годин у рушії. Без оверлея бектест
-  cash-and-carry показуватиме нуль.
+  cash-and-carry показуватиме нуль. *(Стан на 2026-09-24: ingest зроблено,
+  оверлея немає — див. §5.1.)*
 - **Фаза 2 (Калман, Johansen).** Потребує ingest додаткових символів (SOL, BNB).
 - **Фаза 3 (5m/15m).** Потребує **нового каталогу** (`--catalog catalog_5m`):
   один каталог — один інтервал.
 - **Фаза 3 (L2/WS).** Найважче: без L2-даних мікроструктурні роботи
-  (`ml_obi`) не мають на чому навчатись.
+  (`ml_obi`) не мають на чому навчатись. *(Уточнення 2026-09-24: живий збір L2
+  уже є, тож бракує не фіду, а **історії** — див. §5.1.)*
 - **Фаза 4 (GLFT).** Передумова — реалістична модель виконання лімітних ордерів;
   без неї результати маркет-мейкера будуть артефактом симулятора.
+
+### 5.1. Стан передумов (звірено з кодом 2026-09-24)
+
+Формулювання вище описують, **чого бракувало**; таблиця нижче фіксує, що з цього
+вже зроблено, а що ні. Це та частина документу, де застарілість найдорожча:
+передумова, подана як майбутня, але вже реалізована, змушує планувати вдруге.
+
+| Передумова | Стан | Де в коді / чого бракує |
+|---|---|---|
+| Фаза 2: ingest `fapi/v1/fundingRate` у Parquet | ✅ **зроблено** | `application/ingest_funding_history.py`, `infrastructure/funding_catalog.py`, `lab ingest --funding`; фід пагінується, `index_price` береться з `fapi/v1/indexPriceKlines` |
+| Фаза 2: P&L-оверлей нарахування фандингу в рушії | ❌ **немає** | `infrastructure/nautilus/backtest_runner.py::_execute()` додає самі лише бари; адаптера `FundingCashAndCarry` немає → `specs/strategies/funding.yaml` = `blocked` |
+| Фаза 2: ingest додаткових символів (SOL, BNB) | ✅ **зроблено** | `catalog/data/bar/` містить 7 символів, серед них `SOLUSDT.SIM` і `BNBUSDT.SIM` |
+| Фаза 3: каталог 5m/15m | ❌ **немає** | `BAR_INTERVAL=1h` (`infrastructure/settings.py:125`); у каталозі лише `1-HOUR-` і `1-DAY-` серії |
+| Фаза 3: L2/WS-дані | ⚠️ **частково: збір є, історії немає** | живий збір — `lab ingest --depth` (`infrastructure/binance_orderbook.py`, `orderbook_catalog.py`), тіки — `lab ingest --trades`/`--live-ticks`. Історичного L2 публічно не існує (`docs/23` §2), тому `ml_obi` має 2 доби знімків і `evidence.measured: false` |
+| Фаза 4: модель виконання лімітних ордерів | ❌ **немає** | `domain/glft.py` є, але `QuoteIntent` не споживає жоден адаптер (`specs/strategies/glft.yaml` = `blocked`) |
+
+Дві передумови з шести закриті повністю, одна — частково, три лишаються
+відкритими. Саме тому Фаза 2 у плануванні має читатися як «адаптер і
+нарахування», а не як «дані».
 
 ---
 
@@ -149,8 +209,11 @@ penalized_pnl = net_pnl - (turnover_penalty * result.fees_paid)
 1. **Роудмап старіє швидше за код.** Кожен новий пункт треба звіряти з кодом —
    саме тому S6 (машинна синхронізація) стоїть у Фазі 1, а не в кінці.
 2. **Opt-in ≠ виміряно.** Додати `VOL_MODEL` і не прогнати — це додати ще один
-   сирота, як `egarch_forecast_volatility` сьогодні. Кожен S-спринт закривається
-   або виміром, або чесним «не виміряно».
+   сирота. Приклад ризику, який уже закрито: `egarch_forecast_volatility` на
+   момент написання не викликав жоден модуль, а тепер його кличе
+   `infrastructure/vol_forecast.py`. Кожен S-спринт закривається або виміром, або
+   чесним «не виміряно»: `VOL_MODEL` підключено (S2), але **виміру переваги
+   `egarch`/`gjr_garch` над `har` немає** — саме тому типовим лишається `har`.
 3. **Червона база маскує регресії.** Якщо S0 не зробити першим, будь-яка
    наступна зміна перевіряється на несправному детекторі.
 
@@ -158,22 +221,27 @@ penalized_pnl = net_pnl - (turnover_penalty * result.fees_paid)
 
 ## 7. Статус
 
-Оновлено після виконання S0–S4 і S7. Гейти: `pytest` (**525 passed**),
-`mypy --strict`, `specs/_validator.py`, `ruff check` і `ruff format --check` —
-зелені. Єдиний червоний гейт — `pytest --cov` (76.7% проти `fail_under = 80`);
-він задокументований у §8.3 і в CI лишається видимим неблокуючим кроком, а не
-прихований зниженням порога.
+Оновлено після виконання S0–S4, S6 і S7. Гейти, переміряні 2026-09-24:
+`pytest` — **825 passed**, `mypy src tests` — 229 файлів без зауважень,
+`specs/_validator.py` — 22 спеки, `ruff check` — `All checks passed`,
+`ruff format --check` — 297 файлів, `pytest --cov` — **80.50%** ≥
+`fail_under = 80`. Червоних гейтів немає: покриття, яке в §8.3 стояло єдиним
+боргом, дійшло до порога. Крок `pytest --cov` у CI лишається з
+`continue-on-error: true`, але це вже не «борг»: сам крок **проходить**
+(80.50% ≥ 80), а підпис і коментар у `.github/workflows/ci.yml` оновлено на
+фактичне число. Зробити крок блокуючим — окреме рішення власника CI
+(один рядок), і саме тому воно не ухвалене тут мовчки.
 
 | Спринт | Стан | Що зроблено |
 |---|---|---|
 | S0 — зелений baseline | ✅ | Причина червоного тесту: `test_cli_propose_journal.py` патчив `cli.llm_completer`, а `llm_completer` резолвиться всередині `execute_propose` (модуль `application/run_alpha_proposal.py`). Патч переведено на правильний неймспейс |
 | S1 — квантилі `pairs` | ✅ | `domain/quantiles.py` (тип-7, чистий `Decimal`), `PairsParams.z_entry_quantile`, гілка в `PairsTrading`, `PAIRS_Z_ENTRY_QUANTILE`, спека оновлена **до** коду |
 | S2 — `VOL_MODEL` / GJR-GARCH | ✅ | `VolModel` (har/egarch/gjr_garch), `gjr_garch_forecast_volatility()`, `ArchVolForecaster` із явною каденцією рефіту, `VOL_MODEL` + `VOL_REFIT_EVERY`, підключено в `SignalRobot` |
-| S3 — CB alerts | ✅ | `RiskBreachTally`, `BacktestReport.risk_breaches`, рядок `risk_breaches blocked=...`, підсумок у `--notify`. Перевірено на реальному прогоні: `blocked=1 daily loss circuit breaker=1` |
-| S4 — CI | ✅ | `.github/workflows/ci.yml`. Блокують усі гейти, які проходять (ruff check, ruff format --check, mypy, validator, pytest, smoke-бектест, виконання зошита); єдиний червоний гейт (`pytest --cov`, 76.7% < 80) лишається видимим і неблокуючим |
+| S3 — CB alerts | ⚠️ частково | Облік спрацювань є: `RiskBreachTally` (`application/risk.py:50`), `BacktestReport.risk_breaches`, рядок `risk_breaches blocked=...` у `lab research` і в підсумку `--notify`. Перевірено на реальному прогоні: `blocked=1 daily loss circuit breaker=1`. **Не зроблено:** алерт **у момент** спрацювання — `AlertNotifier` і далі кличеться лише в кінці прогону (`cli.py:855-866`). Для бектесту, що завершується за секунди, потоковий алерт не додає нічого; межу прямо зафіксовано в `specs/components/risk-layer.yaml`, а не замовчано |
+| S4 — CI | ✅ | `.github/workflows/ci.yml`. Блокують усі гейти, які проходять (ruff check, ruff format --check, mypy, validator, pytest, smoke-бектест, виконання зошита). Крок `pytest --cov` лишається видимим і `continue-on-error`, але **проходить** (80.50%); підпис і коментар у workflow оновлено на фактичне число |
 | S7 — полагоджено борг `ruff` | ✅ | 132 → **0** порушень. Спершу виправлено поламаний артефакт (зошит посилався на неіснуючий API), потім додано гейт, який зошит **виконує**, і лише тоді — дві обґрунтовані правки конфігурації. `fail_under` не чіпався. Деталі — §8.1 |
-| S5 — вимір Келлі | ⏳ не розпочато | Потребує прогону з `USE_FRACTIONAL_KELLY=true` і OOS-порівняння |
-| S6 — docs↔код validator | ⏳ не розпочато | Найцінніший із залишку: саме він ловив би розбіжності §2 машинно |
+| S5 — вимір Келлі | ⏳ не розпочато | Потребує прогону з `USE_FRACTIONAL_KELLY=true` і OOS-порівняння. У `research/journal.md` немає жодного рядка про Келлі, тож виміру не існує — і це чесний стан, а не «майже» |
+| S6 — docs↔код validator | ✅ | `specs/_validator.py::check_docs_alignment` звіряє таблицю `docs/05-roboty.md` із `BACKTEST_WIRED_ROBOTS` і `RobotName` і повертає помилку на розходженні; тест — `tests/unit/test_specs.py::test_docs_agree_with_backtest_wired_robots`. Саме той клас дрейфу, який породив §2, тепер ловиться машинно (на момент написання §2 S6 стояв як «не розпочато») |
 
 ### 7.1. Як перевірявся CI
 
@@ -182,20 +250,22 @@ penalized_pnl = net_pnl - (turnover_penalty * result.fees_paid)
 обмеження пісочниці, а не проєкту, і не помилка workflow. Тому кожну команду
 кроку перевірено через venv-еквівалент, а не через `uv run`:
 
-| Крок CI | Локальна перевірка | Результат |
+| Крок CI | Локальна перевірка | Результат (переміряно 2026-09-24) |
 |---|---|---|
 | `uv run ruff check` | `.venv/bin/ruff check` | ✅ `All checks passed!` (було 132 порушення — §8.1) |
-| `uv run ruff format --check` | те саме | ✅ `222 files already formatted` |
-| `uv run mypy src tests` | `.venv/bin/mypy src tests` | ✅ `Success: no issues found in 162 source files` |
-| `uv run python specs/_validator.py` | те саме | ✅ 20 спек валідні |
-| `uv run pytest` | `.venv/bin/pytest` | ✅ 525 passed |
-| `uv run lab research --synthetic --bars 3000` | `.venv/bin/lab ...` | ✅ `exit=0`, `fills=89` |
-| `uv run python scripts/check_notebook.py` | те саме | ✅ 10 комірок виконано, `exit=0`, **11.7 с** |
-| `uv run pytest --cov` | те саме | ❌ червоний (76.7% < 80) — єдиний неблокуючий крок, див. §8.3 |
+| `uv run ruff format --check` | те саме | ✅ `297 files already formatted` (у §8.0 стояло 222 — файлів побільшало) |
+| `uv run mypy src tests` | `.venv/bin/mypy src tests` | ✅ `Success: no issues found in 229 source files` |
+| `uv run python specs/_validator.py` | те саме | ✅ 22 спеки валідні та узгоджені з кодом |
+| `uv run pytest` | `.venv/bin/pytest` | ✅ 825 passed |
+| `uv run lab research --synthetic --bars 3000` | `.venv/bin/lab ...` | ✅ `exit=0`, `fills=57` |
+| `uv run python scripts/check_notebook.py` | те саме | ✅ 10 комірок виконано чисто, `exit=0` |
+| `uv run pytest --cov` | те саме | ✅ **80.50% ≥ 80** — гейт зелений; крок у workflow усе ще `continue-on-error` зі старим підписом (див. §8.3) |
 
 Сам YAML перевірено парсингом — разом із тим, що поділ на блокуючі та
 неблокуючі кроки саме такий, як задумано: блокують усі гейти, які проходять, а
-єдиний червоний крок (`--cov`) лишається видимим і неблокучим.
+крок `--cov` лишається позначеним `continue-on-error`. Станом на 2026-09-24 він
+**проходить** (80.50% ≥ 80), тож у workflow лишився саме застарілий підпис, а не
+червоний гейт.
 
 ### 7.2. Перевірка на реальних даних (не є закриттям критеріїв DoD)
 
@@ -230,6 +300,14 @@ DSR=8.81E-8 (observations=8 trials=6 sharpe=-0.1100514553549730459557098625 thre
 | 5 | breakeven > paid + 5 bps | ❌ **не виконано**: середній breakeven 3.90 bps проти 5.00 bps сплачених |
 | 6 | без стоп-ауту на `covid2020`/`ftx2022` | ⬜ не перевірялось (каталог починається з 2024) |
 
+Той самий прогін, виражений через **машинний гейт** (`application/promotion_gate.py`,
+який на момент прогону ще не друкувався), дає `promotion_gate=REJECT`: фолдів
+4 проти порога ≥ 6, прибуткових 2/4 проти ≥ 83%, DSR 8.8·10⁻⁸ проти ≥ 0.95 —
+тоді як `beats_buy_hold` і `oos_fills` (362 ≥ 30) проходять. Пороги коду
+(`GateCriteria`, `promotion_gate.py:56-64`) відрізняються від чекліста
+`docs/21` §10 (PBO ≤ 0.3 проти < 0.25, фолдів ≥ 6, DSR ≥ 0.95), але обидва набори
+ведуть до однієї відповіді — не `validated`.
+
 Ключове спостереження, і воно не про цього робота, а про метод: **два чесні
 прогони на тих самих даних дають протилежні висновки**. Агрегат фолдів каже
 «обганяє buy&hold», а PBO/DSR-аудит каже «переможець сітки має від'ємний Sharpe і
@@ -255,14 +333,18 @@ buy&hold +2.50%, тут +0.34%), бо каталог від часів `docs/05`
 репозиторію** — і не проходили до цієї роботи. Виміряно безпосередньо
 (`git stash` → прогін → `git stash pop`):
 
-| Задокументований гейт | HEAD (до змін) | Зараз |
-|---|---|---|
-| `pytest` | 470 passed, **1 error** | ✅ **525 passed** |
-| `mypy src tests` | ✅ clean | ✅ clean |
-| `specs/_validator.py` | ✅ | ✅ 20 спек |
-| `ruff check` | ❌ **132** порушення | ✅ **All checks passed** |
-| `ruff format --check` | ❌ 4 файли | ✅ **222 files already formatted** |
-| `pytest --cov` (`fail_under = 80`) | ❌ **76.20%** | ❌ 76.7% — **єдиний відкритий гейт** |
+| Задокументований гейт | HEAD (до змін) | Після S0–S7 | Переміряно 2026-09-24 |
+|---|---|---|---|
+| `pytest` | 470 passed, **1 error** | ✅ **525 passed** | ✅ **825 passed** |
+| `mypy src tests` | ✅ clean | ✅ clean | ✅ clean, 229 файлів |
+| `specs/_validator.py` | ✅ | ✅ 20 спек | ✅ 22 спеки |
+| `ruff check` | ❌ **132** порушення | ✅ **All checks passed** | ✅ **All checks passed** |
+| `ruff format --check` | ❌ 4 файли | ✅ **222 files already formatted** | ✅ **297 files already formatted** |
+| `pytest --cov` (`fail_under = 80`) | ❌ **76.20%** | ❌ 76.7% — **єдиний відкритий гейт** | ✅ **80.50%** — гейт зелений |
+
+Останній стовпець — повторний вимір 2026-09-24; числа в ньому вищі не тому, що
+гейти послабили, а тому що репозиторій виріс: `ruff` так само чистий, `fail_under`
+так само 80.
 
 `ruff` доведено до нуля не приховуванням, а двома кроками §8.1: спершу
 полагоджено сам артефакт, потім — дві обґрунтовані конфігураційні правки.
@@ -355,11 +437,15 @@ buy&hold +2.50%, тут +0.34%), бо каталог від часів `docs/05`
   значення, а гейт підставляє зменшені (1200/2/4) і виконує **весь** зошит за
   **11.7 с**.
 
-### 8.3. Що лишається відкритим
+### 8.3. Що лишалося відкритим (перевірено 2026-09-24)
 
-| Борг | Чому не закрито |
+Два рядки нижче закриті після написання розділу; вони лишені в таблиці, а не
+видалені, бо борг, який тихо зникає з документу, повертається як «цього ніколи не
+було». Актуально відкритими лишаються два останні рядки.
+
+| Борг | Стан і причина |
 |---|---|
-| `pytest --cov` не дотягує до `fail_under = 80` (76.7%) | Підняти покриття на ~3.3 п.п. означає писати тести на модулі, не пов'язані з Фазою 1 — це окрема робота. **Знижувати `fail_under` не можна**: це послаблення гейта заради зеленого числа. У CI крок лишається видимим, але неблокуючим |
+| `pytest --cov` не дотягував до `fail_under = 80` (76.7%) | **Закрито 2026-09-24**: покриття **80.50%** ≥ 80, гейт зелений, `fail_under` так само 80. Воно піднялося разом із модулями, доданими документами 23–26 (`api/`, ingest тіків/фандингу/стакану, paper, ML-пайплайни), а не окремою роботою «заради відсотка». Крок у `.github/workflows/ci.yml` названо за фактичним числом (80.50%) і лишено `continue-on-error` — блокуючим його робить окреме рішення власника CI |
 | `USE_VOL_SCALING` інертний на спредовому шляху (`SpreadRobot`) | `SpreadRobotConfig` приймає прапорець, але прогноз волатильності в `resolve_risk_fraction()` не передає. Виправлення вимагає рішення, ЧИЮ волатильність масштабувати у спреді (ноги A, ноги B чи самого спреду) — це змістовне питання, а не механічне. Задокументовано в `specs/components/risk-layer.yaml` |
-| `docs/05`, `docs/10`, `docs/11` описують підключеними 3 роботи, у коді — 7 | Це саме той клас дрейфу, який мав би ловити S6; лагодити текст руками до появи машинної перевірки означає знову розійтися |
+| `docs/05`, `docs/10`, `docs/11` описували підключеними 3 роботи, у коді — 7 | **Закрито**: `docs/05-roboty.md` і `docs/10-cli-dovidnyk.md` перелічують усі **8** підключених роботів і трьох `blocked` (`funding`, `glft`, `tri_scan`), а таблицю `docs/05` звіряє з `BACKTEST_WIRED_ROBOTS` машинно `specs/_validator.py::check_docs_alignment` (S6). `docs/11` машинно не звіряється, але його список мінімуму барів теж містить `ml_obi` |
 | `docs/21` §9.4 забороняє «реанімацію» `adaptive_ema`, а робот підключений до рушія зі `status: rejected` | Це не суперечність коду: підключення ≠ реанімація. Спека фіксує відхилення, а рушій лишає змогу **відтворити** вимір, який його відхилив. Пропонується уточнити формулювання в `docs/21`, а не ламати підключення |

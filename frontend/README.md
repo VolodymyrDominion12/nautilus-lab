@@ -40,14 +40,36 @@ runner, so these run as assertions in a script.
 
 | Tab | What it does |
 |-----|--------------|
-| **Command Center** | Live job states with elapsed time, the last measured result with its verdict, data coverage per instrument (bars, taker flow, ticks, depth, funding), recent experiments, journal counts, trained models. |
-| **Research & Backtest** | The core flow: pick a robot and instrument, choose the walk-forward window on a chart, run, then read the result panels. The advanced gates include the bar-level VPIN, tick-level VPIN and Hawkes filters. |
-| **Parquet Catalog** | Per-instrument coverage and fees, a per-series table, price preview, and four Binance ingest kinds (klines, aggregated trades, funding, live L2 depth) with a stop button. |
-| **Strategy Specs** | `specs/strategies/*.yaml` as validated: wiring, warm-up bars, `grid_source`. |
-| **ML Pipeline** | LightGBM training with purged CV, model inventory. |
-| **Experiment Journal** | `research/journal.jsonl` as a board; each row shows the gates it was run under. |
-| **Paper Simulator** | Hypothetical orders only — no execution adapter exists. |
-| **Settings** | Grouped `.env` settings; secrets are masked on load. |
+| **Command Center** (`home`) | Live job states with elapsed time, the last measured result with its verdict, data coverage per instrument (bars, taker flow, ticks, depth, funding), recent experiments, journal counts, trained models. |
+| **Research & Backtest** (`research`) | The core flow: pick a robot and instrument, choose the walk-forward window on a chart, run, then read the result panels. The advanced gates include the bar-level VPIN, tick-level VPIN and Hawkes filters. |
+| **Parquet Catalog** (`catalog`) | Per-instrument coverage and fees, a per-series table, price preview, and four Binance ingest kinds (klines, aggregated trades, funding, live L2 depth) with a stop button. |
+| **Strategy Specs** (`strategies`) | `specs/strategies/*.yaml` as validated: wiring, warm-up bars, `grid_source`. |
+| **ML Pipeline** (`ml`) | LightGBM training with purged CV, model inventory. |
+| **Experiment Journal** (`journal`) | `research/journal.jsonl` as a board; each row shows the gates it was run under. |
+| **Trading Terminal** (`paper`) | Batch paper replay (`PaperSimulator`), the live multi-session table (`SessionsPanel`) and the live terminal with chart and stops (`LiveTradingTerminal`). Hypothetical orders only — no execution adapter exists. |
+| **Arb Scanner** (`scan`) | Triangular-arbitrage scan over sample rates; demonstration only. |
+| **Alpha Ideas** (`alpha`) | `lab propose` artifacts from `research/hypotheses/`, with a "test in research" hand-off. |
+| **Settings** (`settings`) | Grouped `.env` settings; secrets are masked on load. |
+
+## Threads behind the Trading Terminal
+
+The terminal is the most stateful screen, and it does **not** reuse the batch paper
+runner. Three layers, all in `src/nautilus_lab/api/`:
+
+- **`market_feed.py` / `binance_ws.py`** — one public WebSocket subscription per
+  `(symbol, interval)` pair, shared between sessions: two robots on ETH 1h read the
+  same candles, which saves Binance limits and keeps the comparison honest.
+- **`paper_streamer.py`** — warms each session up with `WARMUP_BARS = 300` replayed
+  closed bars (a cold regime robot would sit silent for hours on 1m), then feeds live
+  closed candles. Live robots are a shorter list than the backtest-wired set:
+  `regime`, `ema`, `adaptive_ema`, `vpin_momentum`, `formulaic_lgbm` plus a `hold`
+  benchmark — the spread robot `pairs` and the OBI/meta-label robots need data the
+  live path does not assemble.
+- **`live_sessions.py` + `infrastructure/paper_sessions.py`** — the session registry,
+  per-session virtual ledger, portfolio file and restart recovery (`LIVE_PAPER_*`
+  settings). `LAB_ROLE=paper` restricts a deployed server to these routes only.
+
+The browser follows it over `GET /api/paper/live-stream` (WebSocket).
 
 ## What the UI refuses to do (on purpose)
 
@@ -75,8 +97,10 @@ customisable, because a dashboard that lets you skip them is how a lab starts ly
   show taker flow / ticks / depth / funding as present or `missing` for every instrument, because
   "the run finished" is not evidence that the data behind a filter existed.
 - **Live trading is unreachable.** There is no execution adapter; `lab live` exits 1 by design.
-- **Paper mode offers only the robots it can build** (`regime`, `ema`). Anything else would
-  silently run the regime robot while the artifact recorded a different name.
+- **Paper mode offers only the robots the running path can build.** The batch simulator
+  takes `status.paper_robots` (which equals `BACKTEST_WIRED_ROBOTS`), the live terminal
+  takes `status.live_paper_robots` (the shorter live list, plus `hold`). Anything else
+  would silently run a different robot while the artifact recorded the requested name.
 
 ## Behaviour worth knowing
 

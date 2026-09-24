@@ -26,18 +26,37 @@
 | [docs/12-karta-fayliv.md](docs/12-karta-fayliv.md) | Карта всіх модулів і публічного API |
 | [docs/14-llm-model-u-torhivli.md](docs/14-llm-model-u-torhivli.md) | Як LLM/LRM-модель допомагає в торгівлі (і де їй не місце) + офлайн-контур гіпотез |
 | [docs/15-audit-vypravlennya.md](docs/15-audit-vypravlennya.md) | Аудит коректності: знайдені помилки логіки та як їх виправлено |
+| [docs/16-llm-vidpovidnist.md](docs/16-llm-vidpovidnist.md) | Мапа LLM-огляду → код: які ролі LLM реалізовані, які свідомо ні |
+| [docs/17-ml-ansambli-vidpovidnist.md](docs/17-ml-ansambli-vidpovidnist.md) | Мапа ML-огляду (ансамблі, TBM, мета-маркування, CPCV/DSR/PBO) → код |
+| [docs/18-transformery-ssm-vidpovidnist.md](docs/18-transformery-ssm-vidpovidnist.md) | Трансформери / SSM / xLSTM: чому не беруться і що переноситься дешево |
+| [docs/19-ml-steking-vidpovidnist.md](docs/19-ml-steking-vidpovidnist.md) | ML стекінг vs мета-маркування; дірки в навчанні моделей і їх закриття |
+| [docs/20-veb-dashbord-ta-alpha-proposer.md](docs/20-veb-dashbord-ta-alpha-proposer.md) | **Веб-дашборд** (React + FastAPI): API, вкладки, безпека, Alpha Proposer |
+| [docs/21-roadmap-rozvytku.md](docs/21-roadmap-rozvytku.md) | Стратегічний роудмап розвитку та критерії валідації |
+| [docs/22-plan-realizatsii-roadmap.md](docs/22-plan-realizatsii-roadmap.md) | План реалізації роудмапу, звірений із кодом |
+| [docs/23-infrastruktura-danyh-plan.md](docs/23-infrastruktura-danyh-plan.md) | Інфраструктура даних: аудит зовнішнього огляду проти коду, що потрібно, а що ні |
 | [docs/24-paper-treydynh.md](docs/24-paper-treydynh.md) | **Paper-сесії**: як запускати, які роботи проходять, виміряні числа, чому тікові дані поки не основа |
 | [docs/25-xsmom-ta-vorota-dopusku.md](docs/25-xsmom-ta-vorota-dopusku.md) | **Крос-секційний momentum** (`lab xsmom`) і **ворота допуску**: пороги, які робот мусить пройти до paper |
 | [docs/26-deploy-vps.md](docs/26-deploy-vps.md) | **Деплой на VPS**: живий paper 24/7 з журналом і відновленням, `LAB_ROLE=paper`, Docker + Caddy + Tailscale, збирач тіків, `pull_vps.sh` |
+| [docs/План багатороботний paper-термінал.md](docs/План%20багатороботний%20paper-термінал.md) | План багатороботного paper-терміналу: кілька незалежних сесій, портфель, спільні фіди |
 
 ## Що всередині
 
 | Шар | Де | Навіщо |
 |-----|----|--------|
 | Domain | `src/nautilus_lab/domain/` | Сигнали, бари, EMA, ліміти ризику. Без біржі і без Nautilus. |
-| Application | `src/nautilus_lab/application/` | Розмір позиції, circuit breaker, ingest, walk-forward. |
-| Infrastructure | `src/nautilus_lab/infrastructure/` | Binance klines, Parquet catalog, Nautilus BacktestEngine, комісії, slippage. |
+| Application | `src/nautilus_lab/application/` | Розмір позиції, circuit breaker, ingest, walk-forward, ворота допуску. |
+| Infrastructure | `src/nautilus_lab/infrastructure/` | Binance REST/WebSocket, Parquet catalog, Nautilus BacktestEngine, комісії, slippage, paper-сесії. |
 | Interfaces | `src/nautilus_lab/interfaces/` | CLI `lab` — єдина точка збору залежностей. |
+| API | `src/nautilus_lab/api/` | FastAPI-дашборд: запускає ті самі use cases, що й CLI. |
+| Frontend | `frontend/` | React + TypeScript + Vite UI до цього API (окрема тека, окремий `package.json`). |
+| Deploy | `deploy/` | Docker Compose + Caddy + конфіги VPS для живого paper 24/7. |
+
+Роботів у домені **11** (`RobotName` у `domain/regime.py`), і це не те саме, що
+«роботів, яких рушій уміє зібрати»: до бектесту підключено **8** з них
+(`BACKTEST_WIRED_ROBOTS`) — `regime`, `ema`, `pairs`, `vpin_momentum`,
+`formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ml_obi`. Решта (`funding`, `glft`,
+`tri_scan`) — поки лише доменні будівельні блоки, і спроба запустити їх падає
+явно, а не підміняється іншою стратегією. Деталі й статуси — [docs/05](docs/05-roboty.md).
 
 Перший робот — **regime**: класифікатор ринку (Kaufman Efficiency Ratio + нахил EMA) і три окремі стратегії:
 
@@ -60,9 +79,17 @@ cp .env.example .env
 # Базове встановлення для розробки:
 uv sync --extra dev
 
-# Або повний стек плагінів (візуалізація Plotly, Optuna, Polars, алерти):
-uv sync --extra dev --extra research --extra visualization --extra alerts
+# Веб-дашборд (FastAPI + uvicorn):
+uv sync --extra dev --extra api
+
+# Або повний стек плагінів (LightGBM, Optuna, Plotly, алерти, дашборд):
+uv sync --extra dev --extra ml --extra research --extra visualization --extra alerts --extra api
 ```
+
+Optional extras із `pyproject.toml`: `dev` (pytest, ruff, mypy, coverage), `api`
+(fastapi, uvicorn, websockets, pyyaml, python-dotenv — потрібен для дашборду),
+`ml` (LightGBM), `research` (optuna, arch, polars), `visualization` (plotly, kaleido),
+`alerts` (httpx).
 
 ## Запуск досліджень та інструментів
 
@@ -94,7 +121,7 @@ uv run lab research --robot regime --pbo
 
 `lab research` за замовчуванням читає catalog і робить walk-forward. Друкує окремо in-sample (лише вибір параметрів) і out-of-sample (це і є звіт). Не дивись на in-sample як на результат.
 
-`--folds N` (N ≥ 2) виконує окремий walk-forward на кожному з N ковзних фолдів — на кожному фолді параметри підбираються заново на його власному in-sample — і друкує агрегат out-of-sample разом із планкою `buy&hold`. Станом на зараз жоден із трьох роботів цю планку не обганяє; деталі — [docs/05 §4](docs/05-roboty.md).
+`--folds N` (N ≥ 2) виконує окремий walk-forward на кожному з N ковзних фолдів — на кожному фолді параметри підбираються заново на його власному in-sample — і друкує агрегат out-of-sample разом із планкою `buy&hold`. Жоден робот досі не має виміряної переваги над buy&hold: у `specs/strategies/` немає жодного статусу `validated`, і це задокументований результат, а не «ще не дороблено». Деталі — [docs/05 §4](docs/05-roboty.md) і [docs/24 §4](docs/24-paper-treydynh.md).
 
 Повний прогін на всій вибірці (це **не** out-of-sample):
 
@@ -108,6 +135,67 @@ uv run lab research --full-sample
 uv run lab research --synthetic --bars 5000
 uv run lab research --synthetic --bars 1000 --tearsheet reports/synthetic_tearsheet.html
 ```
+
+## Інші джерела даних
+
+`lab ingest` уміє не лише klines — усе з публічних ендпоінтів, без ключів:
+
+```bash
+uv run lab ingest --incremental                   # дописати тільки нові бари (пропустити, якщо вже актуально)
+uv run lab ingest --funding --symbols ETHUSDT     # розрахунки фінансування USD-M → catalog/data/funding/
+uv run lab ingest --trades --symbols ETHUSDT      # агреговані угоди (тіки) → catalog/data/agg_trade/
+uv run lab ingest --trades --live-ticks 20 --symbols ETHUSDT   # 20 хв живого WS-потоку замість REST-історії
+uv run lab ingest --depth --symbols ETHUSDT       # живі L2-снапшоти стакану; працює, доки не зупиниш
+```
+
+Тіки потрібні для **справжнього** VPIN і Хоукса, і це не те саме, що бар-рівневий
+фільтр. `lab research` має три різні прапорці:
+
+| Прапорець | На чому рахує | Що потрібно |
+|-----------|---------------|-------------|
+| `--bar-vpin` | обсяг **бару** як проксі потоку | нічого додатково |
+| `--tick-vpin` | справжні агреговані угоди | серія `agg_trade` у каталозі |
+| `--hawkes` | справжня інтенсивність Хоукса | серія `agg_trade` у каталозі |
+
+Пастка: рушій читає **відсутню** серію тіків як порожню (`agg_trades_catalog.py`), тож
+`--tick-vpin` на каталозі без `--trades` не падає — він просто не має на чому
+рахувати. Перевіряй наявність серії заздалегідь (веб-дашборд показує її як
+`present`/`missing` по кожному інструменту).
+
+## ML-конвеєр
+
+```bash
+uv run lab ml train --model-type meta_label --catalog catalog --output models/meta.txt
+uv run lab ml train --model-type formulaic --output models/formulaic.txt --folds 5 --embargo 10
+uv run lab ml train --model-type obi --output models/obi.txt        # потрібна серія стакану
+```
+
+Навчання йде з **purged K-fold** (`--folds`, `--embargo`) і потрійним бар'єром
+(`--profit`, `--stop`, `--horizon`, `--vol-window`) — тобто з тим самим захистом від
+просочування майбутнього, що й у бектесті. Команда друкує `saved=<шлях> rows=...
+folds=...` і потребує extra `ml` (`uv sync --extra ml`); без нього вона падає з
+`lightgbm extra not installed`. Далі шлях до моделі передається роботам через
+`FORMULAIC_MODEL_PATH`, `META_LABEL_MODEL_PATH` або `ML_OBI_MODEL_PATH`. Якщо шляху
+немає, роботи цих родин беруть евристичний класифікатор — і саме тому без
+натренованої моделі вони схильні **не торгувати** (це чесний `fills=0`, а не зламаний
+режим; див. [docs/24 §5](docs/24-paper-treydynh.md)).
+
+## Крос-секційний momentum
+
+```bash
+uv run lab xsmom --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT --folds 6   # кошик, walk-forward по фолдах
+uv run lab xsmom --symbols BTCUSDT,ETHUSDT --lookbacks 14,30,60 --top-n 2,3 --rebalance 7
+uv run lab xsmom --symbols BTCUSDT,ETHUSDT --pbo                       # + аудит перенавчання і ворота
+```
+
+Робот ранжує кошик за минулою дохідністю, тримає `top-n` найсильніших і переранжовує
+кожні `--rebalance` барів. Наприкінці друкується рядок **воріт допуску**
+(`promotion_gate=PROMOTE|REJECT|INCOMPLETE`), пороги яких зафіксовані заздалегідь у
+`application/promotion_gate.py`: `folds ≥ 6`, частка прибуткових OOS-фолдів ≥ 0.83,
+OOS-філів ≥ 30, `PBO ≤ 0.3`, `DSR ≥ 0.95`. Будь-яка неперевірена умова читається як
+`not measured` і **не** вважається пройденою — тому verdict буває `INCOMPLETE`, і це
+не те саме, що `REJECT`. Гіпотеза xsmom наразі відхилена: протокол, пороги й результат
+— [docs/25](docs/25-xsmom-ta-vorota-dopusku.md).
 
 ## Paper-сесії (репетиція без ордерів)
 
@@ -131,9 +219,9 @@ uv run lab ingest --trades --live-ticks 20 --symbols ETHUSDT   # 20 хв жив�
 uv run python scripts/measure_tick_vpin.py --symbol ETHUSDT    # розподіл VPIN на зібраному
 ```
 
-Сесії дописуються в `reports/paper/sessions.jsonl`. П'ять роботів реально торгують у
-paper (`regime`, `ema`, `pairs`, `ml_obi`, `meta_label`); `vpin_momentum` і
-`formulaic_lgbm` запускаються й чесно не торгують — причини, числа й виміри в
+Сесії дописуються в `reports/paper/sessions.jsonl`. Шість роботів реально торгують у
+paper (`regime`, `ema`, `pairs`, `ml_obi`, `meta_label`, `adaptive_ema`); `vpin_momentum`
+і `formulaic_lgbm` запускаються й чесно не торгують — причини, числа й виміри в
 [docs/24](docs/24-paper-treydynh.md). Жоден робот досі не має виміряної переваги над
 buy&hold, тому `lab live` лишається fail closed.
 
@@ -162,10 +250,35 @@ uv run lab research --robot regime --folds 4 --journal            # рядок �
 
 ## Як додати свого робота
 
-1. Напиши чисту логіку сигналу в `domain/` (на вхід — закритий бар, на вихід — `Signal`).
-2. Покрий її тестами в `tests/unit/` (без мережі).
-3. Тонкий адаптер у `infrastructure/nautilus/` підписується на дані Nautilus, викликає сигнал, потім `evaluate_entry` + `size_position`, і лише тоді `submit_order`.
-4. Не став лоти в стратегії вручну і не читай `.env` із domain.
+Проєкт працює за принципом **spec before code**: специфікація пишеться й звіряється з
+кодом машиною (`.venv/bin/python specs/_validator.py`), а не тримається «в голові».
+Повний протокол — [docs/07](docs/07-yak-stvoryty-strategiyu.md) і
+[specs/README.md](specs/README.md); коротко:
+
+1. **Специфікація:** `specs/strategies/<robot>.yaml` за зразком `regime.yaml`, і
+   `.venv/bin/python specs/_validator.py <robot>` — нуль помилок **до** коду.
+2. Чиста логіка сигналу в `domain/<robot>.py`: клас з `on_bar(bar) -> Signal | None`
+   (на вхід — **закритий** бар, на вихід — напрямок, без розміру позиції, без
+   `nautilus_trader`, без `.env`, без мережі).
+3. Тести в `tests/unit/test_<robot>.py` — без мережі.
+4. Додати назву в `RobotName` **і** в `BACKTEST_WIRED_ROBOTS`
+   (`domain/regime.py`). Без другого кроку робот падає fail closed:
+   `robot '...' has no backtest adapter yet`.
+5. Адаптер: гілка в `infrastructure/nautilus/signal_strategy.py::_build_robot()`
+   (для спредових пар — `spread_strategy.py`) і проброс параметрів у
+   `backtest_runner.py`.
+6. Нові параметри — ланцюг із п'яти місць: `infrastructure/settings.py` →
+   `.env.example` → `application/dtos.py` → `interfaces/composition.py` →
+   `backtest_runner.py`.
+7. `application/param_grid.py` — власна гілка сітки (інакше робот тихо візьме сітку
+   `regime` і виглядатиме працюючим) і `run_research_backtest.py::minimum_bars` —
+   мінімум барів на прогрів.
+8. Оновити спеку під фактичні `grid`, `minimum_bars`, `grid_source` і прогнати
+   `uv run pytest tests/ -q`.
+
+Paper-режим підхопить робота автоматично: `PAPER_SUPPORTED_ROBOTS` дорівнює
+`BACKTEST_WIRED_ROBOTS`, і це закріплено тестом — CLI не може обіцяти робота, якого
+рушій не вміє зібрати.
 
 ## Ризик (дефолти)
 
@@ -182,7 +295,25 @@ uv run lab research --robot regime --folds 4 --journal            # рядок �
 не блокує ніколи. Капітал для кривої, метрик і запобіжників — баланс плюс відкриті
 позиції за останньою ціною; позиція, відкрита в кінці вікна, входить у `ending_balance`.
 
-## Дашборд і безпека API
+## Дашборд (React + FastAPI)
+
+Дашборд — це **той самий** рушій і ті самі use cases, що й CLI, лише з інтерфейсом:
+він не має власної логіки бектесту. Два процеси, API першим.
+
+```bash
+# термінал 1 — API на :8000
+.venv/bin/uvicorn nautilus_lab.api.app:app --port 8000
+
+# термінал 2 — UI на :5173
+cd frontend && npm install && npm run dev
+```
+
+`VITE_API_URL` перевизначає адресу API (типово `http://localhost:8000`); у деплої
+через один реверс-проксі ставиться `VITE_API_URL=same-origin` (див. `deploy/Caddyfile`).
+Деталі фронтенду — [frontend/README.md](frontend/README.md), API, вкладки й Alpha
+Proposer — [docs/20](docs/20-veb-dashbord-ta-alpha-proposer.md).
+
+### Безпека API
 
 API дашборду запускає процеси, переписує `.env` і ходить у LLM з ключем із нього, тому
 приймає браузерні запити лише з origin дашборду (`API_ALLOWED_ORIGINS`, за замовчуванням
@@ -190,17 +321,30 @@ Vite `:5173`/`:4173` і сам API `:8000`). Для додаткового за�
 і той самий `VITE_API_TOKEN` у `frontend/.env`; тоді кожен виклик `/api` потребує
 заголовка `X-Lab-Token`. Запускай API лише на `127.0.0.1`.
 
+Третя, окрема гарантія — **роль сервера**: `LAB_ROLE=paper` робить так, що сервер
+приймає лише контроли живого paper-терміналу (`/api/paper/live/*` і створення сесії), а
+дослідження, ingest, навчання ML, пропозиції альф і перезапис `.env` — відхиляє.
+Це саме те, що потрібно VPS, який торгує 24/7: він не може переписати власні
+налаштування з браузера. Деталі — [docs/26](docs/26-deploy-vps.md).
+
 ## Тести і якість
 
 ```bash
 uv run pytest
+uv run pytest --cov --cov-report=term-missing   # поріг покриття fail_under = 80
 uv run ruff check --fix && uv run ruff format
 uv run mypy src tests
+.venv/bin/python specs/_validator.py            # спеки проти коду
 ```
 
-## Далі (коли будеш готовий)
+## Далі
 
-1. Paper: публічні котирування, **без** реальних ордерів.
-2. Live — тільки після явного запиту і окремих ключів у локальному `.env`.
+1. **Paper** — живий paper-термінал (кілька незалежних сесій, спільні WS-фіди, журнал,
+   портфель) можна підняти на VPS: [docs/26](docs/26-deploy-vps.md). Ордери не
+   надсилаються.
+2. **Live — не «наступний крок», а відсутня підсистема.** Адаптера виконання в проєкті
+   немає: `LIVE_ENABLED=true` нічого не змінює, жоден прапорець не робить `lab live`
+   робочим, і жоден робот не має виміряної переваги над buy&hold. Це запобіжник, а не
+   незавершене налаштування.
 
 Документація рушія: https://nautilustrader.io/docs/latest/getting_started/

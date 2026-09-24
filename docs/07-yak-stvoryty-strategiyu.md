@@ -29,18 +29,26 @@ OOS більше не out-of-sample. Він став частиною підбо
 | Файл | Що зробити | Обов'язково? |
 |------|------------|--------------|
 | `domain/<ваш_робот>.py` | Новий клас стратегії | ✅ так |
-| `domain/regime.py` | Додати назву в `RobotName` | ✅ так (інакше CLI не побачить робота) |
+| `domain/regime.py` | Додати назву в `RobotName` **і** в `BACKTEST_WIRED_ROBOTS` | ✅ так (перше відкриває робота для CLI, друге — для рушія: без нього `require_backtest_support()` відмовиться запускати) |
+| `specs/strategies/<ваш_робот>.yaml` | Специфікація робота (пишеться **до** коду) | ✅ так — `tests/unit/test_specs.py` падає, доки її немає |
 | `infrastructure/nautilus/signal_strategy.py` | Гілка в `_build_robot()` + поля в `SignalRobotConfig` | ✅ так |
 | `tests/unit/test_<ваш_робот>.py` | Юніт-тести | ✅ так |
 | `application/param_grid.py` | Гілка сітки параметрів | ⚙️ якщо хочете підбір (інакше спрацює сітка `regime` — марно) |
 | `application/dtos.py` | Поля в `BacktestRequest` і `SelectedParams` | ⚙️ якщо додаєте **нові** параметри для оптимізації |
 | `infrastructure/settings.py` + `.env.example` | Нові змінні | ⚙️ якщо хочете керувати з `.env` |
 | `interfaces/composition.py` | Прокинути налаштування з `Settings` у `BacktestRequest` | ⚙️ якщо додали поля в `BacktestRequest` |
-| `application/run_research_backtest.py` | Мінімум барів у `_minimum_bars()` | ⚙️ якщо ваш робот потребує довгого прогріву |
+| `application/run_research_backtest.py` | Мінімум барів у `minimum_bars()` | ⚙️ якщо ваш робот потребує довгого прогріву |
 
 CLI-прапорці `--robot` оновляться **автоматично**: у `cli.py` список береться з `RobotName`.
 
 ## 3. Крок за кроком: робот `vpin_momentum`
+
+> **Приклад уже в репозиторії.** `vpin_momentum` — не гіпотетична вправа: файл
+> `src/nautilus_lab/domain/vpin_momentum.py` існує, назва є в `RobotName` і в
+> `BACKTEST_WIRED_ROBOTS`, сітка для нього — у `param_grid.py`, специфікація — у
+> `specs/strategies/vpin_momentum.yaml`. Тож кроки нижче читайте як **шаблон для вашого
+> нового робота** (і як розбір того, як цей робот зроблено): підставляйте свої імена, а
+> фрагменти, які вже є в коді, — звіряйте з реальними файлами, а не переписуйте.
 
 Ідея (прямо з MFT-документа, розділ 1.2): коли VPIN фіксує токсичний потік, на ринку працює
 інформований гравець; старі рівні підтримки/опору будуть пробиті, тому треба йти **за** потоком.
@@ -164,6 +172,13 @@ class VpinMomentum:
 Зверніть увагу: жодного `import nautilus_trader`, жодного читання `.env`, жодного ордера.
 Клас лише зберігає стан і повертає `Signal`.
 
+> **Одна відмінність від файлу в репозиторії.** У `domain/vpin_momentum.py` модель потоку не
+> створюється всередині, а **впорскується**: `def __init__(self, *, instrument_id: str,
+> vpin: VpinModel, ema_period: int = 50, ...)`. Це дозволяє тому самому класу працювати і на
+> барах (`BarVpin`), і на окремих угодах (`TickVpin`) — саме так працює прапорець
+> `--tick-vpin`. Разом із цим у класі є метод `on_trade_tick(*, is_buy, volume, dt_seconds)`,
+> який прокидає тік у `vpin.update_from_trade(...)`.
+
 ### Крок 2: юніт-тести
 
 Створіть `tests/unit/test_vpin_momentum.py`:
@@ -250,21 +265,42 @@ def test_exits_when_price_loses_the_ema() -> None:
 
 ### Крок 3: реєстрація робота
 
-`src/nautilus_lab/domain/regime.py` — додайте рядок у `RobotName`:
+`src/nautilus_lab/domain/regime.py` — додайте рядок у `RobotName` (тут показано повний перелік
+на сьогодні, ваш робот стане дванадцятим):
 
 ```python
 class RobotName(StrEnum):
     REGIME = "regime"
     EMA = "ema"
     PAIRS = "pairs"
+    VPIN_MOMENTUM = "vpin_momentum"
+    FORMULAIC_LGBM = "formulaic_lgbm"
+    META_LABEL = "meta_label"
+    ADAPTIVE_EMA = "adaptive_ema"
     FUNDING = "funding"
     ML_OBI = "ml_obi"
     GLFT = "glft"
     TRI_SCAN = "tri_scan"
-    VPIN_MOMENTUM = "vpin_momentum"  # <-- додано
+    YOUR_ROBOT = "your_robot"  # <-- додано
 ```
 
-Після цього `uv run lab research --help` покаже нову опцію в `--robot` без жодних правок у CLI.
+І **обов'язково** — у `BACKTEST_WIRED_ROBOTS` у тому ж файлі:
+
+```python
+BACKTEST_WIRED_ROBOTS: frozenset[RobotName] = frozenset(
+    {
+        RobotName.REGIME,
+        # ... решта підключених роботів ...
+        RobotName.YOUR_ROBOT,  # <-- додано
+    }
+)
+```
+
+Без другого кроку `require_backtest_support(robot)` кидає `robot 'your_robot' has no backtest
+adapter yet; use one of: ...`, і жоден прогін не відбудеться — це fail closed за задумом.
+
+Після цього `uv run lab research --help` покаже нову опцію в `--robot` без жодних правок у CLI
+(і в `lab paper --robot` теж, якщо робот є в `PAPER_SUPPORTED_ROBOTS`).
 
 ### Крок 4: підключення до рушія
 
@@ -279,39 +315,57 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
 ```
 
-б) Додайте гілку в `_build_robot()` і розширте тип повернення:
+б) Додайте гілку в `_build_robot()`. Тип повернення вже узагальнено до протоколу
+`SingleLegRobot` (оголошений у тому самому файлі, `infrastructure/nautilus/signal_strategy.py`),
+тож розширювати union не потрібно:
 
 ```python
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
 
 
-def _build_robot(config: SignalRobotConfig) -> EmaCrossover | RegimeRouter | VpinMomentum:
+def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
     robot = RobotName(config.robot)
+    require_backtest_support(robot)
+    instrument_id = str(config.instrument_id)
     if robot is RobotName.EMA:
         return EmaCrossover(...)  # як було
     if robot is RobotName.VPIN_MOMENTUM:
+        vpin: VpinModel = (
+            TickVpin(
+                bucket_volume=config.vpin_bucket_volume,
+                toxic_threshold=config.vpin_toxic_threshold,
+            )
+            if config.use_tick_vpin
+            else BarVpin(
+                bucket_volume=config.vpin_bucket_volume,
+                toxic_threshold=config.vpin_toxic_threshold,
+            )
+        )
         return VpinMomentum(
-            instrument_id=str(config.instrument_id),
-            bucket_volume=config.vpin_bucket_volume,  # поле вже існує
-            toxic_threshold=config.vpin_toxic_threshold,  # поле вже існує
+            instrument_id=instrument_id,
+            vpin=vpin,
             ema_period=config.vpin_momentum_ema_period,
             atr_multiple=config.vpin_momentum_atr_multiple,
         )
     ...  # гілка RegimeRouter як була
 ```
 
-> **Порада для чистоти.** Замість розширення union-типу можна оголосити в `domain/ports.py`
-> протокол `SingleLegRobot` із методом `on_bar(bar: OhlcvBar) -> Signal | None` —
-> тоді `_build_robot` повертає `SingleLegRobot`, а будь-яка нова стратегія підходить автоматично.
+> **Протокол `SingleLegRobot` уже є.** Він оголошений у
+> `infrastructure/nautilus/signal_strategy.py` (не в `domain/ports.py`): саме тому
+> `_build_robot` повертає `SingleLegRobot`, і будь-яка нова стратегія з одним інструментом
+> підходить автоматично — розширювати union-тип не потрібно.
 
 в) `src/nautilus_lab/infrastructure/nautilus/backtest_runner.py` — прокидаємо налаштування у конфіг
 (у виклику `SignalRobotConfig(...)` у методі `run`):
 
 ```python
-vpin_bucket_volume = (request.vpin_bucket_volume,)
-vpin_toxic_threshold = (request.vpin_toxic_threshold,)
-vpin_momentum_ema_period = (request.vpin_momentum_ema_period,)  # <-- додано
-vpin_momentum_atr_multiple = (request.vpin_momentum_atr_multiple,)  # <-- додано
+SignalRobotConfig(
+    ...,
+    vpin_bucket_volume=request.vpin_bucket_volume,
+    vpin_toxic_threshold=request.vpin_toxic_threshold,
+    vpin_momentum_ema_period=request.vpin_momentum_ema_period,  # <-- додано
+    vpin_momentum_atr_multiple=request.vpin_momentum_atr_multiple,  # <-- додано
+)
 ```
 
 ### Крок 5: запуск (мінімальний шлях)
@@ -334,7 +388,8 @@ uv run lab research --robot vpin_momentum
 
 **Прогалина 1 — сітка параметрів.** `iter_param_grid()` для невідомого робота віддає сітку `regime`
 (6 комбінацій `donchian × bb_k`), які ваш робот просто ігнорує: 6 прогонів на in-sample дадуть
-однаковий результат, тобто витрачений час. Додайте власну гілку в `application/param_grid.py`:
+однаковий результат, тобто витрачений час. Додайте власну гілку в `application/param_grid.py`.
+Для `vpin_momentum` вона вже така (і поле `vpin_ema_period` у `SelectedParams` теж уже існує):
 
 ```python
 if request.robot is RobotName.VPIN_MOMENTUM:
@@ -347,22 +402,33 @@ if request.robot is RobotName.VPIN_MOMENTUM:
             bb_k=base.bb_k,
             enter_trend_er=base.enter_trend_er,
             exit_trend_er=base.exit_trend_er,
-            vpin_ema_period=ema_period,  # поле треба додати в SelectedParams
+            z_entry=base.z_entry,
+            z_exit=base.z_exit,
+            vpin_ema_period=ema_period,
+            vpin_atr_multiple=base.vpin_atr_multiple,
         )
     return
 ```
 
-**Прогалина 2 — мінімум барів.** `application/run_research_backtest.py::_minimum_bars()` і
-`application/run_walk_forward.py::_require_warmup()` дають для невідомих роботів **50** барів.
-Вашому роботу з `ema_period=50` потрібно ~50 барів лише на прогрів. Якщо фолд має рівно 50 барів,
-сигналів не буде взагалі. Варіанти: зменшити `ema_period`, або додати робота в гілку з 150 барами:
+**Прогалина 2 — мінімум барів.** `application/run_research_backtest.py::minimum_bars()` (його ж
+викликає `application/run_walk_forward.py::_require_warmup()`) дає для невідомих роботів **50**
+барів. Вашому роботу з `ema_period=50` потрібно ~50 барів лише на прогрів. Якщо фолд має рівно
+50 барів, сигналів не буде взагалі. Варіанти: зменшити `ema_period`, або додати робота в гілку з
+150 барами — саме так зроблено для `vpin_momentum`:
 
 ```python
-def _minimum_bars(robot: RobotName) -> int:
-    if robot in (RobotName.REGIME, RobotName.VPIN_MOMENTUM):
+def minimum_bars(robot: RobotName) -> int:
+    if robot in (
+        RobotName.REGIME,
+        RobotName.VPIN_MOMENTUM,
+        RobotName.META_LABEL,
+        RobotName.ADAPTIVE_EMA,
+    ):
         return 150
     if robot is RobotName.PAIRS:
         return 200
+    if robot is RobotName.FORMULAIC_LGBM:
+        return 80
     return 50
 ```
 
@@ -424,8 +490,11 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
 4. **`interfaces/composition.py`** — `research_request()` передає значення з `Settings`:
 
 ```python
-vpin_momentum_ema_period = (cfg.vpin_momentum_ema_period,)
-vpin_momentum_atr_multiple = (cfg.vpin_momentum_atr_multiple,)
+BacktestRequest(
+    ...,
+    vpin_momentum_ema_period=cfg.vpin_momentum_ema_period,
+    vpin_momentum_atr_multiple=cfg.vpin_momentum_atr_multiple,
+)
 ```
 
 5. **`infrastructure/nautilus/backtest_runner.py`** — як у кроці 4в.
@@ -452,17 +521,17 @@ uv run lab research --robot vpin_momentum --slice ftx2022 --catalog catalog_long
 
 | Розділ «Стратегії MFT 2026» | Готові блоки в коді | Що дописати для робота | Складність |
 |------------------------------|---------------------|-------------------------|------------|
-| 1.1 Хоукс (кластеризація потоку ордерів) | `domain/hawkes.py::ExponentialHawkes` | Дошка подій (trades) замість барів + стратегія «розширити спред / піти за потоком» | 🔴 складно: потрібні tick-дані |
-| 1.2 VPIN / токсичний потік | `domain/vpin.py::BarVpin`, фільтр у `RegimeRouter` | ~80 рядків (див. приклад вище) | 🟢 просто |
-| 2.1 LightGBM + OBI | `ml_obi_strategy.py`, `ml_classifier.py`, `lightgbm_classifier.py`, `microstructure.py` | Дані книги (L2), збір датасету, навчання моделі | 🔴 складно: немає L2-даних |
-| 2.2 Purged K-fold, PBO | `application/train_classifier.py::purged_k_fold`, `label_direction`, `--embargo-bars` | Обв'язка навчання моделі + метрика PBO | 🟠 середньо |
+| 1.1 Хоукс (кластеризація потоку ордерів) | `domain/hawkes.py::ExponentialHawkes`, фільтр `--hawkes` у `RegimeRouter` | Саму стратегію «розширити спред / піти за потоком»; тіки вже заливаються (`lab ingest --trades`) | 🟠 середньо |
+| 1.2 VPIN / токсичний потік | `domain/vpin.py::BarVpin` і `TickVpin`, робот `vpin_momentum`, фільтри `--bar-vpin` / `--tick-vpin` у `RegimeRouter` | Нічого — робот підключено до рушія (див. приклад вище і `specs/strategies/vpin_momentum.yaml`) | ✅ готово |
+| 2.1 LightGBM + OBI | `ml_obi_strategy.py`, `ml_classifier.py`, `lightgbm_classifier.py`, `microstructure.py` | Нічого критичного: L2 збирається (`lab ingest --depth`), модель навчається (`lab ml train --model-type obi`), робот `ml_obi` підключено до рушія | 🟠 середньо: якість даних і моделі |
+| 2.2 Purged K-fold, PBO | `application/train_classifier.py::purged_k_fold`, `label_direction`; `lab ml train`; `lab research --pbo` (PBO + deflated Sharpe) | Нічого — обвʼязка й аудит уже є | ✅ готово |
 | 3.1–3.3 Pairs trading | `pairs/cointegration.py`, `pairs/ou.py`, `pairs/pairs_trading.py` | Спрощений ADF **уже замінено** на справжній (див. §5); лишилось — динамічний хедж-коефіцієнт | 🟠 середньо |
 | 4.1 GLFT маркет-мейкінг | `domain/glft.py::GlftMarketMaker` | Модель черги лімітних ордерів + облік інвентарю в бектесті | 🔴 складно |
 | 4.2 DRL | — | Усе: середовище, агент, симулятор книги | 🔴 дуже складно |
-| 5.1 Funding arbitrage | `domain/funding.py`, `infrastructure/binance_funding.py` | Завантаження фандингу в каталог + подієва стратегія (не бари) | 🟠 середньо |
-| 5.2 Трикутний арбітраж | `domain/triangular_arb.py`, `application/scan_triangular.py` | Дані стакану/глибини, оцінка прослизання | 🟠 середньо |
-| 6.1 Волатильність (HAR-RV, EGARCH) | `domain/volatility.py`, `infrastructure/egarch_forecast.py` | Підключити `vol_scaled_risk_fraction` у розрахунок ризику | 🟢 просто |
-| 6.2 Келлі / VaR | `domain/portfolio_risk.py`, `application/risk.py` | Передати статистику угод у `effective_risk_fraction` | 🟢 просто |
+| 5.1 Funding arbitrage | `domain/funding.py`, `infrastructure/binance_funding.py`, `lab ingest --funding` | Завантаження фандингу **уже є** (тека `catalog/data/funding/`); лишається подієва стратегія (не бари) | 🟠 середньо |
+| 5.2 Трикутний арбітраж | `domain/triangular_arb.py`, `application/scan_triangular.py` | Дані стакану/глибини (знімки L2 уже збирає `lab ingest --depth`), оцінка прослизання | 🟠 середньо |
+| 6.1 Волатильність (HAR-RV, EGARCH) | `domain/volatility.py`, `infrastructure/egarch_forecast.py` | Нічого — `vol_scaled_risk_fraction` підключено в ризик-шар (`USE_VOL_SCALING`, `VOL_MODEL`) | ✅ готово |
+| 6.2 Келлі / VaR | `domain/portfolio_risk.py`, `application/risk.py` | Нічого — статистику угод передає `SignalRobot` (`USE_FRACTIONAL_KELLY`, `KELLY_MIN_TRADES`) | ✅ готово |
 | 7. Комісії / інфраструктура | `domain/fees.py`, `MAKER_FEE`/`TAKER_FEE` | Нічого — вже враховано | ✅ готово |
 | 8. Податки | — | Поза кодом (облік операцій для звітності — окрема задача) | ⚪ не в скоупі |
 
@@ -582,37 +651,39 @@ uv run lab research --robot pairs                      # fills мають бут
 ```
 
 Наступний крок за якістю — не послаблювати поріг, а **переоцінювати коінтеграцію** періодично:
-зараз β фіксується один раз (див. [05 §3.4](05-roboty.md#34-ворота-якості-чому-робот-може-не-торгувати-взагалі)).
+зараз β фіксується один раз (`PAIRS_REFIT_EVERY=0`), але сам механізм переоцінки в коді вже є —
+`N > 0` перераховує коінтеграцію раз на N барів і закриває позицію, коли пара перестала
+проходити ворота (див. [05 §3.4](05-roboty.md#34-ворота-якості-чому-робот-може-не-торгувати-взагалі)).
 
-## 6. Приклад 3: підключити Келлі та vol-scaling
+## 6. Приклад 3: Келлі та vol-scaling — уже підключено
 
-Обидва блоки вже написані, але не активовані. Найпростіший спосіб оживити Келлі — передати
-статистику минулих угод у `effective_risk_fraction()` (`signal_strategy.py`):
+Обидва блоки не просто написані, а **вже вбудовані** в `SignalRobot`; типово вони вимкнені
+прапорцями в `.env`. Тому цей розділ — не рецепт «як дописати», а розбір того, як воно працює
+і як його ввімкнути.
+
+Келлі: `SignalRobot` сам накопичує `TradeStats` (`application/risk.py`) —
+`on_position_closed()` викликає `record(realized)`, — і передає статистику в розрахунок розміру:
 
 ```python
-# у SignalRobot: накопичуйте результати закритих угод
-self._wins = 0
-self._losses = 0
-self._gross_profit = Decimal("0")
-self._gross_loss = Decimal("0")
-
-# у on_bar перед size_position(...)
-if self._wins + self._losses >= 30:  # мінімум статистики
-    win_rate = Decimal(self._wins) / Decimal(self._wins + self._losses)
-    reward_risk = self._gross_profit / self._gross_loss if self._gross_loss > 0 else Decimal("3")
-    risk_fraction = effective_risk_fraction(
-        self._limits, win_rate=win_rate, reward_risk=reward_risk
-    )
-else:
-    risk_fraction = effective_risk_fraction(self._limits)
+risk_fraction = resolve_risk_fraction(
+    self._limits,
+    self._overlay,
+    stats=self._trade_stats,
+    forecast_vol=self._last_vol_forecast,
+)
 ```
 
-Заповнювати статистику треба в `on_position_closed` (подія Nautilus про закриття позиції).
-Ефект: коли статистика показує відсутність переваги, `fractional_kelly_cap` повертає 0,
-і розмір падає до `RISK_PER_TRADE` — робот не збільшує ставку на слабкому сигналі.
+Щоб це впливало на розмір, потрібні `USE_FRACTIONAL_KELLY=true` (і, за потреби,
+`KELLY_MIN_TRADES`, типово 30) — гілка `resolve_risk_fraction` викликає
+`effective_risk_fraction(limits, win_rate=..., reward_risk=...)`, яка повертає
+`min(risk_per_trade, kelly_cap)`. Ефект: коли статистика показує відсутність переваги,
+`fractional_kelly_cap` повертає 0, і розмір лишається на `RISK_PER_TRADE` — робот не збільшує
+ставку на слабкому сигналі.
 
-Аналогічно vol-scaling: `vol_scaled_risk_fraction(base, forecast_vol, target_vol)`
-(наприклад, `target_vol` = 2% на бар) множником до `risk_fraction`.
+Vol-scaling: `USE_VOL_SCALING=true` + `VOL_MODEL` (`har` / `egarch` / `gjr_garch`) і
+`VOL_SCALING_TARGET` (`0.02` — це і є ті 2% на бар). Прогноз приходить із
+`vol_forecast.build_vol_forecaster(...)`, а `vol_scaled_risk_fraction(base, forecast_vol,
+target_vol)` домножує ризик — і **ніколи не збільшує** його вище базового.
 
 ---
 
@@ -636,10 +707,11 @@ else:
 - [ ] `Signal` не містить розміру позиції
 - [ ] Використовуються лише закриті бари (`prior()`, а не «останній включно»)
 - [ ] Є юніт-тести на прогрів, на вхід і на вихід
-- [ ] Назва додана в `RobotName`
+- [ ] Назва додана в `RobotName` **і** в `BACKTEST_WIRED_ROBOTS`
+- [ ] Специфікація `specs/strategies/<робот>.yaml` збігається з кодом (`.venv/bin/python specs/_validator.py`)
 - [ ] `_build_robot()` знає про новий робот
 - [ ] `iter_param_grid()` має власну гілку (або свідомо прийнято, що сітка буде `regime`)
-- [ ] `_minimum_bars()` / `_require_warmup()` враховують довжину прогріву
+- [ ] `minimum_bars()` / `_require_warmup()` враховують довжину прогріву
 - [ ] `uv run pytest && uv run ruff check && uv run mypy src tests` — чисто
 - [ ] Прогін на синтетиці дає ненульові `fills`
 - [ ] Walk-forward запущено **один раз** на незміненій конфігурації

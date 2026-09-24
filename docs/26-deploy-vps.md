@@ -96,9 +96,9 @@ openssl rand -hex 32      # -> API_TOKEN в ОБОХ файлах
 nano .env                 # API_ALLOWED_ORIGINS=http://100.x.y.z, параметри робота
 nano deploy/.env          # BIND_ADDR=100.x.y.z, API_TOKEN=..., COMPOSE_PROFILES=collector,
                           # TICK_SYMBOLS=ETHUSDT, TICK_WINDOW_MINUTES=60
-# теки створює і сам deploy_vps.sh, але володіти ними мусить uid 1000: саме ним
-# працює контейнер (deploy/Dockerfile.api — useradd --create-home --uid 1000 lab)
-mkdir -p data reports catalog && sudo chown -R 1000:1000 data reports catalog
+# теки створює і сам deploy_vps.sh; контейнер за замовчуванням збирається з uid 1001
+# (типовий uid користувача lab на VPS; налаштовується через APP_UID/APP_GID у deploy/.env)
+mkdir -p data reports catalog && sudo chown -R $(id -u):$(id -g) data reports catalog
 ```
 
 Два файли — навмисно:
@@ -396,6 +396,39 @@ Watchdog звертається до нього раз на `LIVE_PAPER_HEARTBEA
 `/fail`) робить перевірку червоною одразу, а не після grace. Потрібен увімкнений
 watchdog; URL маскується в API налаштувань, у лог не пишеться.
 
+## 7b. Мінімальні права контейнерів
+
+Кожен сервіс у `deploy/docker-compose.yml` отримує спільний блок `x-hardening`
+(docs/27 E-1.8), і `tests/unit/test_deploy_compose.py` падає, якщо новий сервіс його
+не має:
+
+* **корінь файлової системи лише для читання** (`read_only`): записувати можна тільки в
+  змонтовані `data/`, `reports/`, `catalog/`, іменовані томи й `/tmp` (tmpfs, 64 MB);
+* **жодних capabilities** (`cap_drop: [ALL]`) і `no-new-privileges`. Повертаються лише
+  дві, і тест знає, які: `NET_BIND_SERVICE` для Caddy (порти 80/443) і
+  `DAC_READ_SEARCH` для restic (читати файли uid 1000);
+* **ліміти** пам'яті й процесів: OOM або fork-бомба лишаються всередині свого
+  контейнера, а не кладуть VPS разом із paper-сесіями. Типові значення — у
+  `deploy/.env`: `API_MEM_LIMIT=1536m`, `COLLECTOR_MEM_LIMIT=768m`, `WEB_MEM_LIMIT=256m`,
+  `BACKUP_MEM_LIMIT=1g`;
+* порт публікує **тільки** Caddy, і тільки на `BIND_ADDR`.
+
+Заголовки безпеки дашборда (Caddy): HSTS (браузер враховує лише через HTTPS),
+`X-Frame-Options`, `Permissions-Policy`, `Cross-Origin-Opener-Policy` і
+**Content-Security-Policy**. CSP стартує в режимі `Report-Only` (`CSP_MODE` у
+`deploy/.env`): нічого не блокує, лише пише порушення в консоль браузера. Відкрийте
+дашборд, пройдіть усі вкладки (Paper, Research, каталог, звіт у iframe) з відкритою
+консоллю DevTools; якщо рядків `Content-Security-Policy` немає — поставте
+`CSP_MODE=Content-Security-Policy` і передеплойте. На `/api/*` і звіти CSP не діє:
+tearsheet — самодостатній HTML із вбудованими скриптами.
+
+Перевірити на сервері:
+
+```bash
+docker inspect nautilus-lab-api-1 --format '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}} {{.HostConfig.Memory}}'
+curl -sI http://<BIND_ADDR>/ | grep -iE "content-security|strict-transport|x-frame"
+```
+
 ## 8. Якщо щось не так
 
 | Симптом | Причина / що робити |
@@ -411,6 +444,8 @@ watchdog; URL маскується в API налаштувань, у лог не
 | `deploy_vps.sh`: `missing .env on the server` / `missing deploy/.env` | Шаблони скопіюйте самі (крок 4) — скрипт лише підказує команду і виходить |
 | Контейнер `api` не стартує, `unknown LAB_ROLE` | Опечатка в `LAB_ROLE` (дозволено `full`, `paper`) — навмисно fail closed |
 | `.env` виявився текою | `docker compose up` запустили до створення `.env`; `rmdir .env && cp deploy/vps.env.example .env` |
+| У лозі `Read-only file system: '/...'` | Бібліотека пише поза змонтованими теками. Якщо це кеш — спрямуйте його в `/tmp` змінною середовища сервісу (як `XDG_CACHE_HOME`); якщо дані — додайте том у `docker-compose.yml`. Знімати `read_only` не треба |
+| Контейнер перезапускається, `docker inspect ... --format '{{.State.OOMKilled}}'` → `true` | Упирається в ліміт пам'яті: підніміть `API_MEM_LIMIT` (чи відповідний) у `deploy/.env` і `docker compose up -d` |
 | `docker compose ps` показує `unhealthy` | `curl -s http://<BIND_ADDR>/readyz` — у полі `problems` написано, який фід мовчить або яка сесія не пише журнал; те саме прийшло в Telegram, якщо його налаштовано |
 | Permission denied у `data/` (у лозі `Live paper journal write failed (...)`) | `data/` належить комусь іншому, ніж uid 1000 контейнера: `sudo chown -R 1000:1000 data reports catalog`. Поки це не зроблено, сесії йдуть у пам'ять, і після рестарту починаються з нуля |
 | Контейнер `api` не стартує: `live paper journal is not writable` | Той самий chown `data/`. Навмисно fail closed: паперовий термінал без журналу — це не «деградований режим», а порожній ledger при здоровому дашборді. Режим спостереження без журналу — порожній `LIVE_PAPER_JOURNAL` |

@@ -29,6 +29,7 @@ EVERY="${BACKUP_EVERY_SECONDS:-3600}"
 KEEP="${BACKUP_KEEP:---keep-hourly 48 --keep-daily 30 --keep-weekly 26}"
 HOST_TAG="${BACKUP_HOST:-nautilus-lab-vps}"
 LAST_PRUNE=""
+mkdir -p "${TMPDIR:-/tmp}"
 
 log() { echo "$(date -u +%FT%TZ) backup: $*"; }
 

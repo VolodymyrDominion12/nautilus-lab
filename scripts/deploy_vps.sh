@@ -36,10 +36,9 @@ git archive --format=tar HEAD | ssh "$VPS" "
     test -f deploy/.env || { echo 'missing deploy/.env: cp deploy/compose.env.example deploy/.env and edit it'; exit 1; }
     # An exposed dashboard without a lock hands the API token to anyone (deploy/Caddyfile).
     ALLOW_OPEN_DASHBOARD=${ALLOW_OPEN_DASHBOARD:-0} sh deploy/check_exposure.sh deploy/.env
-    # data/ reports/ catalog/ must be writable by uid 1000 — the container's own user
-    # (deploy/Dockerfile.api: useradd --uid 1000 lab), not by whoever runs this script.
-    # Wrong owner is no longer silent: the API refuses to start without a writable journal.
-    #   sudo chown -R 1000:1000 data reports catalog
+    # data/ reports/ catalog/ must be writable by the container's user (APP_UID/APP_GID,
+    # default 1001, deploy/Dockerfile.api). Wrong owner is caught at startup by ensure_journal_writable.
+    #   sudo chown -R 1001:1001 data reports catalog
     LAB_REVISION=$FULL_REV docker compose -f deploy/docker-compose.yml up -d --build --remove-orphans
     docker compose -f deploy/docker-compose.yml ps
 "

@@ -35,6 +35,20 @@
 
 	# Single-page app: unknown paths fall back to index.html.
 	handle {
+		# Security headers for the dashboard itself (docs/27 E-1.8). Only here, not on
+		# @api: the tearsheets under /static_reports are self-contained HTML with inline
+		# scripts, and the dashboard shows them in an iframe.
+		#
+		# CSP_MODE (deploy/.env) is the header NAME. The default, *-Report-Only, blocks
+		# nothing and prints every violation in the browser console: open the dashboard,
+		# use every tab, and only when the console is clean set
+		#   CSP_MODE=Content-Security-Policy
+		# style-src keeps 'unsafe-inline' for chart libraries that set style attributes.
+		header {
+			{$CSP_MODE:Content-Security-Policy-Report-Only} "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+			X-Frame-Options DENY
+			Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+		}
 		root * /srv
 		try_files {path} /index.html
 		file_server
@@ -43,6 +57,11 @@
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
+		# Browsers honour HSTS only over HTTPS (a domain in SITE_ADDRESS); over plain HTTP
+		# behind Tailscale it is ignored. No includeSubDomains/preload: the domain is yours
+		# to decide about, not this file's.
+		Strict-Transport-Security "max-age=31536000"
+		Cross-Origin-Opener-Policy same-origin
 		-Server
 	}
 }

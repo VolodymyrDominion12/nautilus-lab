@@ -250,6 +250,31 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
     updatePriceLines(state.position);
   }, [state]);
 
+  // While a session runs, the header and the (disabled) form show what the SERVER is
+  // trading, not this page's defaults: a session started by LIVE_PAPER_AUTOSTART or
+  // resumed after a restart was otherwise displayed as BTCUSDT 1m while trading ETH 1h.
+  const activeConfig = state?.is_active ? state.config : null;
+  useEffect(() => {
+    if (!activeConfig) return;
+    setSymbol(activeConfig.symbol);
+    setIntervalVal(activeConfig.interval);
+    setRobot(activeConfig.robot);
+    setStartingEquity(activeConfig.starting_equity);
+    setRiskPct(activeConfig.risk_per_trade);
+    setStopPct(activeConfig.stop_pct);
+    setTpMultiple(activeConfig.take_profit_multiple);
+    setAutoTrade(activeConfig.auto_trade);
+  }, [
+    activeConfig?.symbol,
+    activeConfig?.interval,
+    activeConfig?.robot,
+    activeConfig?.starting_equity,
+    activeConfig?.risk_per_trade,
+    activeConfig?.stop_pct,
+    activeConfig?.take_profit_multiple,
+    activeConfig?.auto_trade,
+  ]);
+
   // WebSocket Connection — reconnects with backoff. Before, one API restart or network
   // blip left the terminal on "Stream disconnected" until the page was reloaded.
   useEffect(() => {
@@ -628,6 +653,7 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
                     type="button"
                     key={sym}
                     onClick={() => setSymbol(sym)}
+                    disabled={state?.is_active}
                     className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
                       symbol === sym
                         ? 'bg-blue-600 text-white'
@@ -645,6 +671,7 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
                     type="button"
                     key={intv}
                     onClick={() => setIntervalVal(intv)}
+                    disabled={state?.is_active}
                     className={`px-2 py-1 rounded text-[11px] font-mono transition-colors ${
                       interval === intv
                         ? 'bg-blue-600 text-white'

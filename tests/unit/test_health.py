@@ -13,6 +13,7 @@ import pytest
 
 from nautilus_lab.api.health import (
     HealthLimits,
+    Heartbeat,
     Readiness,
     Watchdog,
     check_readiness,
@@ -328,3 +329,72 @@ def test_breaker_trip_is_announced_once_and_old_counts_are_not() -> None:
     assert dog.breaker_trips([session]) == [], "refusing on every bar is one trip"
     session.risk_refusals["position already open"] = 3
     assert dog.breaker_trips([session]) == [], "only breakers are alerts"
+
+
+# --------------------------------------------------------------- heartbeat
+
+
+def test_heartbeat_pings_while_ready_at_its_own_pace() -> None:
+    sent: list[str] = []
+    beat = Heartbeat(url="https://hc/ok", every_seconds=300, send=sent.append)
+    for now in (0, 30, 60, 299, 300, 330):
+        asyncio.run(beat.tick(True, now))
+    assert sent == ["https://hc/ok", "https://hc/ok"], "at 0 and at 300, not every round"
+
+
+def test_not_ready_is_silence_unless_a_fail_url_is_set() -> None:
+    sent: list[str] = []
+    quiet = Heartbeat(url="https://hc/ok", send=sent.append)
+    asyncio.run(quiet.tick(False, 0))
+    assert sent == [], "silence is what trips a dead-man's switch"
+
+    loud = Heartbeat(url="https://hc/ok", fail_url="https://hc/ok/fail", send=sent.append)
+    asyncio.run(loud.tick(True, 0))
+    asyncio.run(loud.tick(False, 10))  # state change: at once, not after every_seconds
+    asyncio.run(loud.tick(False, 20))
+    asyncio.run(loud.tick(True, 30))  # recovered: at once again
+    assert sent == ["https://hc/ok", "https://hc/ok/fail", "https://hc/ok"]
+
+
+def test_a_failed_ping_is_retried_next_round() -> None:
+    attempts: list[str] = []
+
+    def flaky(url: str) -> None:
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise OSError("network down")
+
+    beat = Heartbeat(url="https://hc/ok", every_seconds=300, send=flaky)
+    asyncio.run(beat.tick(True, 0))
+    asyncio.run(beat.tick(True, 30))
+    assert attempts == ["https://hc/ok", "https://hc/ok"]
+
+
+def test_watchdog_drives_the_heartbeat_and_a_crashed_check_counts_as_not_ready() -> None:
+    sent: list[str] = []
+    beat = Heartbeat(
+        url="https://hc/ok", fail_url="https://hc/fail", every_seconds=0, send=sent.append
+    )
+    results: list[Readiness | Exception] = [
+        Readiness(ready=True, problems=()),
+        RuntimeError("check crashed"),
+    ]
+
+    def evaluate() -> Readiness:
+        item = results.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            run_watchdog(
+                evaluate,
+                _Notifier(),
+                every_seconds=0,
+                heartbeat=beat,
+                clock=lambda: 0.0,
+                sleep=_stop_after(2),
+            )
+        )
+    assert sent == ["https://hc/ok", "https://hc/fail"]

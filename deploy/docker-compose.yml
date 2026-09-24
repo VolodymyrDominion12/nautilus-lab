@@ -16,6 +16,8 @@ services:
       dockerfile: deploy/Dockerfile.api
       args:
         LAB_REVISION: ${LAB_REVISION:-}
+        APP_UID: ${APP_UID:-1001}
+        APP_GID: ${APP_GID:-1001}
     restart: unless-stopped
     volumes:
       - ../.env:/app/.env:ro
@@ -68,6 +70,8 @@ services:
       dockerfile: deploy/Dockerfile.api
       args:
         LAB_REVISION: ${LAB_REVISION:-}
+        APP_UID: ${APP_UID:-1001}
+        APP_GID: ${APP_GID:-1001}
     restart: unless-stopped
     profiles: ["collector"]
     command: ["/bin/sh", "/app/deploy/collect_ticks.sh"]
@@ -80,6 +84,39 @@ services:
       - ./collect_ticks.sh:/app/deploy/collect_ticks.sh:ro
     logging: *logging
 
+  # Off-server backup of the paper journals, reports and collected ticks (restic; see
+  # deploy/backup.sh and docs/26 §7). Opt-in: COMPOSE_PROFILES=collector,backup and the
+  # RESTIC_* settings in deploy/.env. Everything is mounted read-only: a backup job has
+  # no business writing into the ledger it copies.
+  backup:
+    image: restic/restic:0.17.3
+    restart: unless-stopped
+    profiles: ["backup"]
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    environment:
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      B2_ACCOUNT_ID: ${B2_ACCOUNT_ID:-}
+      B2_ACCOUNT_KEY: ${B2_ACCOUNT_KEY:-}
+      BACKUP_PATHS: ${BACKUP_PATHS:-}
+      BACKUP_EVERY_SECONDS: ${BACKUP_EVERY_SECONDS:-}
+      BACKUP_KEEP: ${BACKUP_KEEP:-}
+      BACKUP_HEARTBEAT_URL: ${BACKUP_HEARTBEAT_URL:-}
+      RESTIC_CACHE_DIR: /cache
+    volumes:
+      # Whole folders, never single files or sub-folders: a bind mount of a path that
+      # does not exist yet makes Docker create it as root, and the API (uid 1000) could
+      # then not write its journal there.
+      - ../data:/backup/data:ro
+      - ../reports:/backup/reports:ro
+      - ../catalog:/backup/catalog:ro
+      - ./backup.sh:/backup.sh:ro
+      - restic_cache:/cache
+    logging: *logging
+
 volumes:
   caddy_data:
   caddy_config:
+  restic_cache:

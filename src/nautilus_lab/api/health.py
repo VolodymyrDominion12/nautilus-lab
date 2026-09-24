@@ -11,6 +11,10 @@ every journal write fails on a full disk — the two failures that silently turn
 * the **watchdog** re-evaluates readiness on a timer and sends a message when a problem
   appears and again when it clears — transitions, not repeats, so a long Binance outage
   is two messages, not two hundred;
+* the **heartbeat** pings an external URL while the server is ready (a push-style
+  dead-man's switch: healthchecks.io, Uptime Kuma "push", Cronitor). When the pings
+  stop — VPS down, process dead, network gone, or the server not ready — the *outside*
+  service raises the alarm; nothing inside a dead machine can (docs/27 E-1.7);
 * **metrics** (`/api/metrics`) expose the same numbers in the Prometheus text format for
   anyone who scrapes; nothing here depends on a Prometheus library.
 
@@ -22,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import urllib.request
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -201,12 +207,58 @@ class Watchdog:
         ]
 
 
+def http_get(url: str, *, timeout_seconds: float = 10.0) -> None:
+    """One GET; raises on network errors and non-2xx answers (urllib does both)."""
+    with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
+        response.read(1024)
+
+
+@dataclass(slots=True)
+class Heartbeat:
+    """Push-style dead-man's switch: ping `url` at most every `every_seconds` while ready.
+
+    Not ready: ping `fail_url` when one is configured (healthchecks.io's `/fail` turns
+    the check red at once), otherwise send nothing and let the silence trip the check.
+    A change of state pings immediately. A ping that fails is retried next round.
+    """
+
+    url: str
+    every_seconds: float = 300.0
+    fail_url: str = ""
+    send: Callable[[str], None] = http_get
+    last_sent: float | None = None
+    last_ready: bool | None = None
+
+    def due(self, ready: bool, now: float) -> str | None:
+        target = self.url if ready else self.fail_url
+        if not target:
+            return None
+        changed = self.last_ready is not None and ready != self.last_ready
+        if changed or self.last_sent is None or now - self.last_sent >= self.every_seconds:
+            return target
+        return None
+
+    async def tick(self, ready: bool, now: float) -> None:
+        target = self.due(ready, now)
+        if target is not None:
+            try:
+                await asyncio.to_thread(self.send, target)
+            except Exception as exc:
+                # The URL can carry a secret check id: log the failure, not the URL.
+                logger.warning("live paper heartbeat not delivered: %s", type(exc).__name__)
+                return
+            self.last_sent = now
+        self.last_ready = ready
+
+
 async def run_watchdog(
     evaluate: Callable[[], Readiness],
     notifier: AlertNotifier,
     *,
     every_seconds: float,
     sessions: Callable[[], Iterable[Any]] | None = None,
+    heartbeat: Heartbeat | None = None,
+    clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     watchdog: Watchdog | None = None,
 ) -> None:
@@ -218,8 +270,10 @@ async def run_watchdog(
     """
     dog = watchdog or Watchdog()
     while True:
+        readiness: Readiness | None = None
         try:
-            messages = dog.transitions(evaluate())
+            readiness = evaluate()
+            messages = dog.transitions(readiness)
             if sessions is not None:
                 messages += dog.breaker_trips(sessions())
         except Exception:
@@ -232,6 +286,9 @@ async def run_watchdog(
                 await asyncio.to_thread(notifier.notify, message, level)
             except Exception:
                 logger.exception("live paper watchdog: alert not delivered: %s", message)
+        if heartbeat is not None:
+            # A check that itself crashed counts as not ready: silence is the safe signal.
+            await heartbeat.tick(readiness is not None and readiness.ready, clock())
         await sleep(every_seconds)
 
 

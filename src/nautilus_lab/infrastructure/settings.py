@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     live_paper_feed_grace_seconds: float = 120.0
     # How often the watchdog re-checks; 0 turns it off (e.g. on a workstation).
     live_paper_watchdog_seconds: float = 30.0
+    # Dead-man's switch (docs/27 E-1.7): the watchdog GETs this URL at most every
+    # HEARTBEAT_SECONDS while the server is ready (healthchecks.io / Uptime Kuma push).
+    # The outside service alarms when the pings stop. FAIL_URL (optional) is pinged
+    # instead while not ready. Needs the watchdog on. Masked in the settings API (_URL).
+    live_paper_heartbeat_url: str = ""
+    live_paper_heartbeat_fail_url: str = ""
+    live_paper_heartbeat_seconds: float = 300.0
     live_enabled: bool = False
     starting_equity: Decimal = Decimal("100000")
     risk_per_trade: Decimal = Decimal("0.005")

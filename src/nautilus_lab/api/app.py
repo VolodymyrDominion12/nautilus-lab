@@ -48,6 +48,7 @@ from nautilus_lab.api.data_health import (
 from nautilus_lab.api.experiment_history import list_history, load_history_entry
 from nautilus_lab.api.health import (
     HealthLimits,
+    Heartbeat,
     Readiness,
     check_readiness,
     render_metrics,
@@ -128,6 +129,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 alerts,
                 every_seconds=every,
                 sessions=lambda: list(LIVE_SESSIONS.sessions.values()),
+                heartbeat=_heartbeat(),
             )
         )
     yield
@@ -371,6 +373,17 @@ HEALTH_LIMITS = HealthLimits(
     closed_bar_slack_seconds=settings().live_paper_closed_bar_slack_seconds,
     startup_grace_seconds=settings().live_paper_feed_grace_seconds,
 )
+
+
+def _heartbeat() -> Heartbeat | None:
+    cfg = settings()
+    if not cfg.live_paper_heartbeat_url.strip():
+        return None
+    return Heartbeat(
+        url=cfg.live_paper_heartbeat_url.strip(),
+        fail_url=cfg.live_paper_heartbeat_fail_url.strip(),
+        every_seconds=cfg.live_paper_heartbeat_seconds,
+    )
 
 
 def _readiness() -> Readiness:

@@ -29,9 +29,13 @@ COPY deploy/paper_portfolio.yaml ./deploy/paper_portfolio.yaml
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra api --extra alerts
 
-RUN useradd --create-home --uid 1000 lab \
+ARG APP_UID=1001
+ARG APP_GID=1001
+
+RUN groupadd --gid ${APP_GID} lab 2>/dev/null || true \
+    && useradd --create-home --uid ${APP_UID} --gid ${APP_GID} lab 2>/dev/null || useradd --create-home --uid ${APP_UID} lab \
     && mkdir -p /app/data /app/reports /app/catalog \
-    && chown -R lab:lab /app/data /app/reports /app/catalog /app/research
+    && chown -R ${APP_UID}:${APP_GID} /app/data /app/reports /app/catalog /app/research
 USER lab
 
 # The shipped git revision (scripts/deploy_vps.sh). The image has no .git, so this is how

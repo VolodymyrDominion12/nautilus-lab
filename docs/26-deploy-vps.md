@@ -299,7 +299,47 @@ equity = pd.json_normalize(ev[ev.type == "snapshot"]["equity_point"].dropna())
 
 ## 7. Резервні копії
 
-Усе цінне — три теки: `data/`, `catalog/`, `reports/`. `pull_vps.sh` і є бекапом
+Усе цінне — три теки: `data/`, `catalog/`, `reports/`. Журнал paper-сесії — єдиний
+доказ 8 тижнів прогону, а зібрані тіки не можна докачати пізніше (REST-історії немає).
+Тому копій дві, і жодна не лежить лише на VPS.
+
+### 7.1. Автоматичний бекап поза сервером (restic)
+
+Сервіс `backup` (`deploy/backup.sh`, образ `restic/restic`) щогодини робить знімок
+`data/paper`, `reports`, `catalog/data/agg_trade`, `catalog/data/orderbook` у сховище
+**не на цьому сервері** (S3/B2/R2, restic rest-server). Раз на добу — `forget --prune`
+(типово 48 годинних, 30 денних, 26 тижневих знімків). Дані змонтовано лише для
+читання. Журнали пишуться під час бекапу — у найгіршому разі останній рядок файлу
+обірваний, а читач журналу такий рядок пропускає.
+
+```bash
+# deploy/.env на сервері
+COMPOSE_PROFILES=collector,backup
+RESTIC_REPOSITORY=b2:my-bucket:nautilus-lab
+RESTIC_PASSWORD='довгий-випадковий-пароль'      # копія — у менеджері паролів, НЕ лише на VPS
+B2_ACCOUNT_ID=...
+B2_ACCOUNT_KEY=...
+BACKUP_HEARTBEAT_URL=https://hc-ping.com/<uuid-2>   # необов'язково: алерт, коли бекапи зупинились
+```
+
+Перший запуск сам робить `restic init`. Без `RESTIC_REPOSITORY`/`RESTIC_PASSWORD` сервіс
+завершується з поясненням у лозі (`docker compose logs backup`), а не мовчки.
+
+**Відновлення — перевірте один раз одразу після налаштування** (бекап, з якого ніхто
+не відновлювався, — це припущення, а не бекап):
+
+```bash
+cd ~/nautilus-lab
+docker compose -f deploy/docker-compose.yml run --rm --entrypoint restic backup snapshots
+docker compose -f deploy/docker-compose.yml run --rm -v "$PWD/restore:/restore" \
+    --entrypoint restic backup restore latest --target /restore
+ls restore/backup/data/paper/sessions/          # ті самі *.jsonl, що й у data/paper
+uv run python scripts/live_paper_report.py restore/backup/data/paper   # на станції
+```
+
+### 7.2. Копія на робочій станції (`pull_vps.sh`)
+
+`pull_vps.sh` теж є бекапом
 (rsync копіює тільки зміни), але тягне не все підряд, а рівно те, що сервер продукує:
 `data/paper/` → `data/vps/paper/`, `catalog/data/` → `data/vps/catalog/data/`,
 `reports/` → `data/vps/reports/`, плюс `DEPLOYED_REVISION` сервера. Куди складати —
@@ -347,9 +387,14 @@ docker compose -f deploy/docker-compose.yml ps                # STATUS: healthy 
 curl -s -H "X-Lab-Token: $API_TOKEN" http://100.x.y.z/api/metrics | head -30
 ```
 
-Чого тут **немає**: сигналу, коли мовчить сам VPS (вимкнений, без мережі) — процес, якого
-немає, нічого не надішле. Для цього — зовнішній пінг `/readyz` (uptime-монітор або cron
-на станції), docs/27 E-1.7.
+**Коли мовчить сам VPS** (вимкнений, без мережі, процес мертвий), зсередини ніхто не
+повідомить. Для цього — dead-man's switch: push-перевірка в зовнішньому сервісі
+(healthchecks.io, Uptime Kuma «push», Cronitor) і її URL у `LIVE_PAPER_HEARTBEAT_URL`.
+Watchdog звертається до нього раз на `LIVE_PAPER_HEARTBEAT_SECONDS` (300 с), **лише поки
+`/readyz` зелений**; перестав — сервіс сам надсилає алерт (період 5 хв, grace 10 хв).
+Необов'язковий `LIVE_PAPER_HEARTBEAT_FAIL_URL` (для healthchecks.io — той самий URL із
+`/fail`) робить перевірку червоною одразу, а не після grace. Потрібен увімкнений
+watchdog; URL маскується в API налаштувань, у лог не пишеться.
 
 ## 8. Якщо щось не так
 

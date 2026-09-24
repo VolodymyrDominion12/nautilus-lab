@@ -38,6 +38,11 @@ alerts = [
 ]
 api = [
     "fastapi>=0.141.1",
+    # api/app.py imports both directly (strategy specs, .env writes). They used to arrive
+    # only transitively (optuna, pydantic-settings), so a server image without the
+    # research extra could not start.
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
     "uvicorn>=0.53.0",
     "websockets>=17.1",
 ]

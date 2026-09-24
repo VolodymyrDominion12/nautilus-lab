@@ -70,3 +70,18 @@ def test_frontend_ci_uses_the_node_major_the_image_builds_with() -> None:
     nvmrc = (ROOT / "frontend" / ".nvmrc").read_text(encoding="utf-8").strip()
     dockerfile = (ROOT / "deploy" / "Dockerfile.web").read_text(encoding="utf-8")
     assert f"FROM node:{nvmrc}" in dockerfile
+
+
+def test_python_gates_block_and_coverage_runs_once() -> None:
+    steps = _steps(_load(ROOT / ".github" / "workflows" / "ci.yml"))
+    assert not [s for s in steps if s.get("continue-on-error")], "every Python gate blocks"
+    runs = [str(s.get("run", "")) for s in steps]
+    pytest_runs = [r for r in runs if "pytest" in r]
+    assert len(pytest_runs) == 1 and "--cov" in pytest_runs[0], "one run, under coverage"
+
+
+def test_engine_adapters_are_measured_by_coverage() -> None:
+    tomllib = pytest.importorskip("tomllib")
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    omitted = config["tool"]["coverage"]["run"].get("omit", [])
+    assert not [path for path in omitted if "infrastructure/nautilus" in path]

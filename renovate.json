@@ -1,0 +1,69 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Dependency updates for nautilus-lab (docs/27 E-1.3). Needs the Renovate GitHub App on this repository.",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    "docker:pinDigests"
+  ],
+  "timezone": "Europe/Kiev",
+  "schedule": ["before 7am on monday"],
+  "prConcurrentLimit": 5,
+  "minimumReleaseAge": "3 days",
+  "labels": ["dependencies"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 7am on monday"]
+  },
+  "pre-commit": {
+    "enabled": true
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null
+  },
+  "packageRules": [
+    {
+      "description": "Python dependencies (pyproject.toml + uv.lock), one PR a week",
+      "matchManagers": ["pep621"],
+      "groupName": "python dependencies"
+    },
+    {
+      "description": "Dashboard dependencies",
+      "matchManagers": ["npm"],
+      "groupName": "frontend dependencies"
+    },
+    {
+      "description": "Workflow actions (pinned to commit SHAs)",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "Base images and compose images (pinned to digests)",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "groupName": "docker images"
+    },
+    {
+      "description": "The engine changes backtest fills without any change here: its own PR, never automerged, compared against the golden backtest before merging",
+      "matchPackageNames": ["nautilus-trader"],
+      "groupName": null,
+      "automerge": false,
+      "labels": ["dependencies", "engine-upgrade"],
+      "prBodyNotes": [
+        "NautilusTrader upgrade: fills and results may change. Run the smoke/golden backtest (docs/27 E-2.6) on the old and new version and compare before merging."
+      ]
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "gitleaks binary version in the security workflow",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/security\\.yml$/"],
+      "matchStrings": ["GITLEAKS_VERSION: \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "gitleaks/gitleaks",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ]
+}

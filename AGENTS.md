@@ -102,7 +102,16 @@ uv run pytest --cov --cov-report=term-missing    # поріг покриття f
 uv run ruff check --fix && uv run ruff format    # line-length 100
 uv run mypy src tests                            # strict = true
 .venv/bin/python specs/_validator.py             # специфікації проти коду
+make precommit-install                           # один раз: хуки ruff/gitleaks (mypy на push)
+make audit                                       # відомі CVE у uv.lock і npm runtime
 ```
+
+CI — чотири workflow у `.github/workflows/`: `ci.yml` (Python-гейти), `frontend.yml`,
+`images.yml` (Docker + конфіги деплою), `security.yml` (залежності, секрети, самі
+workflow). `tests/unit/test_ci_workflows.py` тримає їхні правила: токен лише на
+читання, `persist-credentials: false`, жодного `pull_request_target`. Оновлення
+залежностей приходять PR від Renovate (`renovate.json`); NautilusTrader — окремим PR,
+який перед злиттям порівнюють на золотому бектесті.
 
 `uv run pytest` уже включає `tests/unit/test_specs.py`, тож дрейф спек ловиться
 звичайним прогоном. Окремий виклик валідатора — коли треба деталі по спеці.

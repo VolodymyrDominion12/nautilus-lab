@@ -467,6 +467,7 @@ def test_journal_entry_records_the_gates_not_just_a_number() -> None:
 def test_journal_write_never_fails_a_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Bookkeeping must not turn a successful backtest into a failed job."""
     from nautilus_lab.api import research_runner
+    from nautilus_lab.domain.provenance import RunManifest
 
     def _explode(*args: object, **kwargs: object) -> None:
         raise OSError("disk is read-only")
@@ -476,8 +477,9 @@ def test_journal_write_never_fails_a_run(tmp_path: Path, monkeypatch: pytest.Mon
         research_runner, "journal_paths", lambda cfg: (tmp_path / "j.md", tmp_path / "j.jsonl")
     )
     entry = research_runner._journal_entry(subject="s", gates="g")
+    manifest = RunManifest()
     # No exception escapes: the caller keeps its result and the failure is printed.
-    research_runner._record_journal(_settings_stub(), entry)
+    research_runner._record_journal(_settings_stub(), manifest, entry)
 
 
 def _settings_stub() -> Settings:

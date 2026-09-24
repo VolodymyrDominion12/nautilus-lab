@@ -9,6 +9,20 @@
 # can rsync them to the workstation and a rebuild never touches them.
 name: nautilus-lab
 
+# Least privilege for every service (docs/27 E-1.8). A container that is broken into
+# cannot change its own code (read-only root), gain privileges (no-new-privileges, no
+# capabilities) or fork-bomb and starve the paper sessions (pids/memory limits). Only
+# the bind-mounted data folders, the named volumes and a small /tmp are writable.
+x-hardening: &hardening
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: 256
+  tmpfs:
+    - /tmp:size=64m
+
 services:
   api:
     build:
@@ -19,6 +33,14 @@ services:
         APP_UID: ${APP_UID:-1001}
         APP_GID: ${APP_GID:-1001}
     restart: unless-stopped
+    <<: *hardening
+    # 8 sessions + NautilusTrader imports; the limit keeps an OOM inside this container
+    # instead of taking the whole VPS (and the collector, and Caddy) down with it.
+    mem_limit: ${API_MEM_LIMIT:-1536m}
+    environment:
+      # The root filesystem is read-only; libraries that cache under $HOME use /tmp.
+      XDG_CACHE_HOME: /tmp/.cache
+      MPLCONFIGDIR: /tmp/matplotlib
     volumes:
       - ../.env:/app/.env:ro
       - ../data:/app/data
@@ -41,6 +63,11 @@ services:
       args:
         VITE_API_TOKEN: ${API_TOKEN:-}
     restart: unless-stopped
+    <<: *hardening
+    # Caddy runs as root in its image and binds :80/:443: that one capability back.
+    cap_add:
+      - NET_BIND_SERVICE
+    mem_limit: ${WEB_MEM_LIMIT:-256m}
     depends_on:
       - api
     environment:
@@ -49,6 +76,8 @@ services:
       DASHBOARD_AUTH: ${DASHBOARD_AUTH:-off}
       BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
       BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:-}
+      # Report-Only until the browser console is clean (deploy/Caddyfile).
+      CSP_MODE: ${CSP_MODE:-Content-Security-Policy-Report-Only}
     ports:
       # Docker publishes around ufw/iptables rules, so the bind address IS the firewall.
       # Tailscale-only: set BIND_ADDR to the server's 100.x.y.z address.
@@ -75,7 +104,10 @@ services:
     restart: unless-stopped
     profiles: ["collector"]
     command: ["/bin/sh", "/app/deploy/collect_ticks.sh"]
+    <<: *hardening
+    mem_limit: ${COLLECTOR_MEM_LIMIT:-768m}
     environment:
+      XDG_CACHE_HOME: /tmp/.cache
       TICK_SYMBOLS: ${TICK_SYMBOLS:-ETHUSDT}
       TICK_WINDOW_MINUTES: ${TICK_WINDOW_MINUTES:-60}
     volumes:
@@ -93,6 +125,12 @@ services:
     restart: unless-stopped
     profiles: ["backup"]
     entrypoint: ["/bin/sh", "/backup.sh"]
+    <<: *hardening
+    # restic runs as root; DAC_READ_SEARCH lets it read files of the app user whatever
+    # their mode, and nothing else (the mounts are read-only anyway). Prune needs memory.
+    cap_add:
+      - DAC_READ_SEARCH
+    mem_limit: ${BACKUP_MEM_LIMIT:-1g}
     environment:
       RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
       RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
@@ -105,6 +143,8 @@ services:
       BACKUP_KEEP: ${BACKUP_KEEP:-}
       BACKUP_HEARTBEAT_URL: ${BACKUP_HEARTBEAT_URL:-}
       RESTIC_CACHE_DIR: /cache
+      # prune writes temporary packs; the 64 MB /tmp is too small for that.
+      TMPDIR: /cache/tmp
     volumes:
       # Whole folders, never single files or sub-folders: a bind mount of a path that
       # does not exist yet makes Docker create it as root, and the API (uid 1000) could

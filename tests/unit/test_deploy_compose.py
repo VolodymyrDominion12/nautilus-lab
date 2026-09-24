@@ -17,7 +17,7 @@ DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 #: The only capabilities a service may add back after `cap_drop: [ALL]`, and why.
 ALLOWED_CAPS: dict[str, set[str]] = {
     "web": {"NET_BIND_SERVICE"},  # Caddy binds :80/:443 as root inside its image
-    "backup": {"DAC_READ_SEARCH"},  # restic reads uid-1000 files whatever their mode
+    "backup": {"DAC_READ_SEARCH"},  # restic reads the app user's files whatever their mode
 }
 
 

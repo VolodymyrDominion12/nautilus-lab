@@ -406,7 +406,7 @@ watchdog; URL маскується в API налаштувань, у лог не
   змонтовані `data/`, `reports/`, `catalog/`, іменовані томи й `/tmp` (tmpfs, 64 MB);
 * **жодних capabilities** (`cap_drop: [ALL]`) і `no-new-privileges`. Повертаються лише
   дві, і тест знає, які: `NET_BIND_SERVICE` для Caddy (порти 80/443) і
-  `DAC_READ_SEARCH` для restic (читати файли uid 1000);
+  `DAC_READ_SEARCH` для restic (читати файли користувача застосунку, `APP_UID`);
 * **ліміти** пам'яті й процесів: OOM або fork-бомба лишаються всередині свого
   контейнера, а не кладуть VPS разом із paper-сесіями. Типові значення — у
   `deploy/.env`: `API_MEM_LIMIT=1536m`, `COLLECTOR_MEM_LIMIT=768m`, `WEB_MEM_LIMIT=256m`,

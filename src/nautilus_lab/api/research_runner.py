@@ -4,7 +4,7 @@ import io
 import json
 import sys
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -19,6 +19,7 @@ from nautilus_lab.application.promotion_gate import evaluate_gate
 from nautilus_lab.application.run_walk_forward import window_return
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.errors import JournalFormatError
+from nautilus_lab.domain.provenance import RunManifest
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.settings import Settings
@@ -29,6 +30,7 @@ from nautilus_lab.interfaces.composition import (
     overfit_audit_use_case,
     research_request,
     research_use_case,
+    run_manifest,
     settings,
     walk_forward_request,
     walk_forward_use_case,
@@ -113,7 +115,21 @@ def _journal_entry(
     )
 
 
-def _record_journal(cfg: Settings, entry: JournalEntry) -> None:
+def _announce_manifest(cfg: Settings, *, synthetic: bool) -> RunManifest:
+    """Same provenance line the CLI prints first (docs/27 E-1.4), into the job log."""
+    manifest = run_manifest(cfg, with_catalog=not synthetic)
+    print(manifest.summary_line())
+    for warning in manifest.warnings():
+        print(f"manifest_warning={warning}")
+    return manifest
+
+
+def _stamped(result: dict[str, Any], manifest: RunManifest) -> dict[str, Any]:
+    """The job result with its provenance, as archived and shown by the dashboard."""
+    return {**result, "provenance": manifest.as_dict()}
+
+
+def _record_journal(cfg: Settings, manifest: RunManifest, entry: JournalEntry) -> None:
     """Append a finished run to the research journal.
 
     Bookkeeping must never turn a successful backtest into a failed job: a journal that
@@ -122,7 +138,8 @@ def _record_journal(cfg: Settings, entry: JournalEntry) -> None:
     """
     try:
         markdown_path, jsonl_path = journal_paths(cfg)
-        record_run(markdown_path=markdown_path, jsonl_path=jsonl_path, entry=entry)
+        stamped = replace(entry, provenance=manifest)
+        record_run(markdown_path=markdown_path, jsonl_path=jsonl_path, entry=stamped)
     except (OSError, JournalFormatError) as exc:
         print(f"journal_row_failed={exc}")
         return
@@ -234,6 +251,7 @@ def execute_research(
     finished_at = datetime.now(UTC)
     try:
         cfg = _apply_config(settings(), job)
+        manifest = _announce_manifest(cfg, synthetic=job.source == "synthetic")
         if job.folds < 1:
             raise ValueError(f"folds must be >= 1, got {job.folds}")
         # `--journal` forces the write; JOURNAL_ENABLED makes it the default for every run.
@@ -286,6 +304,7 @@ def execute_research(
             if journal_enabled:
                 _record_journal(
                     cfg,
+                    manifest,
                     _journal_entry(
                         subject=subject,
                         gates=(
@@ -295,7 +314,7 @@ def execute_research(
                         reason=pbo_report.summary_line(),
                     ),
                 )
-            return result, buffer.getvalue()
+            return _stamped(result, manifest), buffer.getvalue()
 
         bar_origin = BarOrigin.SYNTHETIC if job.source == "synthetic" else BarOrigin.CATALOG
         tearsheet = job.tearsheet_path if job.generate_tearsheet else None
@@ -332,6 +351,7 @@ def execute_research(
             if journal_enabled:
                 _record_journal(
                     cfg,
+                    manifest,
                     _journal_entry(
                         subject=subject,
                         gates="full-sample catalog (no OOS split)",
@@ -344,7 +364,7 @@ def execute_research(
                         artifact=backtest_report.tearsheet_path,
                     ),
                 )
-            return result, buffer.getvalue()
+            return _stamped(result, manifest), buffer.getvalue()
 
         if job.source == "synthetic" and not (job.folds > 1 or job.use_optuna or custom_window):
             backtest_report = research_use_case(cfg).execute(
@@ -376,6 +396,7 @@ def execute_research(
             if journal_enabled:
                 _record_journal(
                     cfg,
+                    manifest,
                     _journal_entry(
                         subject=subject,
                         gates="synthetic backtest (no OOS split)",
@@ -388,7 +409,7 @@ def execute_research(
                         artifact=backtest_report.tearsheet_path,
                     ),
                 )
-            return result, buffer.getvalue()
+            return _stamped(result, manifest), buffer.getvalue()
 
         wf_request = walk_forward_request(
             cfg,
@@ -428,6 +449,7 @@ def execute_research(
             if journal_enabled:
                 _record_journal(
                     cfg,
+                    manifest,
                     _journal_entry(
                         subject=subject,
                         gates=f"walk-forward {job.source} folds={job.folds}",
@@ -440,7 +462,7 @@ def execute_research(
                         artifact=tearsheet_path,
                     ),
                 )
-            return result, buffer.getvalue()
+            return _stamped(result, manifest), buffer.getvalue()
 
         wf = use_case.execute(wf_request)
         _print_walk_forward(wf)
@@ -466,6 +488,7 @@ def execute_research(
         if journal_enabled:
             _record_journal(
                 cfg,
+                manifest,
                 _journal_entry(
                     subject=subject,
                     gates=f"walk-forward {job.source} single split",
@@ -475,7 +498,7 @@ def execute_research(
                     artifact=wf.out_of_sample.tearsheet_path,
                 ),
             )
-        return result, buffer.getvalue()
+        return _stamped(result, manifest), buffer.getvalue()
     except Exception as exc:
         traceback.print_exc()
         result = build_job_result(

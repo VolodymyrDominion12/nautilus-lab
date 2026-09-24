@@ -24,6 +24,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from nautilus_lab.domain.errors import JournalFormatError
+from nautilus_lab.domain.provenance import RunManifest
 
 ROWS_START = "<!-- journal:rows:start -->"
 ROWS_END = "<!-- journal:rows:end -->"
@@ -58,6 +59,9 @@ class JournalEntry:
     buy_and_hold_return: Decimal | None = None
     fills: int | None = None
     artifact: str | None = None
+    #: Code, dependencies, settings and data of the run (docs/27 E-1.4). Only the JSONL
+    #: log carries it; the markdown table keeps its columns so hand-typed rows survive.
+    provenance: RunManifest | None = None
 
     def __post_init__(self) -> None:
         if self.decision not in _DECISION_MARKERS:
@@ -79,6 +83,7 @@ class JournalEntry:
             ),
             "fills": self.fills,
             "artifact": self.artifact,
+            "provenance": None if self.provenance is None else self.provenance.as_dict(),
         }
 
     @classmethod
@@ -102,6 +107,10 @@ class JournalEntry:
         fills = payload.get("fills")
         if fills is not None and not isinstance(fills, int):
             raise ValueError("fills must be an integer or null")
+        # Records written before E-1.4 have no provenance: that is "unknown", not an error.
+        raw_provenance = payload.get("provenance")
+        if raw_provenance is not None and not isinstance(raw_provenance, dict):
+            raise ValueError("provenance must be an object or null")
         return cls(
             created_at=datetime.fromisoformat(created),
             source=_text(payload, "source"),
@@ -113,6 +122,11 @@ class JournalEntry:
             buy_and_hold_return=_decimal("buy_and_hold_return"),
             fills=fills,
             artifact=_optional_text(payload, "artifact"),
+            provenance=(
+                None
+                if raw_provenance is None
+                else RunManifest.from_dict({str(k): v for k, v in raw_provenance.items()})
+            ),
         )
 
     def markdown_row(self) -> str:

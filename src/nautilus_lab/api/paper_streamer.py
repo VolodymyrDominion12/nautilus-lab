@@ -54,12 +54,14 @@ from nautilus_lab.domain.vpin_momentum import VpinMomentum
 from nautilus_lab.infrastructure.lightgbm_classifier import HeuristicDirectionClassifier
 from nautilus_lab.infrastructure.live_paper_journal import (
     FILL,
+    SESSION_RESUME,
     SESSION_START,
     SESSION_STOP,
     SNAPSHOT,
     LivePaperJournal,
     ResumableSession,
 )
+from nautilus_lab.infrastructure.provenance import code_manifest
 
 if TYPE_CHECKING:
     from nautilus_lab.api.market_feed import FeedHub
@@ -833,7 +835,13 @@ class LivePaperSessionManager:
         self.status_message = f"Live Paper active ({config.symbol}, {config.robot})"
         self._journal_event(
             SESSION_START,
-            {"started_at": self.started_at, "config": config_to_dict(config)},
+            {
+                "started_at": self.started_at,
+                "config": config_to_dict(config),
+                # Which code books this ledger (docs/27 E-1.4). A resume after a deploy
+                # can run newer code: that is recorded by SESSION_RESUME below.
+                "provenance": code_manifest().as_dict(),
+            },
         )
         self._journal_snapshot()
         self._launch_stream()
@@ -883,6 +891,12 @@ class LivePaperSessionManager:
         self._stop_event.clear()
         self.status_message = (
             f"Live Paper resumed ({config.symbol}, {config.robot}); session {self.session_id}"
+        )
+        # A deploy resumes the session under new code; one ledger may then span several
+        # revisions, and the report has to be able to say where each part came from.
+        self._journal_event(
+            SESSION_RESUME,
+            {"resumed_at": self.resumed_at, "provenance": code_manifest().as_dict()},
         )
         logger.info("Resumed live paper session %s", self.session_id)
         self._launch_stream()

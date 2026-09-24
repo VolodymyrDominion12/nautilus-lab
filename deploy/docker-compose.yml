@@ -14,6 +14,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
+      args:
+        LAB_REVISION: ${LAB_REVISION:-}
     restart: unless-stopped
     volumes:
       - ../.env:/app/.env:ro
@@ -64,6 +66,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
+      args:
+        LAB_REVISION: ${LAB_REVISION:-}
     restart: unless-stopped
     profiles: ["collector"]
     command: ["/bin/sh", "/app/deploy/collect_ticks.sh"]

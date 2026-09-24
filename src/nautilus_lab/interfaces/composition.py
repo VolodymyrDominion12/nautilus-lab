@@ -28,6 +28,7 @@ from nautilus_lab.application.select_params import RunParamSelection
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.ports import ChatCompleter
+from nautilus_lab.domain.provenance import RunManifest
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.domain.trading_mode import TradingMode
@@ -50,6 +51,7 @@ from nautilus_lab.infrastructure.nautilus.instrument import (
 )
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.orderbook_catalog import ParquetOrderBookCatalog
+from nautilus_lab.infrastructure.provenance import collect_manifest
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
@@ -175,6 +177,17 @@ def alpha_proposal_request(
         count=count,
         as_of=as_of,
         slug=slug,
+    )
+
+
+def run_manifest(cfg: Settings, *, with_catalog: bool) -> RunManifest:
+    """Provenance of the run about to start (docs/27 E-1.4).
+
+    `with_catalog=False` for synthetic bars: no catalog is read, so none is fingerprinted.
+    """
+    return collect_manifest(
+        settings=cfg.model_dump(mode="json"),
+        catalog_paths=[cfg.catalog_path] if with_catalog else (),
     )
 
 

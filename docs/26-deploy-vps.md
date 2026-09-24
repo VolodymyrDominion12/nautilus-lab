@@ -147,7 +147,9 @@ VPS=lab@100.101.102.103 scripts/deploy_vps.sh
 
 1. `git archive HEAD | ssh $VPS tar -x` у `~/nautilus-lab` (інша тека — `REMOTE_DIR=...`):
    ні локальних правок, ні `.env`, ні каталогу;
-2. пише ревізію в `DEPLOYED_REVISION`;
+2. пише ревізію в `DEPLOYED_REVISION` і передає повний SHA в образ як `LAB_REVISION`
+   (build-arg): у контейнері немає `.git`, а кожна paper-сесія записує в журнал, яким
+   кодом її ведуть (`provenance` у `session_start`/`session_resume`, docs/27 E-1.4);
 3. створює `data/`, `reports/`, `catalog/` і **зупиняється**, якщо на сервері немає
    `.env` або `deploy/.env` — у повідомленні вказано, який `cp` зробити (сам він
    шаблони не копіює, це крок 4);
@@ -258,6 +260,10 @@ VPS=lab@100.101.102.103 scripts/pull_vps.sh
 uv run python scripts/live_paper_report.py data/vps/paper
 uv run python scripts/live_paper_report.py data/vps/paper --csv data/vps/csv
 ```
+
+У кожному блоці звіту є рядок `code=<ревізія>`. Якщо сесію пережив деплой, там буде
+`code=abc -> def  (code changed during the session)`: один ледджер вели дві версії коду,
+і порівнювати його з бектестом однієї ревізії вже не можна без застереження.
 
 `pull_vps.sh` кладе все під `data/vps/` (`paper/`, `catalog/data/`, `reports/`,
 `DEPLOYED_REVISION`), і звіт читає теку рекурсивно: один журнал на сесію лежить у

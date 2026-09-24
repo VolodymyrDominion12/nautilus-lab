@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -32,6 +33,7 @@ from nautilus_lab.domain.errors import (
     LiveTradingDisabledError,
     PaperTradingNotReadyError,
 )
+from nautilus_lab.domain.provenance import RunManifest
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.trading_mode import TradingMode
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
@@ -57,6 +59,7 @@ from nautilus_lab.interfaces.composition import (
     param_selection_use_case,
     research_request,
     research_use_case,
+    run_manifest,
     settings,
     taker_flow_catalog,
     walk_forward_request,
@@ -618,9 +621,10 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         raise ValueError(f"--folds must be >= 1, got {folds}")
     subject = f"{(robot or cfg.robot).value} {cfg.instrument_id}"
     journal_enabled = _journal_enabled(cfg, args)
+    manifest = _announce_manifest(cfg, synthetic=bool(args.synthetic))
 
     if getattr(args, "pbo", False):
-        return _run_pbo(cfg, args, robot)
+        return _run_pbo(cfg, args, robot, manifest)
 
     if args.synthetic:
         if getattr(args, "walk_forward", False) or optuna_enabled or folds > 1:
@@ -649,6 +653,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                 if journal_enabled:
                     _record_journal(
                         cfg,
+                        manifest,
                         _journal_entry(
                             subject=subject,
                             gates=f"walk-forward synthetic folds={folds}",
@@ -673,6 +678,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
             if journal_enabled:
                 _record_journal(
                     cfg,
+                    manifest,
                     _journal_entry(
                         subject=subject,
                         gates="walk-forward synthetic single split",
@@ -702,6 +708,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         if journal_enabled:
             _record_journal(
                 cfg,
+                manifest,
                 _journal_entry(
                     subject=subject,
                     gates="synthetic backtest (no OOS split)",
@@ -744,6 +751,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
             if journal_enabled:
                 _record_journal(
                     cfg,
+                    manifest,
                     _journal_entry(
                         subject=subject,
                         gates=f"walk-forward catalog folds={folds}",
@@ -768,6 +776,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         if journal_enabled:
             _record_journal(
                 cfg,
+                manifest,
                 _journal_entry(
                     subject=subject,
                     gates="walk-forward catalog single split",
@@ -798,6 +807,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
     if journal_enabled:
         _record_journal(
             cfg,
+            manifest,
             _journal_entry(
                 subject=subject,
                 gates="full-sample catalog (no OOS split)",
@@ -813,7 +823,9 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_pbo(cfg: Settings, args: argparse.Namespace, robot: RobotName | None) -> int:
+def _run_pbo(
+    cfg: Settings, args: argparse.Namespace, robot: RobotName | None, manifest: RunManifest
+) -> int:
     blocks = getattr(args, "pbo_blocks", 8)
     if blocks < 2:
         raise ValueError(f"--pbo-blocks must be >= 2, got {blocks}")
@@ -858,6 +870,7 @@ def _run_pbo(cfg: Settings, args: argparse.Namespace, robot: RobotName | None) -
     if _journal_enabled(cfg, args):
         _record_journal(
             cfg,
+            manifest,
             _journal_entry(
                 subject=f"{(robot or cfg.robot).value} {cfg.instrument_id}",
                 gates=(
@@ -1018,6 +1031,20 @@ def _run_propose(cfg: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _announce_manifest(cfg: Settings, *, synthetic: bool) -> RunManifest:
+    """Print where this run comes from before it starts (docs/27 E-1.4).
+
+    Printed first so a log that ends in a crash still says which code and data it ran.
+    Warnings go to stderr: a dirty tree does not stop research, it only means the
+    revision in the journal will not rebuild this run on its own.
+    """
+    manifest = run_manifest(cfg, with_catalog=not synthetic)
+    print(manifest.summary_line())
+    for warning in manifest.warnings():
+        print(f"manifest_warning={warning}", file=sys.stderr)
+    return manifest
+
+
 def _journal_enabled(cfg: Settings, args: argparse.Namespace) -> bool:
     """`--journal` forces the write; JOURNAL_ENABLED makes it the default for every run."""
     return bool(getattr(args, "journal", False)) or cfg.journal_enabled
@@ -1047,9 +1074,10 @@ def _journal_entry(
     )
 
 
-def _record_journal(cfg: Settings, entry: JournalEntry) -> None:
+def _record_journal(cfg: Settings, manifest: RunManifest, entry: JournalEntry) -> None:
     markdown_path, jsonl_path = journal_paths(cfg)
-    record_run(markdown_path=markdown_path, jsonl_path=jsonl_path, entry=entry)
+    stamped = replace(entry, provenance=manifest)
+    record_run(markdown_path=markdown_path, jsonl_path=jsonl_path, entry=stamped)
     print(f"journal_row_appended={markdown_path}")
 
 
@@ -1062,8 +1090,6 @@ def _int_list(raw: str) -> tuple[int, ...]:
 
 def _run_xsmom(cfg: Settings, args: argparse.Namespace) -> int:
     """Walk-forward (and optionally PBO/DSR) for the basket rotation; prints the gate."""
-    from dataclasses import replace
-
     from nautilus_lab.application.run_xsmom import (
         XsMomGrid,
         XsMomRequest,
@@ -1083,6 +1109,7 @@ def _run_xsmom(cfg: Settings, args: argparse.Namespace) -> int:
     symbols = [item.strip().upper() for item in args.symbols.split(",") if item.strip()]
     if len(symbols) < 2:
         raise ValueError("cross-sectional momentum needs at least two symbols")
+    _announce_manifest(cfg, synthetic=False)
     instrument_ids = tuple(binance_symbol_to_instrument_id(symbol) for symbol in symbols)
     base = research_request(
         cfg,

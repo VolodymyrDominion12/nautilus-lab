@@ -28,6 +28,7 @@ from typing import Any
 
 from nautilus_lab.infrastructure.live_paper_journal import (
     FILL,
+    SESSION_RESUME,
     SESSION_START,
     SESSION_STOP,
     SNAPSHOT,
@@ -44,6 +45,8 @@ class SessionSummary:
     fills: list[dict[str, Any]] = field(default_factory=list)
     equity: list[dict[str, Any]] = field(default_factory=list)
     last_snapshot: dict[str, Any] | None = None
+    #: Code revision at start and after every resume, in order (docs/27 E-1.4).
+    revisions: list[str] = field(default_factory=list)
 
 
 def collect(journal: LivePaperJournal) -> list[SessionSummary]:
@@ -55,10 +58,14 @@ def collect(journal: LivePaperJournal) -> list[SessionSummary]:
                 session_id=sid,
                 config=dict(record.get("config") or {}),
                 started_at=str(record.get("started_at") or record.get("logged_at") or ""),
+                revisions=[revision_label(record.get("provenance"))],
             )
             continue
         summary = sessions.get(sid)
         if summary is None:
+            continue
+        if record["type"] == SESSION_RESUME:
+            summary.revisions.append(revision_label(record.get("provenance")))
             continue
         if record["type"] == FILL and isinstance(record.get("fill"), dict):
             summary.fills.append(record["fill"])
@@ -70,6 +77,30 @@ def collect(journal: LivePaperJournal) -> list[SessionSummary]:
         elif record["type"] == SESSION_STOP:
             summary.stopped = True
     return list(sessions.values())
+
+
+def revision_label(provenance: object) -> str:
+    """Short code revision of a journal record; `unknown` for records before E-1.4."""
+    if not isinstance(provenance, dict):
+        return "unknown"
+    revision = provenance.get("code_revision")
+    if not isinstance(revision, str) or not revision:
+        return "unknown"
+    label = revision[:12]
+    if provenance.get("code_dirty"):
+        label += "+dirty"
+    return label
+
+
+def code_line(revisions: list[str]) -> str:
+    """`abc -> def` with consecutive duplicates collapsed: a resume on the same code is
+    not a change, a deploy in the middle of the session is."""
+    distinct: list[str] = []
+    for item in revisions:
+        if not distinct or distinct[-1] != item:
+            distinct.append(item)
+    note = "" if len(distinct) <= 1 else "  (code changed during the session)"
+    return f"  code={' -> '.join(distinct) or 'unknown'}{note}"
 
 
 def max_drawdown(equity: list[float]) -> float:
@@ -135,6 +166,7 @@ def render(summary: SessionSummary, bench: dict[tuple[str, str], Decimal] | None
         f"realized={Decimal(str(snap.get('realized_pnl', '0'))):.2f} fees={fees:.2f} "
         f"max_dd={dd:.2f}%",
         f"  open_position={position if position else 'flat'}",
+        code_line(summary.revisions),
     ]
     key = (str(cfg.get("symbol")), str(cfg.get("interval")))
     if bench and cfg.get("robot") != "hold" and key in bench:

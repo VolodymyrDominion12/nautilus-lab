@@ -34,6 +34,12 @@ RUN useradd --create-home --uid 1000 lab \
     && chown -R lab:lab /app/data /app/reports /app/catalog /app/research
 USER lab
 
+# The shipped git revision (scripts/deploy_vps.sh). The image has no .git, so this is how
+# runs and paper sessions record which code produced them (infrastructure/provenance.py).
+# Declared last: a new revision rebuilds only this layer, not the dependencies.
+ARG LAB_REVISION=""
+ENV LAB_REVISION=${LAB_REVISION}
+
 EXPOSE 8000
 # `/` is outside the /api token gate, so the probe needs no secret.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \

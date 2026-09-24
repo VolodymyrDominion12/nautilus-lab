@@ -21,6 +21,9 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" && "${ALLOW_DIRTY:-0}"
     exit 1
 fi
 REV="$(git rev-parse --short HEAD)"
+# The full revision is baked into the image as LAB_REVISION: the container has no .git,
+# and every run/paper session records it as its provenance (docs/27 E-1.4).
+FULL_REV="$(git rev-parse HEAD)"
 echo "Deploying $REV to $VPS:$REMOTE_DIR"
 
 git archive --format=tar HEAD | ssh "$VPS" "
@@ -37,7 +40,7 @@ git archive --format=tar HEAD | ssh "$VPS" "
     # (deploy/Dockerfile.api: useradd --uid 1000 lab), not by whoever runs this script.
     # Wrong owner is no longer silent: the API refuses to start without a writable journal.
     #   sudo chown -R 1000:1000 data reports catalog
-    docker compose -f deploy/docker-compose.yml up -d --build --remove-orphans
+    LAB_REVISION=$FULL_REV docker compose -f deploy/docker-compose.yml up -d --build --remove-orphans
     docker compose -f deploy/docker-compose.yml ps
 "
 echo "Done. Logs: ssh $VPS 'cd $REMOTE_DIR && docker compose -f deploy/docker-compose.yml logs -f api'"

@@ -7,7 +7,11 @@ run for weeks, that makes the ledger worthless as evidence.
 
 One JSON object per line, never rewritten:
 
-* ``session_start`` — session id and the frozen configuration it trades with;
+* ``session_start`` — session id, the frozen configuration it trades with and the
+                      provenance of the code (git revision, lock hash, versions);
+* ``session_resume`` — the process restarted and continued the session; carries the
+                      provenance of the code that runs from here on (a deploy may
+                      have changed it);
 * ``fill``          — every simulated fill, exactly as the terminal shows it;
 * ``snapshot``      — the account after every closed bar, fill or stop change:
                       balance, fees, breaker marks, the open position and the
@@ -39,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 SESSION_START = "session_start"
 SESSION_STOP = "session_stop"
+SESSION_RESUME = "session_resume"
 FILL = "fill"
 SNAPSHOT = "snapshot"
 

@@ -31,6 +31,8 @@ git archive --format=tar HEAD | ssh "$VPS" "
     mkdir -p data reports catalog
     test -f .env || { echo 'missing .env on the server: cp deploy/vps.env.example .env and edit it'; exit 1; }
     test -f deploy/.env || { echo 'missing deploy/.env: cp deploy/compose.env.example deploy/.env and edit it'; exit 1; }
+    # Containers run as the owner of data/ reports/ catalog/ (the SSH user), not a fixed UID.
+    grep -q '^LAB_UID=' deploy/.env || printf 'LAB_UID=%s\nLAB_GID=%s\n' \$(id -u) \$(id -g) >> deploy/.env
     docker compose -f deploy/docker-compose.yml up -d --build --remove-orphans
     docker compose -f deploy/docker-compose.yml ps
 "

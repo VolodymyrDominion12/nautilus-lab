@@ -40,11 +40,11 @@ credentials.json
 secrets/
 
 # Logs & local data
-logs/
+/logs/
 *.log
-catalog/
-data/
-reports/
+/catalog/
+/data/
+/reports/
 *.html
 # ...except the Vite entry point: without it `npm run build` has nothing to build
 # (and scripts/deploy_vps.sh ships only what git tracks).

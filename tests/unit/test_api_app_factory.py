@@ -54,6 +54,7 @@ ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("PATCH", "/api/journal/{index}"),
         ("POST", "/api/catalog/ingest"),
         ("POST", "/api/catalog/ingest/cancel"),
+        ("POST", "/api/decisions/analyze"),
         ("POST", "/api/ml/train"),
         ("POST", "/api/ml/train/cancel"),
         ("POST", "/api/paper/cancel"),

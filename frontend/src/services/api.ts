@@ -963,7 +963,6 @@ export async function analyzeDecisions(records: any[], question: string): Promis
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...authHeaders(),
     },
     body: JSON.stringify({ records, question }),
   });

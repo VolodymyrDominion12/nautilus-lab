@@ -59,7 +59,7 @@ def fake_completer(monkeypatch: pytest.MonkeyPatch) -> _FakeCompleter:
 
 
 @pytest.fixture
-def journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Path, Path]]:
+def journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     markdown = tmp_path / "journal.md"
     markdown.write_text(
         "# Journal\n\n"

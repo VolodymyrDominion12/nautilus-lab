@@ -293,8 +293,7 @@ uv run lab research --synthetic --bars 3000   # smoke-тест після змі
   `deploy/Dockerfile.api` жорстко фіксує `--uid 1000`; `deploy/paper_portfolio.yaml`
   обіцяє логувати змінені параметри сесії, а `live_sessions.py` порівнює лише
   `robot`/`symbol`/`interval`.
-- **Крок покриття в CI лишається `continue-on-error`** (покриття 80.50% ≥ `fail_under = 80`,
-  тобто крок проходить). Зробити його блокуючим — рішення власника CI, а не «виправлення
-  документа».
+- **Крок покриття в CI блокує** (у Фазі E-1.9 `continue-on-error` прибрано,
+  покриття 80.50% ≥ `fail_under = 80`). `pyproject.toml` тримає поріг 80%.
 - **`uv` без доступу до кеша** падає з `Permission denied` — тоді працюй через
   `.venv/bin/lab`, `.venv/bin/pytest`, `.venv/bin/python`; це обмеження оточення, не проєкту.

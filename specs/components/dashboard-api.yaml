@@ -89,13 +89,13 @@ invariants_enforced:
       Кнопка «Copy CLI» збирає команду лише з прапорців, які існують у
       `interfaces/cli.py`, а інструмент передає змінною `INSTRUMENT_ID`.
     enforced_by: frontend/src/lib/research.ts
-    verified_by: frontend/scripts/check-research-logic.ts
+    verified_by: frontend/src/lib/research-logic.test.ts
     note: >
       Попередня версія складала рядок вручну й писала `--instrument` та
       `--stress-slice` — обидва прапорці не існують (`--slice` замість другого,
       окремого прапорця для інструмента немає взагалі), тож «відтвори це в
       терміналі» давало помилку використання замість прогону. Перевірка живе в
-      `npm run check:logic`, бо фронтенд у проєкті без тест-раннера.
+      `npm test` / `npm run check:logic` (`src/lib/research-logic.test.ts`).
 
   - statement: >
       Стрес-слайс відхиляється, якщо його вікно не перетинається з тим, що тримає
@@ -108,7 +108,7 @@ invariants_enforced:
       списком у TypeScript: перейменований або перенесений слайс інакше лишався б
       у випадаючому списку зі старим підписом. Сама перевірка перекриття —
       `sliceOverlapsCatalog` + правило в `preflight()` — закрита
-      frontend/scripts/check-research-logic.ts (розділ «a stress slice must lie
+      frontend/src/lib/research-logic.test.ts (розділ «a stress slice must lie
       inside the catalog it runs on»), включно з частковим перекриттям, яке дає
       попередження, а не блок.
 
@@ -117,7 +117,7 @@ invariants_enforced:
       окремо попереджає, коли він старіший за 30 днів, бо walk-forward на такій
       історії досліджує минуле, а не ринок.
     enforced_by: frontend/src/lib/format.ts
-    verified_by: frontend/scripts/check-research-logic.ts
+    verified_by: frontend/src/lib/format.test.ts
     note: >
       Поле `catalog_last_date` довгий час оголошувалося в типах фронтенду і не
       поверталося бекендом (див. інваріант нижче), тож ця панель не мала даних

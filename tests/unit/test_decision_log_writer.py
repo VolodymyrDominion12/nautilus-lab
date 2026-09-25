@@ -29,7 +29,7 @@ def _sample_record(robot: str = "regime", offset_days: int = 0) -> DecisionRecor
 
 
 def test_decision_log_writer_disabled(tmp_path: Path) -> None:
-    settings = Settings(
+    settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
         decision_log_enabled=False,
         decision_log_dir="data/paper/decisions",
@@ -43,7 +43,7 @@ def test_decision_log_writer_disabled(tmp_path: Path) -> None:
 
 
 def test_decision_log_writer_writes_and_reads(tmp_path: Path) -> None:
-    settings = Settings(
+    settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
         decision_log_enabled=True,
         decision_log_dir="data/paper/decisions",
@@ -73,7 +73,7 @@ def test_decision_log_writer_fallback_on_oserror(tmp_path: Path) -> None:
 
     it must fall back to data/paper/decisions without crashing.
     """
-    settings = Settings(
+    settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
         decision_log_enabled=True,
         decision_log_dir="logs/decisions",
@@ -102,7 +102,7 @@ def test_decision_log_writer_fallback_on_oserror(tmp_path: Path) -> None:
 
 def test_decision_log_writer_disables_gracefully_when_all_fail(tmp_path: Path) -> None:
     """When both configured dir and fallback fail, disable logging rather than crashing."""
-    settings = Settings(
+    settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
         decision_log_enabled=True,
         decision_log_dir="logs/decisions",
@@ -134,7 +134,7 @@ def test_decision_log_writer_pruning(tmp_path: Path) -> None:
     recent_file = log_dir / f"regime_{recent_date}.jsonl"
     recent_file.write_text('{"test": 2}\n', encoding="utf-8")
 
-    settings = Settings(
+    settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
         decision_log_enabled=True,
         decision_log_dir="data/paper/decisions",

@@ -27,14 +27,19 @@ serves the same app without a file watcher.
 ```bash
 npm run build        # tsc -b (includes noUnusedLocals) + vite build
 npm run lint         # oxlint
-npm run check:logic  # research-discipline rules, see below
+npm test             # vitest: every src/**/*.test.ts
+npm run check:logic  # only the research-discipline rules, see below
 ```
 
-`check:logic` runs `scripts/check-research-logic.ts` through `jiti`. It covers the two pure
-modules the dashboard's honesty depends on: `preflight()` (which runs the backend is known to
-reject, so a wall of traceback is replaced by a button that will not start) and `verdictFor()`
-(which refuses to read an in-sample number as a result). The project has no frontend test
-runner, so these run as assertions in a script.
+Unit tests live next to the module they cover (`src/lib/*.test.ts`) and run under vitest in
+Node; `tsc -b` typechecks them with the rest of `src`, so a test cannot drift from the types.
+
+- `research-logic.test.ts` covers the two pure modules the dashboard's honesty depends on:
+  `preflight()` (runs the backend is known to reject, so a wall of traceback is replaced by a
+  button that will not start) and `verdictFor()` (which refuses to read an in-sample number as a
+  result). It replaces the old `scripts/check-research-logic.ts` assertion script.
+- `format.test.ts` pins the rule every result panel shares: an unmeasured number (`null`, `''`,
+  `NaN`) comes out as "n/a" / neutral / unknown, never as a zero that reads like a result.
 
 ## Tabs
 

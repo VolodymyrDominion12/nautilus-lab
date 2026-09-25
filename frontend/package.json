@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "check:logic": "jiti scripts/check-research-logic.ts"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:logic": "vitest run src/lib/research-logic.test.ts"
   },
   "dependencies": {
     "lightweight-charts": "^5.2.1",
@@ -27,6 +29,7 @@
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "vitest": "^5.0.2"
   }
 }

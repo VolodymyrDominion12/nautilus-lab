@@ -2,70 +2,58 @@ import { apiUrl } from '../config';
 import { withWsToken } from '../lib/apiAuth';
 import type {
   ActionResult,
+  CatalogBarPoint,
+  CatalogBarsResponse,
+  CatalogInstrument,
+  CatalogResponse,
   CatalogSummary,
   CatalogsResponse,
   JobLogResponse,
   JobState,
   MlModelInfo,
   MlModelsResponse,
+  ReportItem,
   ReportsResponse,
+  SettingField,
+  SettingGroup,
+  SettingsResponse,
+  SettingsSchemaResponse,
   StatusResponse,
+  StrategiesResponse,
+  StrategyParam,
+  StrategySpec,
+  StressSliceInfo,
 } from './api.gen';
 
 // Response types generated from the API's Pydantic models (api.gen.ts, docs/27 E-2.3).
 // Re-exported so components keep importing from here; the rest move over route by route.
 export type {
   ActionResult,
+  CatalogBarPoint,
+  CatalogBarsResponse,
+  CatalogInstrument,
+  CatalogResponse,
   CatalogSummary,
   CatalogsResponse,
   JobLogResponse,
   JobState,
   MlModelInfo,
+  MlModelsResponse,
+  ReportItem,
+  ReportsResponse,
+  SettingField,
+  SettingGroup,
+  SettingsResponse,
+  SettingsSchemaResponse,
   StatusResponse,
+  StrategiesResponse,
+  StrategyParam,
+  StrategySpec,
+  StressSliceInfo,
 };
-export type { ReportItem, StressSliceInfo } from './api.gen';
 
 export type JobKey = keyof StatusResponse['jobs'];
 
-export interface CatalogInstrument {
-  instrument_id: string;
-  raw_symbol: string;
-  bars_count: number;
-  first_date: string | null;
-  last_date: string | null;
-  quote_currency: string;
-  maker_fee: number;
-  taker_fee: number;
-}
-
-export interface CatalogResponse {
-  catalog_path: string;
-  exists: boolean;
-  /** One catalog holds one interval; the chart needs it to request the right bar type. */
-  bar_interval?: string;
-  total_instruments?: number;
-  instruments: CatalogInstrument[];
-  error?: string;
-}
-
-export interface StrategySpec {
-  name: string;
-  title?: string;
-  domain_module: string | null;
-  strategy_class: string | null;
-  backtest_adapter?: string | null;
-  wired_in_backtest: boolean;
-  minimum_bars: number;
-  /** 'explicit' = own grid branch in param_grid.py; 'default_branch' = the regime grid applies. */
-  grid_source: string | null;
-  signal_kind?: string | null;
-  status: string;
-  summary: string;
-  hypothesis?: string;
-  invariants?: unknown[];
-  /** `env` is required by the spec schema (`params[].env` is validated against Settings). */
-  params: Array<{ env: string; name?: string; type?: string; default?: unknown; description?: string }>;
-}
 
 export interface ResearchRunParams {
   robot: string;
@@ -96,26 +84,6 @@ export interface ResearchRunParams {
   oos_start?: string;
   oos_end?: string;
   param_overrides?: Record<string, string>;
-}
-
-export interface CatalogBarPoint {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
-export interface CatalogBarsResponse {
-  instrument_id: string;
-  bar_type: string;
-  bar_interval: string;
-  catalog_path: string;
-  count: number;
-  first_date: string | null;
-  last_date: string | null;
-  bars: CatalogBarPoint[];
 }
 
 export interface HistoryEntry {
@@ -326,21 +294,6 @@ export interface ResearchLogResponse {
   result?: Record<string, unknown> | null;
 }
 
-export interface SettingField {
-  key: string;
-  label: string;
-  field_type: 'string' | 'number' | 'boolean' | 'select' | 'secret';
-  description?: string;
-  options?: string[] | null;
-}
-
-export interface SettingGroup {
-  id: string;
-  title: string;
-  description: string;
-  fields: SettingField[];
-}
-
 async function parseJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
@@ -413,7 +366,7 @@ export async function fetchIngestLog(): Promise<JobLogResponse> {
   return parseJson(await fetch(apiUrl('/api/catalog/ingest/log')));
 }
 
-export async function fetchStrategies(): Promise<{ strategies: StrategySpec[] }> {
+export async function fetchStrategies(): Promise<StrategiesResponse> {
   return parseJson(await fetch(apiUrl('/api/strategies')));
 }
 
@@ -447,11 +400,11 @@ export async function fetchReports(): Promise<ReportsResponse> {
   return parseJson(await fetch(apiUrl('/api/reports')));
 }
 
-export async function fetchSettingsSchema(): Promise<{ groups: SettingGroup[] }> {
+export async function fetchSettingsSchema(): Promise<SettingsSchemaResponse> {
   return parseJson(await fetch(apiUrl('/api/settings/schema')));
 }
 
-export async function fetchSettings(): Promise<{ settings: Record<string, string> }> {
+export async function fetchSettings(): Promise<SettingsResponse> {
   return parseJson(await fetch(apiUrl('/api/settings')));
 }
 

@@ -94,6 +94,10 @@ def ts_type(schema: Mapping[str, Any]) -> str:
         return f"({item})[]" if "|" in item else f"{item}[]"
     if kind == "object" or (kind is None and not schema):
         return _object_type(schema)
+    if kind is None and not any(
+        k in schema for k in ("properties", "additionalProperties", "items")
+    ):
+        return "unknown"
     raise ValueError(f"unsupported JSON schema node: {dict(schema)!r}")
 
 

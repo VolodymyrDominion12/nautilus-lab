@@ -15,7 +15,7 @@ The rest of `frontend/src/services/api.ts` moves here route by route.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -152,6 +152,100 @@ class MlModelsResponse(ApiModel):
     models: list[MlModelInfo]
 
 
+class CatalogInstrument(ApiModel):
+    instrument_id: str
+    raw_symbol: str
+    bars_count: int
+    first_date: str | None = None
+    last_date: str | None = None
+    quote_currency: str
+    maker_fee: float
+    taker_fee: float
+
+
+class CatalogResponse(ApiModel):
+    catalog_path: str
+    exists: bool
+    bar_interval: str | None = None
+    total_instruments: int | None = None
+    instruments: list[CatalogInstrument]
+    error: str | None = None
+
+
+class CatalogBarPoint(ApiModel):
+    time: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class CatalogBarsResponse(ApiModel):
+    instrument_id: str
+    bar_type: str
+    bar_interval: str
+    catalog_path: str
+    count: int
+    first_date: str | None = None
+    last_date: str | None = None
+    bars: list[CatalogBarPoint]
+
+
+class StrategyParam(ApiModel):
+    env: str
+    name: str | None = None
+    type: str | None = None
+    default: Any = None
+    description: str | None = None
+
+
+class StrategySpec(ApiModel):
+    name: str
+    title: str | None = ""
+    domain_module: str | None = None
+    strategy_class: str | None = None
+    backtest_adapter: str | None = None
+    wired_in_backtest: bool = False
+    minimum_bars: int = 100
+    grid_source: str | None = None
+    signal_kind: str | None = None
+    status: str = "candidate"
+    summary: str = ""
+    hypothesis: str | None = ""
+    invariants: list[Any] | None = None
+    params: list[StrategyParam] = []
+
+
+class StrategiesResponse(ApiModel):
+    strategies: list[StrategySpec]
+    failed_specs: list[str] = []
+
+
+class SettingField(ApiModel):
+    key: str
+    label: str
+    field_type: Literal["string", "number", "boolean", "select", "secret"]
+    description: str = ""
+    options: list[str] | None = None
+
+
+class SettingGroup(ApiModel):
+    id: str
+    title: str
+    description: str
+    fields: list[SettingField]
+
+
+class SettingsSchemaResponse(ApiModel):
+    groups: list[SettingGroup]
+    allowed_keys: list[str]
+
+
+class SettingsResponse(ApiModel):
+    settings: dict[str, str]
+
+
 #: Every model the generator writes to TypeScript, in output order.
 RESPONSE_MODELS: tuple[type[BaseModel], ...] = (
     LastRun,
@@ -167,4 +261,15 @@ RESPONSE_MODELS: tuple[type[BaseModel], ...] = (
     ReportsResponse,
     MlModelInfo,
     MlModelsResponse,
+    CatalogInstrument,
+    CatalogResponse,
+    CatalogBarPoint,
+    CatalogBarsResponse,
+    StrategyParam,
+    StrategySpec,
+    StrategiesResponse,
+    SettingField,
+    SettingGroup,
+    SettingsSchemaResponse,
+    SettingsResponse,
 )

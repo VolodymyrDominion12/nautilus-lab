@@ -29,13 +29,18 @@ const check = (name: string, condition: boolean, detail = ''): void => {
 
 const spec = (overrides: Partial<StrategySpec> = {}): StrategySpec => ({
   name: 'regime',
+  title: null,
   domain_module: 'domain/regime_router.py',
   strategy_class: 'RegimeRouter',
+  backtest_adapter: null,
   wired_in_backtest: true,
   minimum_bars: 150,
   grid_source: 'default_branch',
+  signal_kind: null,
   status: 'candidate',
   summary: '',
+  hypothesis: null,
+  invariants: null,
   params: [],
   ...overrides,
 });

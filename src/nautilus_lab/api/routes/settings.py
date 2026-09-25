@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 
 from nautilus_lab.api.context import Lab
 from nautilus_lab.api.requests import SettingsUpdate
+from nautilus_lab.api.responses import SettingsResponse, SettingsSchemaResponse
 from nautilus_lab.api.settings_schema import (
     mask_secret,
     settings_schema_payload,
@@ -38,12 +39,12 @@ def mask_settings(config: dict[str, str | None]) -> dict[str, str]:
     return masked
 
 
-@router.get("/api/settings/schema")
+@router.get("/api/settings/schema", response_model=SettingsSchemaResponse)
 def get_settings_schema() -> dict[str, Any]:
     return settings_schema_payload()
 
 
-@router.get("/api/settings")
+@router.get("/api/settings", response_model=SettingsResponse)
 def get_settings(ctx: Lab) -> dict[str, Any]:
     env_path = ctx.root / ".env"
     if not env_path.exists():

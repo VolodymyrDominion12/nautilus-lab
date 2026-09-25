@@ -19,7 +19,13 @@ from nautilus_lab.api.data_health import (
     invalidate_data_health_cache,
 )
 from nautilus_lab.api.requests import IngestRunRequest
-from nautilus_lab.api.responses import ActionResult, CatalogsResponse, JobLogResponse
+from nautilus_lab.api.responses import (
+    ActionResult,
+    CatalogBarsResponse,
+    CatalogResponse,
+    CatalogsResponse,
+    JobLogResponse,
+)
 
 router = APIRouter()
 
@@ -51,12 +57,12 @@ def get_catalogs() -> dict[str, Any]:
     return list_catalogs()
 
 
-@router.get("/api/catalog")
+@router.get("/api/catalog", response_model=CatalogResponse)
 def get_catalog(catalog_path: str | None = None) -> dict[str, Any]:
     return describe_catalog(catalog_path)
 
 
-@router.get("/api/catalog/bars")
+@router.get("/api/catalog/bars", response_model=CatalogBarsResponse)
 def get_catalog_bars(
     instrument_id: str | None = None,
     catalog_path: str | None = None,

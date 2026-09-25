@@ -115,6 +115,27 @@ def test_reports_and_models_match_their_models(client: TestClient, tmp_path: Pat
         _conforms(responses.MlModelInfo, model)
 
 
+def test_catalog_detail_matches_its_model(client: TestClient) -> None:
+    catalog = client.get("/api/catalog").json()
+    _conforms(responses.CatalogResponse, catalog)
+
+
+def test_strategies_match_their_model(client: TestClient) -> None:
+    data = client.get("/api/strategies").json()
+    _conforms(responses.StrategiesResponse, data)
+    for strat in data["strategies"]:
+        _conforms(responses.StrategySpec, strat)
+
+
+def test_settings_and_schema_match_their_models(client: TestClient) -> None:
+    schema = client.get("/api/settings/schema").json()
+    _conforms(responses.SettingsSchemaResponse, schema)
+    for group in schema["groups"]:
+        _conforms(responses.SettingGroup, group)
+    settings_data = client.get("/api/settings").json()
+    _conforms(responses.SettingsResponse, settings_data)
+
+
 @pytest.mark.parametrize(
     ("path", "body"),
     [

@@ -24,7 +24,7 @@ interface WalkForwardBuilderProps {
   catalogBarsCount?: number | null;
   instrumentId?: string;
   catalogPath?: string;
-  barInterval?: string;
+  barInterval?: string | null;
 }
 
 const toDateInput = (iso: string | null | undefined): string => (iso ? iso.slice(0, 10) : '');

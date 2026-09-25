@@ -22,7 +22,7 @@ import type { WindowBandsPrimitive, WindowBoundaries } from '../lib/windowBands'
 interface CatalogChartProps {
   instrumentId?: string;
   catalogPath?: string;
-  barInterval?: string;
+  barInterval?: string | null;
   limit?: number;
   height?: number;
   /** Walk-forward boundaries drawn on the chart: amber for selection, green for OOS. */
@@ -157,7 +157,7 @@ export function CatalogChart({
         const data = await fetchCatalogBars({
           instrument_id: instrumentId,
           catalog_path: catalogPath,
-          bar_interval: barInterval,
+          bar_interval: barInterval ?? undefined,
           start: start?.toISOString(),
           end: end?.toISOString(),
           // A windowed request must not be truncated from the front, or the chart would

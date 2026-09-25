@@ -121,6 +121,100 @@ export interface MlModelsResponse {
   models: MlModelInfo[];
 }
 
+export interface CatalogInstrument {
+  instrument_id: string;
+  raw_symbol: string;
+  bars_count: number;
+  first_date: string | null;
+  last_date: string | null;
+  quote_currency: string;
+  maker_fee: number;
+  taker_fee: number;
+}
+
+export interface CatalogResponse {
+  catalog_path: string;
+  exists: boolean;
+  bar_interval: string | null;
+  total_instruments: number | null;
+  instruments: CatalogInstrument[];
+  error: string | null;
+}
+
+export interface CatalogBarPoint {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface CatalogBarsResponse {
+  instrument_id: string;
+  bar_type: string;
+  bar_interval: string;
+  catalog_path: string;
+  count: number;
+  first_date: string | null;
+  last_date: string | null;
+  bars: CatalogBarPoint[];
+}
+
+export interface StrategyParam {
+  env: string;
+  name: string | null;
+  type: string | null;
+  default: unknown;
+  description: string | null;
+}
+
+export interface StrategySpec {
+  name: string;
+  title: string | null;
+  domain_module: string | null;
+  strategy_class: string | null;
+  backtest_adapter: string | null;
+  wired_in_backtest: boolean;
+  minimum_bars: number;
+  grid_source: string | null;
+  signal_kind: string | null;
+  status: string;
+  summary: string;
+  hypothesis: string | null;
+  invariants: Record<string, unknown>[] | null;
+  params: StrategyParam[];
+}
+
+export interface StrategiesResponse {
+  strategies: StrategySpec[];
+  failed_specs: string[];
+}
+
+export interface SettingField {
+  key: string;
+  label: string;
+  field_type: "string" | "number" | "boolean" | "select" | "secret";
+  description: string;
+  options: string[] | null;
+}
+
+export interface SettingGroup {
+  id: string;
+  title: string;
+  description: string;
+  fields: SettingField[];
+}
+
+export interface SettingsSchemaResponse {
+  groups: SettingGroup[];
+  allowed_keys: string[];
+}
+
+export interface SettingsResponse {
+  settings: Record<string, string>;
+}
+
 // ---- requests ----------------------------------------------------------------------------
 
 export interface ResearchRunRequest {

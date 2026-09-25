@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from nautilus_lab.api.context import Lab
 from nautilus_lab.api.journal_service import list_journal_entries, update_journal_decision
 from nautilus_lab.api.requests import JournalPatchRequest, ProposeRequest
-from nautilus_lab.api.responses import ReportsResponse
+from nautilus_lab.api.responses import ReportsResponse, StrategiesResponse
 from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
 from nautilus_lab.domain.errors import InvalidHypothesisError
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
@@ -63,7 +63,7 @@ def strategy_spec_payload(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@router.get("/api/strategies")
+@router.get("/api/strategies", response_model=StrategiesResponse)
 def get_strategies(ctx: Lab) -> dict[str, Any]:
     specs_dir = str(ctx.specs_dir)
     results = []

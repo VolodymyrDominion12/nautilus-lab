@@ -19,6 +19,7 @@ from nautilus_lab.api.data_health import (
     invalidate_data_health_cache,
 )
 from nautilus_lab.api.requests import IngestRunRequest
+from nautilus_lab.api.responses import ActionResult, CatalogsResponse, JobLogResponse
 
 router = APIRouter()
 
@@ -45,7 +46,7 @@ def _busy() -> dict[str, Any]:
     return {"status": "error", "message": "An ingest process is already running."}
 
 
-@router.get("/api/catalogs")
+@router.get("/api/catalogs", response_model=CatalogsResponse)
 def get_catalogs() -> dict[str, Any]:
     return list_catalogs()
 
@@ -134,7 +135,7 @@ def _refuse_impossible(req: IngestRunRequest) -> None:
         )
 
 
-@router.post("/api/catalog/ingest")
+@router.post("/api/catalog/ingest", response_model=ActionResult, response_model_exclude_none=True)
 def run_ingest(
     ctx: Lab, background_tasks: BackgroundTasks, req: IngestRunRequest
 ) -> dict[str, Any]:
@@ -177,14 +178,16 @@ def run_ingest(
     }
 
 
-@router.post("/api/catalog/ingest/cancel")
+@router.post(
+    "/api/catalog/ingest/cancel", response_model=ActionResult, response_model_exclude_none=True
+)
 def cancel_ingest(ctx: Lab) -> dict[str, Any]:
     if not ctx.jobs.cancel("ingest"):
         return {"status": "idle", "message": "No ingest process is running."}
     return {"status": "cancelled", "message": "Ingest process terminated."}
 
 
-@router.get("/api/catalog/ingest/log")
+@router.get("/api/catalog/ingest/log", response_model=JobLogResponse)
 def get_ingest_log(ctx: Lab) -> dict[str, Any]:
     log_path = ctx.reports_dir / "ingest.log"
     content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""

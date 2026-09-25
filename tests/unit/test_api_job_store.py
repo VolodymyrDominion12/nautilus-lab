@@ -122,4 +122,4 @@ def test_a_reused_pid_is_neither_adopted_nor_signalled(tmp_path: Path) -> None:
 def test_without_a_store_nothing_is_adopted(tmp_path: Path) -> None:
     jobs = JobManager(reports_dir=tmp_path, python=sys.executable)
     assert jobs.adopt() == []
-    assert "last_run" not in jobs.payload("paper")
+    assert jobs.payload("paper")["last_run"] is None

@@ -10,6 +10,7 @@ from nautilus_lab.api.context import Lab
 from nautilus_lab.api.jobs import load_json_report, read_log
 from nautilus_lab.api.ml_runner import list_models
 from nautilus_lab.api.requests import MLTrainRequest
+from nautilus_lab.api.responses import ActionResult
 
 router = APIRouter()
 
@@ -23,7 +24,7 @@ def get_ml_models() -> dict[str, Any]:
     return {"models": list_models()}
 
 
-@router.post("/api/ml/train")
+@router.post("/api/ml/train", response_model=ActionResult, response_model_exclude_none=True)
 def run_ml_train(
     ctx: Lab, background_tasks: BackgroundTasks, req: MLTrainRequest
 ) -> dict[str, Any]:
@@ -46,7 +47,7 @@ def run_ml_train(
     return {"status": "started", "message": f"ML training started for {req.model_type}"}
 
 
-@router.post("/api/ml/train/cancel")
+@router.post("/api/ml/train/cancel", response_model=ActionResult, response_model_exclude_none=True)
 def cancel_ml_train(ctx: Lab) -> dict[str, Any]:
     if not ctx.jobs.cancel("ml_train"):
         return {"status": "idle", "message": "No ML training job is running."}

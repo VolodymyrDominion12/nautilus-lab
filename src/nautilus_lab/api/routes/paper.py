@@ -9,6 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from nautilus_lab.api.context import Lab
 from nautilus_lab.api.jobs import load_json_report, read_log
 from nautilus_lab.api.requests import PaperRunRequest
+from nautilus_lab.api.responses import ActionResult
 from nautilus_lab.application.run_paper import PAPER_SUPPORTED_ROBOTS
 from nautilus_lab.domain.regime import RobotName
 
@@ -19,7 +20,7 @@ def _busy() -> dict[str, Any]:
     return {"status": "error", "message": "Another paper simulation is already running."}
 
 
-@router.post("/api/paper/run")
+@router.post("/api/paper/run", response_model=ActionResult, response_model_exclude_none=True)
 def run_paper(ctx: Lab, background_tasks: BackgroundTasks, req: PaperRunRequest) -> dict[str, Any]:
     if ctx.jobs.active("paper"):
         return _busy()
@@ -60,7 +61,7 @@ def run_paper(ctx: Lab, background_tasks: BackgroundTasks, req: PaperRunRequest)
     }
 
 
-@router.post("/api/paper/cancel")
+@router.post("/api/paper/cancel", response_model=ActionResult, response_model_exclude_none=True)
 def cancel_paper(ctx: Lab) -> dict[str, Any]:
     if not ctx.jobs.cancel("paper"):
         return {"status": "idle", "message": "No paper simulation is running."}

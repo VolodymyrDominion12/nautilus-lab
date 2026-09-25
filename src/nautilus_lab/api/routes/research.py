@@ -17,6 +17,7 @@ from nautilus_lab.api.research_runner import (
     load_job_result,
     summary_from_result,
 )
+from nautilus_lab.api.responses import ActionResult
 from nautilus_lab.domain.regime import RobotName, tick_filters_supported
 from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
@@ -88,7 +89,7 @@ def _refuse_impossible(ctx: LabContext, req: ResearchRunRequest) -> None:
             )
 
 
-@router.post("/api/research")
+@router.post("/api/research", response_model=ActionResult, response_model_exclude_none=True)
 def run_research(
     ctx: Lab, background_tasks: BackgroundTasks, req: ResearchRunRequest
 ) -> dict[str, Any]:
@@ -130,7 +131,7 @@ def run_research(
     }
 
 
-@router.post("/api/research/cancel")
+@router.post("/api/research/cancel", response_model=ActionResult, response_model_exclude_none=True)
 def cancel_research(ctx: Lab) -> dict[str, Any]:
     if not ctx.jobs.cancel("research"):
         return {"status": "idle", "message": "No research process is running."}

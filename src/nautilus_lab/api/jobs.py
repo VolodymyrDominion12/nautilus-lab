@@ -148,6 +148,7 @@ class JobManager:
             "started_at": started.isoformat() if running and started else None,
             "elapsed_seconds": elapsed,
             "adopted": isinstance(self._processes[name], AdoptedProcess),
+            "last_run": None,
         }
         record = self._store.get(name) if self._store is not None else None
         if record is not None and not running:

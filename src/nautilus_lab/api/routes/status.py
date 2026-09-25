@@ -12,6 +12,7 @@ from nautilus_lab.api.command_center import build_command_center, scan_triangula
 from nautilus_lab.api.context import Lab
 from nautilus_lab.api.health import render_metrics
 from nautilus_lab.api.paper_streamer import LIVE_PAPER_ROBOTS
+from nautilus_lab.api.responses import HealthResponse, StatusResponse
 from nautilus_lab.application.run_paper import PAPER_SUPPORTED_ROBOTS
 from nautilus_lab.domain.regime import (
     BACKTEST_WIRED_ROBOTS,
@@ -30,7 +31,7 @@ def read_root() -> dict[str, str]:
     return {"status": "ok", "message": "Nautilus Lab API is running"}
 
 
-@router.get("/healthz")
+@router.get("/healthz", response_model=HealthResponse)
 def healthz() -> dict[str, str]:
     """The process answers. Says nothing about whether it trades (see /readyz)."""
     return {"status": "ok"}
@@ -54,7 +55,7 @@ def metrics(ctx: Lab) -> Response:
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
-@router.get("/api/status")
+@router.get("/api/status", response_model=StatusResponse)
 def get_status(ctx: Lab, catalog_path: str | None = None) -> dict[str, Any]:
     """Dashboard heartbeat. `catalog_path` selects which catalog is described."""
     resolved_catalog = str(resolve_catalog_path(catalog_path))

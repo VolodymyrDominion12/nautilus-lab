@@ -25,6 +25,9 @@ test('the dashboard opens and reads the API', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Nautilus Lab' })).toBeVisible();
   // Rendered only from a successful /api/status: the build reached the API.
   await expect(page.getByText('Safety: fail-closed')).toBeVisible();
+  // The front page (Command Center) reads /api/command-center through the query cache.
+  await expect(page.getByRole('heading', { name: 'Command Center' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Last measured result' })).toBeVisible();
   await expect(page.getByText(/Cannot reach|not allowed to use this API/)).toHaveCount(0);
 
   // The catalog tab reads three queries (catalog, catalog list, coverage) at once.
@@ -36,6 +39,9 @@ test('the dashboard opens and reads the API', async ({ page }) => {
   await page.getByRole('button', { name: 'Research & Backtest' }).click();
   await expect(page.getByRole('heading', { name: 'Research Lab' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Run research|Run blocked/ })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Alpha Ideas' }).click();
+  await expect(page.getByRole('heading', { name: 'Propose hypotheses' })).toBeVisible();
 
   expect(errors).toEqual([]);
 });

@@ -8,6 +8,7 @@ import {
   INGEST_LOG_POLL_MS,
   STATUS_POLL_MS,
   createQueryClient,
+  hypothesisDetailQuery,
   ingestLogQuery,
   RESEARCH_LOG_POLL_MS,
   researchLogQuery,
@@ -41,6 +42,11 @@ describe('query options', () => {
   test('the research log is read only while a job runs', () => {
     expect(researchLogQuery(false).enabled).toBe(false);
     expect(researchLogQuery(true).refetchInterval).toBe(RESEARCH_LOG_POLL_MS);
+  });
+
+  test('no hypothesis file selected, no detail request', () => {
+    expect(hypothesisDetailQuery(null).enabled).toBe(false);
+    expect(hypothesisDetailQuery('run.json').enabled).toBe(true);
   });
 
   test('keys of different catalogs differ', () => {

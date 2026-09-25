@@ -18,7 +18,10 @@ import { QueryClient, queryOptions } from '@tanstack/react-query';
 import {
   fetchCatalog,
   fetchCatalogs,
+  fetchCommandCenter,
   fetchDataHealth,
+  fetchHypotheses,
+  fetchHypothesisDetail,
   fetchIngestLog,
   fetchReports,
   fetchResearchLog,
@@ -28,6 +31,8 @@ import {
 
 /** How often the sidebar re-reads /api/status (job badges, catalog counts). */
 export const STATUS_POLL_MS = 15_000;
+/** How often the front page re-reads jobs and the last result. */
+export const COMMAND_CENTER_POLL_MS = 5_000;
 /** How often a running ingest's log is re-read. */
 export const INGEST_LOG_POLL_MS = 1_500;
 /** How often a running research job's log and summary are re-read. */
@@ -58,6 +63,9 @@ export const queryKeys = {
   ingestLog: ['ingest-log'] as const,
   researchLog: ['research-log'] as const,
   reports: ['reports'] as const,
+  commandCenter: ['command-center'] as const,
+  hypotheses: ['hypotheses'] as const,
+  hypothesis: (file: string) => ['hypotheses', file] as const,
 };
 
 export const statusQuery = (catalogPath: string) =>
@@ -106,6 +114,25 @@ export const researchLogQuery = (polling: boolean) =>
 
 /** HTML tearsheets in reports/, newest first. */
 export const reportsQuery = () => queryOptions({ queryKey: queryKeys.reports, queryFn: fetchReports });
+
+export const commandCenterQuery = () =>
+  queryOptions({
+    queryKey: queryKeys.commandCenter,
+    queryFn: fetchCommandCenter,
+    refetchInterval: COMMAND_CENTER_POLL_MS,
+  });
+
+/** Hypothesis files in research/hypotheses/; `hypothesis(file)` shares the prefix. */
+export const hypothesesQuery = () =>
+  queryOptions({ queryKey: queryKeys.hypotheses, queryFn: fetchHypotheses });
+
+/** One file's parsed hypotheses; disabled while no file is selected. */
+export const hypothesisDetailQuery = (file: string | null) =>
+  queryOptions({
+    queryKey: queryKeys.hypothesis(file ?? ''),
+    queryFn: () => fetchHypothesisDetail(file ?? ''),
+    enabled: file != null,
+  });
 
 /** Everything an ingest can change: the catalog, its coverage, the status counts. */
 export const catalogDataKeys = [

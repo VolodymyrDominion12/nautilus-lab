@@ -18,9 +18,6 @@ const LIMIT_BYTES = 15 * 1024;
 /** Still over the limit when the budget started (2026-09-25), capped at that size. */
 const OVERSIZED: Record<string, number> = {
   './components/LiveTradingTerminal.tsx': 49_656,
-  './components/AlphaIdeasTab.tsx': 24_570,
-  './components/CommandCenter.tsx': 23_002,
-  './components/EquityCurveChart.tsx': 16_754,
 };
 
 const sources = import.meta.glob<string>('./**/*.tsx', {

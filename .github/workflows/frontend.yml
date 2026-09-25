@@ -3,9 +3,17 @@ name: frontend
 on:
   push:
     branches: ["**"]
-    paths: ["frontend/**", ".github/workflows/frontend.yml"]
+    paths:
+      - "frontend/**"
+      - "scripts/e2e_server.py"
+      - "src/nautilus_lab/api/**"
+      - ".github/workflows/frontend.yml"
   pull_request:
-    paths: ["frontend/**", ".github/workflows/frontend.yml"]
+    paths:
+      - "frontend/**"
+      - "scripts/e2e_server.py"
+      - "src/nautilus_lab/api/**"
+      - ".github/workflows/frontend.yml"
   workflow_dispatch:
 
 permissions:
@@ -43,6 +51,54 @@ jobs:
       - name: Unit tests (vitest)
         run: npm test
 
-      # tsc -b typechecks src, the tests included, then vite builds.
+      # tsc -b typechecks src, the tests and the e2e files, then vite builds.
       - name: Typecheck and build
         run: npm run build
+
+  # docs/27 E-2.4 step 2: the built dashboard against the real API on synthetic markets.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python and the API
+        working-directory: .
+        run: |
+          uv python install
+          uv sync --frozen --all-extras
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke test (Playwright)
+        run: npm run e2e
+
+      - name: Keep the report of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7

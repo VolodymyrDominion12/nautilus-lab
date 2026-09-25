@@ -1,24 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Activity,
-  ArrowLeftRight,
-  BookOpen,
-  Brain,
-  Cpu,
-  Database,
-  HelpCircle,
-  Layers,
-  LayoutDashboard,
-  Search,
-  ShieldAlert,
-  ShieldCheck,
-  Sparkles,
-  WifiOff,
-  Zap,
-} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ShieldCheck, WifiOff } from 'lucide-react';
 import { getSelectedCatalogPath, setSelectedCatalogPath } from './catalogSelection';
-import { fetchCatalog, fetchCatalogs, fetchStatus, fetchStrategies } from './services/api';
-import type { CatalogResponse, JobKey, JobState, StatusResponse, StrategySpec } from './services/api';
+import { catalogQuery, catalogsQuery, statusQuery, strategiesQuery } from './services/queries';
+import type { StrategySpec } from './services/api';
+import type { TabId } from './tabs';
 import { ResearchLab } from './components/ResearchLab';
 import { CatalogManager } from './components/CatalogManager';
 import { StrategyCatalog } from './components/StrategyCatalog';
@@ -33,37 +19,26 @@ import { CommandPalette } from './components/CommandPalette';
 import { InterfaceGuideModal } from './components/InterfaceGuideModal';
 import { ToastProvider } from './components/Toast';
 import { useToast } from './components/toastContext';
-import { formatElapsed } from './lib/format';
-
-type TabId =
-  | 'home'
-  | 'research'
-  | 'catalog'
-  | 'strategies'
-  | 'ml'
-  | 'journal'
-  | 'paper'
-  | 'scan'
-  | 'alpha'
-  | 'settings';
+import { Sidebar } from './components/Sidebar';
 
 const SettingsTab = () => <SettingsPanel />;
 
-const JOB_TABS: Record<JobKey, TabId> = {
-  research: 'research',
-  ingest: 'catalog',
-  ml_train: 'ml',
-  paper: 'paper',
-};
+const NO_STRATEGIES: StrategySpec[] = [];
+
+/** The banner text when the API cannot be read; null while it answers. */
+function describeFailure(statusError: Error | null, strategiesError: Error | null): string | null {
+  if (statusError) {
+    return statusError.message || 'Cannot reach the API. Start it with: uvicorn nautilus_lab.api.app:app';
+  }
+  if (strategiesError) return strategiesError.message || 'Cannot reach API strategies';
+  return null;
+}
 
 function AppContent() {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>('home');
-  const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
-  const [strategies, setStrategies] = useState<StrategySpec[]>([]);
   const [selectedRobot, setSelectedRobot] = useState('regime');
-  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [selectedCatalogPath, setSelectedCatalogPathState] = useState(
@@ -81,38 +56,23 @@ function AppContent() {
   const prevJobsRef = useRef<Record<string, boolean>>({});
   // A `paper` server opens on the live terminal once; afterwards the user navigates freely.
   const openedOnPaperRef = useRef(false);
-  const isPaperServer = status?.lab_role === 'paper';
 
   const handleCatalogChange = (path: string) => {
     setSelectedCatalogPathState(path);
     setSelectedCatalogPath(path);
   };
 
-  const refreshOverview = useCallback(() => {
-    fetchStatus(selectedCatalogPath)
-      .then((data) => {
-        setStatus(data);
-        setConnectionError(null);
-      })
-      .catch((err: unknown) => {
-        setConnectionError(
-          err instanceof Error
-            ? err.message
-            : 'Cannot reach the API. Start it with: uvicorn nautilus_lab.api.app:app',
-        );
-      });
-    fetchCatalog(selectedCatalogPath)
-      .then((data) => setCatalog(data))
-      .catch((err: unknown) => console.error(err));
-    fetchStrategies()
-      .then((data) => setStrategies(data.strategies))
-      .catch((err: unknown) => {
-        console.error(err);
-        setConnectionError(
-          (prev) => prev || (err instanceof Error ? err.message : 'Cannot reach API strategies'),
-        );
-      });
-  }, [selectedCatalogPath]);
+  // Server state from the shared query cache (services/queries.ts): polled while the
+  // tab is visible, paused while it is hidden.
+  const statusResult = useQuery(statusQuery(selectedCatalogPath));
+  const catalog = useQuery(catalogQuery(selectedCatalogPath)).data;
+  const strategiesResult = useQuery(strategiesQuery());
+  const catalogsResult = useQuery(catalogsQuery());
+  const status = statusResult.data ?? null;
+  const strategies: StrategySpec[] = strategiesResult.data?.strategies ?? NO_STRATEGIES;
+  const connectionError = describeFailure(statusResult.error, strategiesResult.error);
+  const defaultCatalog = catalogsResult.data?.default;
+  const isPaperServer = status?.lab_role === 'paper';
 
   // Keyboard shortcut: Cmd+K / Ctrl+K opens CommandPalette; ? opens Guide
   useEffect(() => {
@@ -132,34 +92,28 @@ function AppContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Job finish detector -> trigger toast
+  // A job that finished: say so, and re-read what it may have written (catalog,
+  // reports, models) instead of waiting for each panel's next poll.
   useEffect(() => {
     if (!status?.jobs) return;
+    let finished = false;
     Object.entries(status.jobs).forEach(([key, job]) => {
       const wasRunning = prevJobsRef.current[key];
       if (wasRunning && !job.running) {
+        finished = true;
         toast.success(`Task finished: ${job.label}`, 'Process finished execution');
       }
       prevJobsRef.current[key] = Boolean(job.running);
     });
-  }, [status?.jobs, toast]);
+    if (finished) void queryClient.invalidateQueries();
+  }, [status?.jobs, toast, queryClient]);
 
   useEffect(() => {
-    fetchCatalogs()
-      .then((data) => {
-        const stored = getSelectedCatalogPath();
-        if (!stored && data.default) {
-          handleCatalogChange(data.default);
-        }
-      })
-      .catch((err: unknown) => console.error(err));
-  }, []);
-
-  useEffect(() => {
-    refreshOverview();
-    const interval = setInterval(refreshOverview, 15000);
-    return () => clearInterval(interval);
-  }, [refreshOverview]);
+    if (!getSelectedCatalogPath() && defaultCatalog) {
+      handleCatalogChange(defaultCatalog);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultCatalog]);
 
   useEffect(() => {
     if (isPaperServer && !openedOnPaperRef.current) {
@@ -180,29 +134,6 @@ function AppContent() {
     toast.success('Hypothesis loaded into Research Lab!', cfg.notes || cfg.formula);
   };
 
-  const navButton = (tab: TabId, label: string, icon: React.ReactNode, badge?: React.ReactNode) => (
-    <button
-      type="button"
-      key={tab}
-      onClick={() => setActiveTab(tab)}
-      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-        activeTab === tab
-          ? 'bg-blue-600/15 text-blue-400 border border-blue-500/20'
-          : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
-      }`}
-    >
-      {icon}
-      <span className="flex-1 text-left">{label}</span>
-      {badge}
-    </button>
-  );
-
-  const runningJobs: [JobKey, JobState][] = Object.entries(status?.jobs ?? {}).filter(
-    ([, job]) => job.running,
-  ) as [JobKey, JobState][];
-
-  const toggleJob = (key: JobKey) => setActiveTab(JOB_TABS[key]);
-
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-[#080c14] text-gray-100 font-sans">
       <CommandPalette
@@ -214,147 +145,14 @@ function AppContent() {
         strategies={strategies}
       />
 
-      <aside className="w-full md:w-64 bg-[#0d131f] border-r border-gray-800/80 p-5 flex flex-col gap-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-600/10 border border-blue-500/20 rounded-xl">
-            <Activity className="text-blue-400 w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-base font-bold tracking-tight text-gray-100">Nautilus Lab</h1>
-            <span className="text-[10px] font-mono text-gray-400 block">
-              Research-first engine
-            </span>
-          </div>
-        </div>
-
-        {/* Quick Search / Command Palette button */}
-        <button
-          type="button"
-          onClick={() => setIsPaletteOpen(true)}
-          className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-gray-950 border border-gray-800 text-xs text-gray-400 hover:text-gray-200 hover:border-gray-700 transition-colors"
-        >
-          <span className="flex items-center gap-2">
-            <Search className="w-3.5 h-3.5 text-gray-500" />
-            <span>Search / Jump</span>
-          </span>
-          <kbd className="px-1.5 py-0.5 text-[9px] font-mono text-gray-500 bg-gray-900 rounded border border-gray-800">
-            ⌘K
-          </kbd>
-        </button>
-
-        <nav className="flex flex-col gap-1.5">
-          {navButton('home', 'Command Center', <LayoutDashboard className="w-4 h-4" />)}
-          {navButton(
-            'research',
-            'Research & Backtest',
-            <Layers className="w-4 h-4" />,
-            status?.jobs?.research.running ? (
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            ) : undefined,
-          )}
-          {navButton(
-            'catalog',
-            'Parquet Catalog',
-            <Database className="w-4 h-4" />,
-            status?.jobs?.ingest.running ? (
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            ) : undefined,
-          )}
-          {navButton('strategies', 'Strategy Specs', <Cpu className="w-4 h-4" />)}
-          {navButton(
-            'ml',
-            'ML Pipeline',
-            <Brain className="w-4 h-4" />,
-            status?.jobs?.ml_train.running ? (
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            ) : undefined,
-          )}
-          {navButton('journal', 'Experiment Journal', <BookOpen className="w-4 h-4" />)}
-          {navButton(
-            'paper',
-            'Trading Terminal',
-            <Zap className="w-4 h-4" />,
-            status?.jobs?.paper.running ? (
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            ) : undefined,
-          )}
-
-          <div className="my-0.5 border-t border-gray-800/60" />
-
-          {navButton('scan', 'Arb Scanner', <ArrowLeftRight className="w-4 h-4" />)}
-          {navButton('alpha', 'Alpha Ideas', <Sparkles className="w-4 h-4" />)}
-
-          <div className="my-0.5 border-t border-gray-800/60" />
-
-          {navButton('settings', 'Settings', <ShieldAlert className="w-4 h-4" />)}
-
-          <button
-            type="button"
-            onClick={() => setIsGuideOpen(true)}
-            className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors text-blue-400/90 hover:bg-blue-600/10 hover:text-blue-300 border border-blue-500/20"
-          >
-            <HelpCircle className="w-4 h-4 text-blue-400" />
-            <span className="flex-1 text-left">Guide &amp; Docs</span>
-            <kbd className="px-1.5 py-0.5 text-[9px] font-mono text-blue-300 bg-blue-950 rounded border border-blue-800/50">
-              ?
-            </kbd>
-          </button>
-        </nav>
-
-        {runningJobs.length > 0 && (
-          <div className="p-3 bg-amber-950/30 border border-amber-800/40 rounded-2xl flex flex-col gap-1.5">
-            <span className="text-[10px] font-semibold text-amber-300 uppercase tracking-wider">
-              Running now
-            </span>
-            {runningJobs.map(([key, job]) => (
-              <button
-                type="button"
-                key={key}
-                onClick={() => toggleJob(key)}
-                className="flex items-center justify-between gap-2 text-[11px] text-gray-300 hover:text-white text-left"
-              >
-                <span className="truncate">{job.label}</span>
-                <span className="font-mono text-amber-300 shrink-0">
-                  {formatElapsed(job.elapsed_seconds) || '…'}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="mt-auto p-3.5 bg-gray-950/80 border border-gray-800 rounded-2xl flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
-            <ShieldCheck className="w-4 h-4" />
-            <span>
-              {status?.live_safe_mode === 'FAIL_CLOSED' ? 'Safety: fail-closed' : 'Safety: unknown'}
-            </span>
-          </div>
-          <p className="text-[11px] text-gray-400 leading-tight">
-            No execution adapter exists: <span className="font-mono">lab live</span> always exits 1,
-            and orders are never submitted.
-          </p>
-          <dl className="text-[10px] font-mono text-gray-500 flex flex-col gap-0.5">
-            <div className="flex justify-between gap-2">
-              <dt>mode</dt>
-              <dd className="text-gray-400">{status?.trading_mode ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt>interval</dt>
-              <dd className="text-gray-400">{status?.bar_interval ?? catalog?.bar_interval ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt>instruments</dt>
-              <dd className="text-gray-400">{catalog?.total_instruments ?? 0}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt>robots wired</dt>
-              <dd className="text-gray-400">
-                {status?.wired_robots.length ?? 0}/{status?.strategies_available.length ?? 0}
-              </dd>
-            </div>
-          </dl>
-        </div>
-      </aside>
+      <Sidebar
+        activeTab={activeTab}
+        onNavigate={setActiveTab}
+        status={status}
+        catalog={catalog}
+        onOpenPalette={() => setIsPaletteOpen(true)}
+        onOpenGuide={() => setIsGuideOpen(true)}
+      />
 
       <main className="flex-1 p-6 md:p-8 flex flex-col gap-6 overflow-y-auto max-h-screen">
         {connectionError && (

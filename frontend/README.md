@@ -42,6 +42,13 @@ Node; `tsc -b` typechecks them with the rest of `src`, so a test cannot drift fr
 - `format.test.ts` pins the rule every result panel shares: an unmeasured number (`null`, `''`,
   `NaN`) comes out as "n/a" / neutral / unknown, never as a zero that reads like a result.
 
+### Component size budget
+
+`src/componentSize.test.ts` holds every `.tsx` under 15 KB (docs/27 E-2.5). The files still
+over it are listed with their size when the budget started. Each may only shrink, and it must
+leave the list once it is under the limit. A failure is fixed by splitting the file, not by
+raising the number.
+
 ### Browser smoke test
 
 `npm run e2e` starts two servers and drives Chromium through `e2e/smoke.e2e.ts`:
@@ -62,6 +69,20 @@ npx playwright install chromium   # add --with-deps on a fresh Linux machine
 
 The API side has its own `pytest` (`tests/unit/test_e2e_server.py`), so a change that breaks
 the synthetic sessions fails there first, with a Python traceback.
+
+## Server state
+
+API data goes through one TanStack Query cache (`src/services/queries.ts`). Components call
+`useQuery(statusQuery(path))` and similar factories, never `setInterval` + `fetch`:
+
+- polling stops while the browser tab is hidden and catches up when it is shown again
+  (`refetchIntervalInBackground: false`);
+- panels that read the same endpoint share one request (the sidebar and the Catalog tab both
+  read `catalogQuery`);
+- a finished job invalidates the cache, so every panel re-reads what the job may have written.
+
+Keys and poll intervals live only in `queries.ts`. So far the sidebar, the status banner and
+the Catalog tab use it; the other tabs move over as they are split.
 
 ## Tabs
 

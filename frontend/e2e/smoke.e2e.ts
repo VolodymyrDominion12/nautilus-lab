@@ -27,6 +27,11 @@ test('the dashboard opens and reads the API', async ({ page }) => {
   await expect(page.getByText('Safety: fail-closed')).toBeVisible();
   await expect(page.getByText(/Cannot reach|not allowed to use this API/)).toHaveCount(0);
 
+  // The catalog tab reads three queries (catalog, catalog list, coverage) at once.
+  await page.getByRole('button', { name: 'Parquet Catalog' }).click();
+  await expect(page.getByRole('heading', { name: 'Parquet Data Catalog' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Ingest Binance data' })).toBeVisible();
+
   expect(errors).toEqual([]);
 });
 

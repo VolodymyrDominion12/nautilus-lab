@@ -44,6 +44,14 @@ def strategy_spec_payload(data: dict[str, Any]) -> dict[str, Any]:
         return default if value is None else value
 
     params = data.get("params")
+    # `invariants` is a MAPPING in every spec (`specs/_schema.yaml`: no_lookahead,
+    # closed_bars_only, decimal_not_float, ...) and `StrategySpec.invariants` is
+    # `dict[str, Any] | None`. A `[]` default here — or any non-mapping value someone
+    # puts in a spec — fails response validation, and because one response carries every
+    # spec, a single odd file turned the whole listing into `500 Internal Server Error`
+    # (`Input should be a valid list`). The route reports specs it cannot read in
+    # `failed_specs`; it must not die for one of them, so normalize to a mapping.
+    invariants = data.get("invariants")
     return {
         "name": data.get("name"),
         "title": data.get("title", ""),
@@ -59,7 +67,7 @@ def strategy_spec_payload(data: dict[str, Any]) -> dict[str, Any]:
         "summary": data.get("summary") or data.get("title", ""),
         "params": params if isinstance(params, list) else [],
         "hypothesis": data.get("hypothesis", ""),
-        "invariants": data.get("invariants", []),
+        "invariants": invariants if isinstance(invariants, dict) else {},
     }
 
 

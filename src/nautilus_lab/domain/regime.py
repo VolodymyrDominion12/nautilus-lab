@@ -42,6 +42,7 @@ BACKTEST_WIRED_ROBOTS: frozenset[RobotName] = frozenset(
         RobotName.META_LABEL,
         RobotName.ADAPTIVE_EMA,
         RobotName.ML_OBI,
+        RobotName.FUNDING,
     }
 )
 

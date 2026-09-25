@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.fees import FeeSchedule
+from nautilus_lab.domain.funding import FundingParams
 from nautilus_lab.domain.metrics import SelectionMetric
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
@@ -142,6 +143,12 @@ class Settings(BaseSettings):
     binance_symbols: list[str] = Field(default_factory=lambda: ["ETHUSDT", "BTCUSDT"])
     maker_fee: Decimal = Decimal("0.001")
     taker_fee: Decimal = Decimal("0.001")
+    funding_min_net_apy: Decimal = Decimal("0.10")
+    funding_holding_periods: int = 30
+    funding_basis_max: Decimal = Decimal("0.005")
+    funding_close_on_negative: bool = True
+    funding_spot_id: str = "ETH/USDT.SIM"
+    funding_perp_id: str = "ETHUSDT-PERP.SIM"
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     alert_webhook_url: str | None = None
@@ -238,4 +245,13 @@ class Settings(BaseSettings):
         return PairsParams(
             refit_every_bars=self.pairs_refit_every,
             z_entry_quantile=quantile if quantile > 0 else None,
+        )
+
+    def funding_params(self) -> FundingParams:
+        return FundingParams(
+            min_net_apy=self.funding_min_net_apy,
+            taker_fee=self.taker_fee,
+            holding_periods=self.funding_holding_periods,
+            basis_max=self.funding_basis_max,
+            close_on_negative=self.funding_close_on_negative,
         )

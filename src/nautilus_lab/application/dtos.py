@@ -10,6 +10,7 @@ from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
 from nautilus_lab.domain.fees import FeeSchedule
+from nautilus_lab.domain.funding import FundingParams, FundingSnapshot
 from nautilus_lab.domain.metrics import BacktestMetrics, SelectionMetric
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.pairs.params import PairsParams
@@ -62,6 +63,9 @@ class BacktestRequest:
     ml_obi_model_path: str | None = None
     ml_obi_threshold: Decimal = Decimal("0.55")
     adaptive_params: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
+    funding: FundingParams = field(default_factory=FundingParams)
+    funding_spot_id: str = "ETH/USDT.SIM"
+    funding_perp_id: str = "ETHUSDT-PERP.SIM"
     tearsheet_path: str | None = None
     # Bars before this instant only warm indicators: no signal is acted on and no equity
     # is recorded. None = trade from the first bar (the pre-2026-09-23 behaviour).
@@ -203,6 +207,8 @@ class SelectedParams:
     meta_label_threshold: Decimal = Decimal("0.55")
     adaptive_period: int = 40
     adaptive_selectivity: Decimal = Decimal("0.5")
+    funding_min_net_apy: Decimal = Decimal("0.10")
+    funding_holding_periods: int = 30
 
     def label(self) -> str:
         return (
@@ -211,7 +217,9 @@ class SelectedParams:
             f"z_entry={self.z_entry} formulaic_threshold={self.formulaic_threshold} "
             f"meta_label_threshold={self.meta_label_threshold} "
             f"adaptive_period={self.adaptive_period} "
-            f"adaptive_selectivity={self.adaptive_selectivity}"
+            f"adaptive_selectivity={self.adaptive_selectivity} "
+            f"funding_min_net_apy={self.funding_min_net_apy} "
+            f"funding_holding_periods={self.funding_holding_periods}"
         )
 
 
@@ -362,6 +370,7 @@ class ResearchBacktestPort(Protocol):
         self,
         request: BacktestRequest,
         bars_by_instrument: dict[str, list[OhlcvBar]],
+        funding: list[FundingSnapshot] | None = None,
     ) -> BacktestReport: ...
 
 
@@ -482,6 +491,10 @@ class OrderBookFeed(Protocol):
     def load(self, request: BacktestRequest) -> list[OrderBookSnapshot]: ...
 
 
+class FundingFeed(Protocol):
+    def load(self, request: BacktestRequest) -> list[FundingSnapshot]: ...
+
+
 class PaperBacktestPort(Protocol):
     """Engine that can also hand back the paper ledger, not just the ending balance.
 
@@ -502,6 +515,7 @@ class PaperBacktestPort(Protocol):
         self,
         request: BacktestRequest,
         bars_by_instrument: dict[str, list[OhlcvBar]],
+        funding: list[FundingSnapshot] | None = None,
     ) -> PaperSessionReport: ...
 
 
@@ -624,6 +638,8 @@ def selected_from_request(request: BacktestRequest) -> SelectedParams:
         meta_label_threshold=request.meta_label_threshold,
         adaptive_period=request.adaptive_params.base_period,
         adaptive_selectivity=request.adaptive_params.selectivity,
+        funding_min_net_apy=request.funding.min_net_apy,
+        funding_holding_periods=request.funding.holding_periods,
     )
 
 
@@ -653,5 +669,10 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
             request.adaptive_params,
             base_period=params.adaptive_period,
             selectivity=params.adaptive_selectivity,
+        ),
+        funding=replace(
+            request.funding,
+            min_net_apy=params.funding_min_net_apy,
+            holding_periods=params.funding_holding_periods,
         ),
     )

@@ -105,10 +105,11 @@ strategy:
   implementation:
     required: [domain_module, strategy_class, backtest_adapter, wired_in_backtest, grid_source]
     backtest_adapter:
-      allowed: [signal_strategy, spread_strategy, none]
+      allowed: [signal_strategy, spread_strategy, funding_strategy, none]
       note: >-
         signal_strategy — одноногі роботи (infrastructure/nautilus/signal_strategy.py);
         spread_strategy — pairs/спред (infrastructure/nautilus/spread_strategy.py);
+        funding_strategy — дельта-нейтральний cash-and-carry (infrastructure/nautilus/funding_strategy.py);
         none — адаптера немає, робот мусить бути blocked.
     grid_source:
       allowed: [explicit, default_branch]

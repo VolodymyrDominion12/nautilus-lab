@@ -13,6 +13,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
@@ -120,11 +121,86 @@ def test_catalog_detail_matches_its_model(client: TestClient) -> None:
     _conforms(responses.CatalogResponse, catalog)
 
 
-def test_strategies_match_their_model(client: TestClient) -> None:
+def test_strategies_match_their_model(client: TestClient, tmp_path: Path) -> None:
+    """Every field of `StrategySpec` is checked against a real spec file.
+
+    An empty `specs/strategies/` made this test vacuous: the response was
+    `{"strategies": []}`, so `_conforms` never ran on a payload and the suite stayed
+    green while `invariants: list[Any]` (the model) met a mapping (every spec) — the
+    endpoint answered `500 ResponseValidationError: Input should be a valid list` for
+    every dashboard load. Fixtures are written here for that reason, and the minimal
+    spec (no `invariants` block at all) is one of them.
+    """
+    specs = tmp_path / "specs" / "strategies"
+    specs.mkdir(parents=True)
+    (specs / "regime.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "kind": "strategy",
+                "name": "regime",
+                "status": "candidate",
+                "title": "Regime router",
+                "hypothesis": "Regime is detectable in advance.",
+                "implementation": {
+                    "domain_module": "src/nautilus_lab/domain/regime_router.py",
+                    "strategy_class": "RegimeRouter",
+                    "backtest_adapter": "signal_strategy",
+                    "wired_in_backtest": True,
+                    "minimum_bars": 150,
+                    "grid_source": "default_branch",
+                },
+                "params": [{"env": "ER_PERIOD", "default": 20, "description": "Kaufman ER"}],
+                "invariants": {
+                    "no_lookahead": True,
+                    "closed_bars_only": True,
+                    "decimal_not_float": True,
+                    "fail_closed_without_adapter": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (specs / "minimal.yaml").write_text(
+        yaml.safe_dump({"name": "minimal", "title": "Spec without an invariants block"}),
+        encoding="utf-8",
+    )
+    (specs / "broken.yaml").write_text("{ not: valid: yaml", encoding="utf-8")
+
     data = client.get("/api/strategies").json()
     _conforms(responses.StrategiesResponse, data)
+    assert data["failed_specs"] == ["broken.yaml"]
+    by_name = {strat["name"]: strat for strat in data["strategies"]}
+    assert sorted(by_name) == ["minimal", "regime"]
     for strat in data["strategies"]:
         _conforms(responses.StrategySpec, strat)
+
+    # Flattened out of `implementation:` — where the spec schema puts them, and where
+    # `specs/_validator.py` checks them. Read from the top level each robot reported
+    # `wired_in_backtest: false` / `minimum_bars: 100` and the UI called working robots
+    # fail-closed.
+    regime = by_name["regime"]
+    assert regime["wired_in_backtest"] is True
+    assert regime["minimum_bars"] == 150
+    assert regime["grid_source"] == "default_branch"
+    assert regime["strategy_class"] == "RegimeRouter"
+    assert regime["summary"] == "Regime router"
+    assert regime["invariants"] == {
+        "no_lookahead": True,
+        "closed_bars_only": True,
+        "decimal_not_float": True,
+        "fail_closed_without_adapter": False,
+    }
+    # Always a mapping, never a list: this is the exact shape that broke the endpoint.
+    assert by_name["minimal"]["invariants"] == {}
+    assert by_name["minimal"]["wired_in_backtest"] is False
+    assert by_name["minimal"]["minimum_bars"] == 100
+    assert by_name["minimal"]["params"] == []
+
+
+def test_strategies_without_a_specs_directory_are_empty(client: TestClient) -> None:
+    data = client.get("/api/strategies").json()
+    _conforms(responses.StrategiesResponse, data)
+    assert data == {"strategies": [], "failed_specs": []}
 
 
 def test_settings_and_schema_match_their_models(client: TestClient) -> None:

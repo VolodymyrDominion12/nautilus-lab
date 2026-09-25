@@ -16,7 +16,10 @@ from nautilus_lab.infrastructure.nautilus.synthetic_bars import (
     synthetic_ohlcv,
     synthetic_regime_ohlcv,
 )
-from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_cointegrated_pair
+from nautilus_lab.infrastructure.nautilus.synthetic_pairs import (
+    synthetic_cointegrated_pair,
+    synthetic_funding_pair,
+)
 from nautilus_lab.infrastructure.timeframe import interval_from_bar_type, nautilus_bar_type
 
 

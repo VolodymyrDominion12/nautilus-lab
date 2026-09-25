@@ -520,6 +520,34 @@ uvicorn, websockets, pyyaml, python-dotenv). Якщо браузер скарж�
 запиту — перевір `API_ALLOWED_ORIGINS` і, коли задано `API_TOKEN`, наявність
 `VITE_API_TOKEN` у `frontend/.env`.
 
+### `GET /api/strategies` → `500 ResponseValidationError: 'invariants' ... Input should be a valid list`
+
+Дашборд порожній саме тому, що цей один роут падає: він віддає **всі** спеки одним
+response, і невідповідність типу валить його цілком. Причин дві.
+
+**1. Застарілий образ API.** `deploy/Dockerfile.api` копіює `src/` і `specs/` **усередину**
+образу, тож код і спеки на сервері — це те, що було на момент збірки, а не те, що лежить
+у репозиторії. У спеках `invariants` — мапа (`no_lookahead`, `closed_bars_only`, ...), а
+модель відповіді `StrategySpec.invariants` у комітах між `26514b7` і `57d8d85` оголошувала
+`list[Any]`. Образ, зібраний у тому вікні, віддає 500 на кожне відкриття вкладки. Лікування —
+перезібрати:
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d --build api
+docker run --rm nautilus-lab-api:latest printenv LAB_REVISION   # яка ревізія всередині
+```
+
+**2. Спека без блоку `invariants` (або з не-мапою).** Роут нормалізує такий блок у `{}`,
+тож ендпоінт лишається живим, але спека все одно неповна — перевір:
+
+```bash
+.venv/bin/python specs/_validator.py
+```
+
+Регресію тримає `tests/unit/test_api_types.py::test_strategies_match_their_model`: він пише
+справжні spec-файли у `tmp_path` і проганяє кожне поле через модель. Доти цей тест ішов на
+**порожній** теці спек, тож перевіряти було нічого — і дрейф типу проїхав повз CI.
+
 ### `fees_paid` порівнянний з прибутком
 
 Класика: стратегія з великим `turnover` платить біржі стільки ж, скільки заробляє.

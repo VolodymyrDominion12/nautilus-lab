@@ -57,6 +57,7 @@ DOCS_05_MD = ROOT / "docs/05-roboty.md"
 ADAPTER_MODULES = {
     "signal_strategy": ROOT / "src/nautilus_lab/infrastructure/nautilus/signal_strategy.py",
     "spread_strategy": ROOT / "src/nautilus_lab/infrastructure/nautilus/spread_strategy.py",
+    "funding_strategy": ROOT / "src/nautilus_lab/infrastructure/nautilus/funding_strategy.py",
 }
 
 

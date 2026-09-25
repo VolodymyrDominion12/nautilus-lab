@@ -104,6 +104,21 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
                 exit_trend_er=base.exit_trend_er,
             )
         return
+    if request.robot is RobotName.FUNDING:
+        for min_apy in (Decimal("0.05"), Decimal("0.10"), Decimal("0.15")):
+            for holding_periods in (15, 30, 45):
+                yield SelectedParams(
+                    fast_ema=base.fast_ema,
+                    slow_ema=base.slow_ema,
+                    donchian_period=base.donchian_period,
+                    bb_period=base.bb_period,
+                    bb_k=base.bb_k,
+                    enter_trend_er=base.enter_trend_er,
+                    exit_trend_er=base.exit_trend_er,
+                    funding_min_net_apy=min_apy,
+                    funding_holding_periods=holding_periods,
+                )
+        return
     for donchian in (10, 20, 40):
         for band_k in (Decimal("2"), Decimal("2.5")):
             yield SelectedParams(

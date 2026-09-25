@@ -28,7 +28,7 @@
 | `formulaic_lgbm` | `FormulaicLgbmStrategy` | ✅ так | Напрямок із 12 формульних ознак; потрібен навчений бустер або евристичний замінник |
 | `meta_label` | `MetaLabelStrategy` | ✅ так | Мета-модель гейтить входи `regime`; потрібен `META_LABEL_MODEL_PATH` |
 | `adaptive_ema` | `AdaptiveEmaRouter` | ✅ так | Режимний фільтр зі змінним кроком EMA (selectivity). **Гіпотезу відхилено виміром** (адаптивний α не кращий за сталий, обидва програють buy&hold) — [18](18-transformery-ssm-vidpovidnist.md) §3 P3 |
-| `funding` | `FundingCashAndCarry` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
+| `funding` | `FundingCashAndCarry` + `FundingRobot` | ✅ так (дві ноги) | Дельта-нейтральний cash-and-carry спот лонг + перп шорт за нетто-APY |
 | `ml_obi` | `MlObiStrategy` | ✅ так | Напрямок за мікроструктурою книги (OBI, WOFI, Fade) |
 | `glft` | `GlftMarketMaker` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 | `tri_scan` | `find_negative_cycles` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
@@ -46,6 +46,7 @@ BACKTEST_WIRED_ROBOTS = frozenset(
         RobotName.META_LABEL,
         RobotName.ADAPTIVE_EMA,
         RobotName.ML_OBI,
+        RobotName.FUNDING,
     }
 )
 ```

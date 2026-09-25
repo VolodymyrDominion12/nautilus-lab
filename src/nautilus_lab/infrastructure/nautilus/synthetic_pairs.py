@@ -5,6 +5,64 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.funding import FundingSnapshot
+
+
+def synthetic_funding_pair(
+    *,
+    spot_id: str = "ETH/USDT.SIM",
+    perp_id: str = "ETHUSDT-PERP.SIM",
+    count: int,
+    seed: int = 42,
+) -> tuple[dict[str, list[OhlcvBar]], list[FundingSnapshot]]:
+    """Deterministic spot + perp bars and 8h funding rate snapshots."""
+    origin = datetime(2024, 1, 1, tzinfo=UTC)
+    rng = _lcg(seed)
+    bars_spot: list[OhlcvBar] = []
+    bars_perp: list[OhlcvBar] = []
+    spot_price = Decimal("2000.00")
+    snapshots: list[FundingSnapshot] = []
+
+    for index in range(count):
+        ts = origin + timedelta(hours=index)
+        drift = Decimal(str((rng() % 100 - 50) / 100))
+        spot_price = spot_price + drift
+        basis = Decimal("0.0005")
+        perp_price = (spot_price * (Decimal("1") + basis)).quantize(Decimal("0.01"))
+
+        bar_spot = OhlcvBar(
+            instrument_id=spot_id,
+            ts_utc=ts,
+            open=spot_price,
+            high=spot_price + Decimal("1.00"),
+            low=spot_price - Decimal("1.00"),
+            close=spot_price,
+            volume=Decimal("100"),
+        )
+        bar_perp = OhlcvBar(
+            instrument_id=perp_id,
+            ts_utc=ts,
+            open=perp_price,
+            high=perp_price + Decimal("1.00"),
+            low=perp_price - Decimal("1.00"),
+            close=perp_price,
+            volume=Decimal("100"),
+        )
+        bars_spot.append(bar_spot)
+        bars_perp.append(bar_perp)
+
+        if index > 0 and index % 8 == 0:
+            snapshots.append(
+                FundingSnapshot(
+                    instrument=perp_id,
+                    funding_rate=Decimal("0.0003"),
+                    mark_price=perp_price,
+                    index_price=spot_price,
+                    ts_utc=ts,
+                )
+            )
+
+    return {spot_id: bars_spot, perp_id: bars_perp}, snapshots
 
 
 def synthetic_cointegrated_pair(

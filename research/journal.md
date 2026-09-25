@@ -18,6 +18,7 @@
 | 2026-09-24 16:02 | lab api research | formulaic_lgbm BTC/USDT.SIM | PBO/CSCV blocks=8 configurations=3 | n/a | n/a | ⏳ pending | PBO=0 over 70 splits x 3 configurations on 8 blocks (selection generalises, but no configuration is profitable on average) |
 | 2026-09-25 08:42 | lab api research | formulaic_lgbm BTC/USDT.SIM | PBO/CSCV blocks=8 configurations=3 | n/a | n/a | ⏳ pending | PBO=0 over 70 splits x 3 configurations on 8 blocks (selection generalises, but no configuration is profitable on average) |
 | 2026-09-25 08:57 | lab api research | formulaic_lgbm BTC/USDT.SIM | PBO/CSCV blocks=8 configurations=3 | n/a | n/a | ⏳ pending | PBO=0 over 70 splits x 3 configurations on 8 blocks (selection generalises, but no configuration is profitable on average) |
+| 2026-09-25 16:51 | lab api research | regime ETH/USDT.SIM | PBO/CSCV blocks=8 configurations=6 | n/a | n/a | ⏳ pending | PBO=0.1142857142857142857142857143 over 70 splits x 6 configurations on 8 blocks (selection generalises, but no configuration is profitable on average) |
 <!-- journal:rows:end -->
 
 **Як це працює.** Рядки між маркерами `journal:rows:start` і `journal:rows:end`

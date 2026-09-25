@@ -155,19 +155,25 @@ def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
     resolved = cfg or settings()
     tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
     book_catalog = orderbook_catalog(resolved)
+    funding_cat = funding_catalog(resolved)
     tick_feed = _TickFeedAdapter(tick_catalog)
     book_feed = _BookFeedAdapter(book_catalog)
-    return RunWalkForward(NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed)
+    funding_feed = _FundingFeedAdapter(funding_cat)
+    return RunWalkForward(
+        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed, funding_feed
+    )
 
 
 def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
     resolved = cfg or settings()
     tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
     book_catalog = orderbook_catalog(resolved)
+    funding_cat = funding_catalog(resolved)
     tick_feed = _TickFeedAdapter(tick_catalog)
     book_feed = _BookFeedAdapter(book_catalog)
+    funding_feed = _FundingFeedAdapter(funding_cat)
     return RunOverfitAudit(
-        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed
+        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed, funding_feed
     )
 
 
@@ -353,11 +359,13 @@ def param_selection_use_case(cfg: Settings | None = None) -> RunParamSelection:
     resolved = cfg or settings()
     tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
     book_catalog = orderbook_catalog(resolved)
+    funding_cat = funding_catalog(resolved)
     return RunParamSelection(
         NautilusResearchBacktest(),
         research_feed(resolved),
         _TickFeedAdapter(tick_catalog),
         _BookFeedAdapter(book_catalog),
+        _FundingFeedAdapter(funding_cat),
     )
 
 

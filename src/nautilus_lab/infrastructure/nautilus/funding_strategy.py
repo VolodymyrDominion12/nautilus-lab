@@ -145,7 +145,7 @@ class FundingRobot(Strategy):  # type: ignore[misc]
     def on_funding_rate(self, funding_rate: FundingRateUpdate) -> None:
         rate = _as_decimal(funding_rate.rate)
         # 1. Accrue funding payment on short perpetual position:
-        # Short position cash flow: -signed_qty * mark_price * rate (positive when short and rate > 0).
+        # Cash flow: -signed_qty * mark_price * rate (positive when short and rate > 0).
         open_lots = self._open_lots()
         perp_lots = [lot for lot in open_lots if lot.instrument_id == str(self.config.leg_perp_id)]
         signed_perp_qty = sum((lot.signed_qty for lot in perp_lots), Decimal("0"))
@@ -156,7 +156,8 @@ class FundingRobot(Strategy):  # type: ignore[misc]
             self._accumulated_funding += payment
             self._funding_settlements_count += 1
             self.log.info(
-                f"Funding payment: rate={rate} qty={signed_perp_qty} mark={mark_price} -> delta={payment:+f} USDT"
+                f"Funding payment: rate={rate} qty={signed_perp_qty} mark={mark_price} "
+                f"-> delta={payment:+f} USDT"
             )
 
         # 2. Form snapshot for strategy signal evaluation
@@ -191,8 +192,8 @@ class FundingRobot(Strategy):  # type: ignore[misc]
             self._overlay,
             stats=self._trade_stats,
         )
-        assert self._last_spot is not None
-        assert self._last_perp is not None
+        if self._last_spot is None or self._last_perp is None:
+            return
         self._submit_leg(
             self.config.leg_spot_id,
             signal.leg_a.side,

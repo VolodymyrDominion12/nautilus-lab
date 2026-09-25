@@ -769,5 +769,7 @@ def _funding_run(
         instruments=[instrument_spot, instrument_perp],
         data=[*data_spot, *data_perp, *funding_data],
         strategy=strategy,
-        marks=_last_closes({str(instrument_spot.id): bars_spot, str(instrument_perp.id): bars_perp}),
+        marks=_last_closes(
+            {str(instrument_spot.id): bars_spot, str(instrument_perp.id): bars_perp}
+        ),
     )

@@ -22,6 +22,7 @@ from nautilus_lab.application.dtos import (
     BacktestReport,
     BacktestRequest,
     BarFeed,
+    FundingFeed,
     OrderBookFeed,
     ResearchBacktestPort,
     SelectedParams,
@@ -76,11 +77,13 @@ class RunParamSelection:
         feed: BarFeed,
         tick_feed: TickFeed | None = None,
         book_feed: OrderBookFeed | None = None,
+        funding_feed: FundingFeed | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
         self._book_feed = book_feed
+        self._funding_feed = funding_feed
 
     def execute(
         self,
@@ -96,7 +99,7 @@ class RunParamSelection:
         if embargo_bars < 0:
             raise ValueError("embargo_bars must be >= 0")
 
-        if request.robot is RobotName.PAIRS:
+        if request.robot in (RobotName.PAIRS, RobotName.FUNDING):
             return self._select_pairs(request, holdout_bars=holdout_bars, embargo_bars=embargo_bars)
         return self._select_single(request, holdout_bars=holdout_bars, embargo_bars=embargo_bars)
 
@@ -144,18 +147,23 @@ class RunParamSelection:
         embargo_bars: int,
     ) -> ParamSelection:
         multi = self._feed.load_multi(request)
-        leg_a = request.pairs.leg_a
-        reference = list(multi[leg_a])
+        ref = (
+            (request.funding_spot_id or "ETH/USDT.SIM")
+            if request.robot is RobotName.FUNDING
+            else request.pairs.leg_a
+        )
+        reference = list(multi[ref])
         cut = _in_sample_cut(len(reference), holdout_bars=holdout_bars, embargo_bars=embargo_bars)
         # Both legs are cut on the same row indices: they arrive aligned by an inner
         # join, so identical cuts keep the spread built from contemporaneous bars.
         in_sample = {key: list(value[:cut]) for key, value in multi.items()}
-        in_sample_leg_a = in_sample[leg_a]
+        in_sample_ref = in_sample[ref]
+        funding = self._funding_feed.load(request) if self._funding_feed is not None else None
 
         return self._grid(
             request,
-            in_sample_leg_a,
-            lambda candidate: self._engine.run_spread(candidate, in_sample),
+            in_sample_ref,
+            lambda candidate: self._engine.run_spread(candidate, in_sample, funding=funding),
             holdout_bars=holdout_bars,
             embargo_bars=embargo_bars,
         )

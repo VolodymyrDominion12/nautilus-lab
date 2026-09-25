@@ -22,6 +22,7 @@ from nautilus_lab.application.run_paper import (
 )
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.errors import RobotNotWiredError
+from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.regime import BACKTEST_WIRED_ROBOTS, RobotName
 from nautilus_lab.domain.risk import RiskLimits
 from nautilus_lab.domain.trading_mode import TradingMode
@@ -107,6 +108,7 @@ class _Engine:
         self,
         request: BacktestRequest,
         bars_by_instrument: dict[str, list[OhlcvBar]],
+        funding: list[FundingSnapshot] | None = None,
     ) -> PaperSessionReport:
         self.spread = {key: len(value) for key, value in bars_by_instrument.items()}
         leg_a = bars_by_instrument[request.pairs.leg_a]
@@ -165,7 +167,7 @@ def test_paper_supported_set_is_exactly_the_wired_set() -> None:
 
 
 def test_paper_refuses_robots_without_an_adapter() -> None:
-    for robot in (RobotName.FUNDING, RobotName.GLFT, RobotName.TRI_SCAN):
+    for robot in (RobotName.GLFT, RobotName.TRI_SCAN):
         with pytest.raises(RobotNotWiredError):
             require_paper_support(robot)
 

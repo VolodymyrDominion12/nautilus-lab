@@ -79,6 +79,9 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
                     "vpin_momentum",
                     "formulaic_lgbm",
                     "meta_label",
+                    "adaptive_ema",
+                    "ml_obi",
+                    "funding",
                 ],
             ),
             SettingField(key="FAST_EMA", label="Fast EMA", field_type="number"),
@@ -212,6 +215,47 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
             SettingField(key="LLM_PROMPTS_DIR", label="Prompts directory", field_type="string"),
             SettingField(
                 key="LLM_HYPOTHESES_DIR", label="Hypotheses directory", field_type="string"
+            ),
+        ],
+    ),
+    SettingGroup(
+        id="funding",
+        title="Funding Cash-and-Carry",
+        description="Parameters for the delta-neutral funding rate cash-and-carry strategy.",
+        fields=[
+            SettingField(
+                key="FUNDING_MIN_NET_APY",
+                label="Min Net APY",
+                field_type="number",
+                description="Minimum net annual funding yield threshold after fee amortization.",
+            ),
+            SettingField(
+                key="FUNDING_HOLDING_PERIODS",
+                label="Holding periods (8h intervals)",
+                field_type="number",
+                description="Number of 8h intervals over which round-trip fee is amortized.",
+            ),
+            SettingField(
+                key="FUNDING_BASIS_MAX",
+                label="Max basis divergence",
+                field_type="number",
+                description="Maximum allowable abs(mark - index)/index basis spread.",
+            ),
+            SettingField(
+                key="FUNDING_CLOSE_ON_NEGATIVE",
+                label="Close on negative funding",
+                field_type="boolean",
+                description="Whether to exit position if next funding payment turns negative.",
+            ),
+            SettingField(
+                key="FUNDING_SPOT_ID",
+                label="Funding spot instrument ID",
+                field_type="string",
+            ),
+            SettingField(
+                key="FUNDING_PERP_ID",
+                label="Funding perp instrument ID",
+                field_type="string",
             ),
         ],
     ),

@@ -218,6 +218,8 @@ def test_research_use_case_delegates_to_port(limits: RiskLimits) -> None:
             self,
             request: BacktestRequest,
             bars_by_instrument: dict[str, list[OhlcvBar]],
+            *args: object,
+            **kwargs: object,
         ) -> BacktestReport:
             raise AssertionError("spread engine must not run")
 
@@ -288,6 +290,8 @@ def test_research_use_case_rejects_short_history(limits: RiskLimits) -> None:
             self,
             request: BacktestRequest,
             bars_by_instrument: dict[str, list[OhlcvBar]],
+            *args: object,
+            **kwargs: object,
         ) -> BacktestReport:
             raise AssertionError("engine must not run")
 
@@ -321,6 +325,8 @@ def test_research_use_case_rejects_live(limits: RiskLimits) -> None:
             self,
             request: BacktestRequest,
             bars_by_instrument: dict[str, list[OhlcvBar]],
+            *args: object,
+            **kwargs: object,
         ) -> BacktestReport:
             raise AssertionError("engine must not run")
 

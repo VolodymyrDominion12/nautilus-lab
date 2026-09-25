@@ -86,7 +86,7 @@ def test_cli_scan_missing_flag_fails() -> None:
     assert main(["scan"]) == 1
 
 
-@pytest.mark.parametrize("robot", ["funding", "glft", "tri_scan"])
+@pytest.mark.parametrize("robot", ["glft", "tri_scan"])
 def test_cli_robot_without_adapter_fails_closed(robot: str) -> None:
     """A robot with no engine adapter must fail loudly instead of running regime."""
     assert main(["research", "--robot", robot, "--synthetic", "--bars", "200"]) == 1

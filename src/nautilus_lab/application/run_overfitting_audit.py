@@ -7,6 +7,7 @@ from nautilus_lab.application.dtos import (
     BacktestReport,
     BacktestRequest,
     BarFeed,
+    FundingFeed,
     OrderBookFeed,
     OverfitAuditReport,
     OverfitAuditRequest,
@@ -48,16 +49,18 @@ class RunOverfitAudit:
         feed: BarFeed,
         tick_feed: TickFeed | None = None,
         book_feed: OrderBookFeed | None = None,
+        funding_feed: FundingFeed | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
         self._book_feed = book_feed
+        self._funding_feed = funding_feed
 
     def execute(self, request: OverfitAuditRequest) -> OverfitAuditReport:
         require_simulated_mode(request.backtest.mode)
         require_backtest_support(request.backtest.robot)
-        if request.backtest.robot is RobotName.PAIRS:
+        if request.backtest.robot in (RobotName.PAIRS, RobotName.FUNDING):
             return self._execute_pairs(request)
         return self._execute_single(request)
 
@@ -91,8 +94,12 @@ class RunOverfitAudit:
     def _execute_pairs(self, request: OverfitAuditRequest) -> OverfitAuditReport:
         all_bars = self._feed.load_multi(request.backtest)
         aligned = align_bars_inner_join(all_bars)
-        leg_a = request.backtest.pairs.leg_a
-        ranges = _block_ranges(len(aligned[leg_a]), request.blocks)
+        ref = (
+            (request.backtest.funding_spot_id or "ETH/USDT.SIM")
+            if request.backtest.robot is RobotName.FUNDING
+            else request.backtest.pairs.leg_a
+        )
+        ranges = _block_ranges(len(aligned[ref]), request.blocks)
         # Every leg is cut on the same row indices, otherwise the two series inside a
         # block would describe different time ranges and the spread would be built
         # from misaligned bars.
@@ -102,13 +109,17 @@ class RunOverfitAudit:
         }
         _require_warmup(
             request.backtest.robot,
-            tuple(tuple(sliced[leg_a][index]) for index in range(len(ranges))),
+            tuple(tuple(sliced[ref][index]) for index in range(len(ranges))),
+        )
+        funding = (
+            self._funding_feed.load(request.backtest) if self._funding_feed is not None else None
         )
 
         def run(candidate: BacktestRequest, block_index: int) -> BacktestReport:
             return self._engine.run_spread(
                 candidate,
                 {instrument_id: blocks[block_index] for instrument_id, blocks in sliced.items()},
+                funding=funding,
             )
 
         return self._audit(request, run, len(ranges))

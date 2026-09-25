@@ -8,6 +8,7 @@ from nautilus_lab.application.dtos import (
     BacktestReport,
     BacktestRequest,
     BarFeed,
+    FundingFeed,
     MultiWindowReport,
     OrderBookFeed,
     ResearchBacktestPort,
@@ -26,6 +27,7 @@ from nautilus_lab.application.score import in_sample_score
 from nautilus_lab.domain.align import split_aligned_by_window
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import InvalidWindowError
+from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.metrics import buy_and_hold_return
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.regime import RobotName, require_backtest_support
@@ -48,17 +50,19 @@ class RunWalkForward:
         feed: BarFeed,
         tick_feed: TickFeed | None = None,
         book_feed: OrderBookFeed | None = None,
+        funding_feed: FundingFeed | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
         self._book_feed = book_feed
+        self._funding_feed = funding_feed
 
     def execute(self, request: WalkForwardRequest) -> WalkForwardReport:
         require_simulated_mode(request.backtest.mode)
         require_backtest_support(request.backtest.robot)
         embargo = request.embargo_bars or request.backtest.embargo_bars
-        if request.backtest.robot is RobotName.PAIRS:
+        if request.backtest.robot in (RobotName.PAIRS, RobotName.FUNDING):
             return self._execute_pairs(request, embargo)
         return self._execute_single(request, embargo)
 
@@ -106,10 +110,11 @@ class RunWalkForward:
         request: WalkForwardRequest,
         all_bars: dict[str, list[OhlcvBar]],
         oos_bars: dict[str, list[OhlcvBar]],
+        funding: list[FundingSnapshot] | None = None,
     ) -> Callable[[BacktestRequest], BacktestReport]:
-        leg_a = request.backtest.pairs.leg_a
-        warm_a = warmup_tail(all_bars[leg_a], oos_bars[leg_a], _oos_warmup_count(request))
-        warm_ts = {bar.ts_utc for bar in warm_a}
+        ref = _ref_leg(request.backtest)
+        warm_ref = warmup_tail(all_bars[ref], oos_bars[ref], _oos_warmup_count(request))
+        warm_ts = {bar.ts_utc for bar in warm_ref}
         # Every leg is warmed on the same timestamps as the reference leg, so the spread
         # model never sees one leg's bar without the other's.
         bars = {
@@ -119,10 +124,12 @@ class RunWalkForward:
             ]
             for instrument_id in oos_bars
         }
-        trade_start = oos_bars[leg_a][0].ts_utc if warm_a else None
+        trade_start = oos_bars[ref][0].ts_utc if warm_ref else None
 
         def run(candidate: BacktestRequest) -> BacktestReport:
-            return self._engine.run_spread(replace(candidate, trade_start=trade_start), bars)
+            return self._engine.run_spread(
+                replace(candidate, trade_start=trade_start), bars, funding=funding
+            )
 
         return run
 
@@ -150,7 +157,8 @@ class RunWalkForward:
 
     def _execute_pairs(self, request: WalkForwardRequest, embargo: int) -> WalkForwardReport:
         all_bars = self._feed.load_multi(request.backtest)
-        reference = list(all_bars[request.backtest.pairs.leg_a])
+        ref = _ref_leg(request.backtest)
+        reference = list(all_bars[ref])
         window = request.window or anchored_window(
             reference,
             in_sample_fraction=request.in_sample_fraction,
@@ -159,19 +167,22 @@ class RunWalkForward:
         is_bars, oos_bars = split_aligned_by_window(all_bars, window)
         _require_warmup(
             request.backtest.robot,
-            len(is_bars[request.backtest.pairs.leg_a]),
+            len(is_bars[ref]),
             "in-sample",
         )
         _require_warmup(
             request.backtest.robot,
-            len(oos_bars[request.backtest.pairs.leg_a]),
+            len(oos_bars[ref]),
             "out-of-sample",
+        )
+        funding = (
+            self._funding_feed.load(request.backtest) if self._funding_feed is not None else None
         )
         return self._select_and_evaluate(
             request,
             window,
-            run_is=lambda candidate: self._engine.run_spread(candidate, is_bars),
-            run_oos=self._pairs_oos_runner(request, all_bars, oos_bars),
+            run_is=lambda candidate: self._engine.run_spread(candidate, is_bars, funding=funding),
+            run_oos=self._pairs_oos_runner(request, all_bars, oos_bars, funding=funding),
         )
 
     def execute_multi(self, request: WalkForwardRequest) -> MultiWindowReport:
@@ -192,7 +203,7 @@ class RunWalkForward:
             )
         embargo = request.embargo_bars or request.backtest.embargo_bars
 
-        if request.backtest.robot is RobotName.PAIRS:
+        if request.backtest.robot in (RobotName.PAIRS, RobotName.FUNDING):
             return self._execute_pairs_multi(request, embargo)
         return self._execute_single_multi(request, embargo)
 
@@ -246,15 +257,18 @@ class RunWalkForward:
         embargo: int,
     ) -> MultiWindowReport:
         all_bars = self._feed.load_multi(request.backtest)
-        leg_a = request.backtest.pairs.leg_a
+        ref = _ref_leg(request.backtest)
         windows = rolling_windows(
-            list(all_bars[leg_a]),
+            list(all_bars[ref]),
             folds=request.folds,
             in_sample_fraction=request.in_sample_fraction,
             embargo_bars=embargo,
         )
+        funding = (
+            self._funding_feed.load(request.backtest) if self._funding_feed is not None else None
+        )
         folds = [
-            self._evaluate_pairs_fold(request, index, all_bars, window)
+            self._evaluate_pairs_fold(request, index, all_bars, window, funding=funding)
             for index, window in enumerate(windows)
         ]
         return _multi_report(request, folds, len(windows))
@@ -265,18 +279,19 @@ class RunWalkForward:
         index: int,
         all_bars: dict[str, list[OhlcvBar]],
         window: WalkForwardWindow,
+        funding: list[FundingSnapshot] | None = None,
     ) -> WalkForwardFold:
-        leg_a = request.backtest.pairs.leg_a
+        ref = _ref_leg(request.backtest)
         is_bars, oos_bars = split_aligned_by_window(all_bars, window)
-        _require_warmup(request.backtest.robot, len(is_bars[leg_a]), f"fold {index} in-sample")
-        _require_warmup(request.backtest.robot, len(oos_bars[leg_a]), f"fold {index} out-of-sample")
+        _require_warmup(request.backtest.robot, len(is_bars[ref]), f"fold {index} in-sample")
+        _require_warmup(request.backtest.robot, len(oos_bars[ref]), f"fold {index} out-of-sample")
         return self._run_fold(
             request,
             index,
             window,
-            run_is=lambda candidate: self._engine.run_spread(candidate, is_bars),
-            run_oos=self._pairs_oos_runner(request, all_bars, oos_bars),
-            oos_reference=oos_bars[leg_a],
+            run_is=lambda candidate: self._engine.run_spread(candidate, is_bars, funding=funding),
+            run_oos=self._pairs_oos_runner(request, all_bars, oos_bars, funding=funding),
+            oos_reference=oos_bars[ref],
         )
 
     def _run_fold(
@@ -413,6 +428,12 @@ def _oos_warmup_count(request: WalkForwardRequest) -> int:
         return 0
     # The same rule `_require_warmup` enforces (the spec validator keeps the two equal).
     return minimum_bars(request.backtest.robot)
+
+
+def _ref_leg(request: BacktestRequest) -> str:
+    if request.robot is RobotName.FUNDING:
+        return request.funding_spot_id or "ETH/USDT.SIM"
+    return request.pairs.leg_a
 
 
 def _require_warmup(robot: RobotName, bar_count: int, fold: str) -> None:

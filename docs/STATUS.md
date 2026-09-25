@@ -14,12 +14,12 @@
 |---|---|---|---|---|---|---|---|---|---|
 | [`ema`](../specs/strategies/ema.yaml) | candidate | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | EMA crossover: always-in-market baseline на двох експоненційних середніх |
 | [`formulaic_lgbm`](../specs/strategies/formulaic_lgbm.yaml) | candidate | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Formulaic LGBM: напрямок бару з 12 формульних ознак OHLCV + пороговий класифікатор |
+| [`funding`](../specs/strategies/funding.yaml) | candidate | так | `funding_strategy` | — | — | так | — | не виміряно | Funding cash-and-carry: спот лонг + перпетуал шорт, вхід за нетто-APY |
 | [`meta_label`](../specs/strategies/meta_label.yaml) | candidate | так | `signal_strategy` | так | так | так | — | не виміряно | Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни |
 | [`ml_obi`](../specs/strategies/ml_obi.yaml) | candidate | так | `signal_strategy` | — | — | так | — | не виміряно | ML за дисбалансом книги: OBI + WOFI + fade → сигнал напрямку |
 | [`pairs`](../specs/strategies/pairs.yaml) | candidate | так | `spread_strategy` | — | — | так | — | виміряно: не обганяє buy&hold | Pairs trading: коінтеграція ETH/BTC і повернення до середнього за z-score |
 | [`regime`](../specs/strategies/regime.yaml) | candidate | так | `signal_strategy` | так | так | так | так | виміряно: не обганяє buy&hold | Regime router: Donchian у тренді, Bollinger mean reversion у флеті |
 | [`vpin_momentum`](../specs/strategies/vpin_momentum.yaml) | candidate | так | `signal_strategy` | так | — | так | так | виміряно: не обганяє buy&hold | VPIN momentum: момент у бік токсичного потоку, трейлінг-стоп за ATR |
-| [`funding`](../specs/strategies/funding.yaml) | blocked | — | `none` | — | — | — | — | не виміряно | Бракує двох складових із трьох — розрив «даних» закрито у v1.1. |
 | [`glft`](../specs/strategies/glft.yaml) | blocked | — | `none` | — | — | — | — | не виміряно | (1) Немає споживача `QuoteIntent`. |
 | [`tri_scan`](../specs/strategies/tri_scan.yaml) | blocked | — | `none` | — | — | — | — | не виміряно | (1) Класу-робота не існує. |
 | [`adaptive_ema`](../specs/strategies/adaptive_ema.yaml) | rejected | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Контрольний A/B на каталозі 1h (23 697 барів на інструмент, 4 rolling-фолди, embargo 10, конфігурації зафіксовані всередині фолду і НЕ віді… |

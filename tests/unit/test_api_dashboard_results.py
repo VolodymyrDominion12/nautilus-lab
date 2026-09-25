@@ -345,9 +345,9 @@ def test_archived_config_reproduces_every_research_argument() -> None:
 
 def test_paper_refuses_robots_it_cannot_build() -> None:
     """A robot without a paper path is refused; substituting one would misreport the run."""
-    result, _ = execute_paper(PaperRunConfig(robot="funding", bars=10, source="synthetic"))
+    result, _ = execute_paper(PaperRunConfig(robot="glft", bars=10, source="synthetic"))
     assert result["is_error"] is True
-    assert "funding" in str(result["error_message"])
+    assert "glft" in str(result["error_message"])
     assert "regime" in str(result["error_message"])
 
 
@@ -526,11 +526,11 @@ def test_research_route_rejects_impossible_combinations_before_spawning() -> Non
 def test_paper_route_rejects_a_robot_without_an_adapter() -> None:
     client = _client()
     response = client.post(
-        "/api/paper/run", json={"robot": "funding", "bars": 10, "source": "synthetic"}
+        "/api/paper/run", json={"robot": "glft", "bars": 10, "source": "synthetic"}
     )
     assert response.status_code == 400
     detail = response.json()["detail"]
-    assert "funding" in detail
+    assert "glft" in detail
     # the supported set must be named, or the user cannot pick a working robot
     assert "regime" in detail
     assert "ema" in detail

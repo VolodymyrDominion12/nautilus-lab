@@ -246,4 +246,3 @@ def vol_matched_buy_and_hold_return(
         scaling = max_leverage
 
     return scaling * bnh_return
-

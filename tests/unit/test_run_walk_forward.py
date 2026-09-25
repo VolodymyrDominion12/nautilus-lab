@@ -60,6 +60,8 @@ def test_walk_forward_selects_on_in_sample_and_reports_out_of_sample() -> None:
             self,
             request: BacktestRequest,
             bars_by_instrument: dict[str, list[OhlcvBar]],
+            *args: object,
+            **kwargs: object,
         ) -> BacktestReport:
             raise AssertionError("spread engine must not run")
 
@@ -145,6 +147,8 @@ class _WindowEngine:
         self,
         request: BacktestRequest,
         bars_by_instrument: dict[str, list[OhlcvBar]],
+        *args: object,
+        **kwargs: object,
     ) -> BacktestReport:
         raise AssertionError("spread engine must not run")
 

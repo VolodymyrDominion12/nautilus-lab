@@ -158,7 +158,9 @@ def test_write_artifact_never_overwrites_an_earlier_run(tmp_path: Path) -> None:
     first = write_artifact(run, output_dir=tmp_path)
     second = write_artifact(run, output_dir=tmp_path)
     third = write_artifact(run, output_dir=tmp_path, slug="custom-name")
-    assert first.exists() and second.exists() and third.exists()
+    assert first.exists()
+    assert second.exists()
+    assert third.exists()
     assert first.name != second.name
     assert second.name.endswith("-r2.json")
     assert third.name == "custom-name.json"

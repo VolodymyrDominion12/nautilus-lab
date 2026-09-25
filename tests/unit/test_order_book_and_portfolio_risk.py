@@ -132,6 +132,8 @@ def test_historical_var_and_cvar() -> None:
     # Mixed returns
     mixed = tuple(Decimal(str(x)) for x in [-0.05, -0.02, -0.01, 0.01, 0.02, 0.03])
     var = historical_var(mixed, confidence=Decimal("0.95"))
-    assert var is not None and var > 0
+    assert var is not None
+    assert var > 0
     cvar = historical_cvar(mixed, confidence=Decimal("0.95"))
-    assert cvar is not None and cvar >= var
+    assert cvar is not None
+    assert cvar >= var

@@ -1,6 +1,7 @@
 import json
 from email.message import Message
 from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
@@ -60,15 +61,19 @@ def test_client_fails_closed_without_api_key() -> None:
         _client(api_key="   ")
 
 
-@pytest.mark.parametrize("field", ["base_url", "model", "timeout_seconds"])
-def test_client_validates_configuration(field: str) -> None:
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"base_url": ""},
+        # urllib would open file: and custom schemes; the key must only go to an API.
+        {"base_url": "file:///etc/passwd"},
+        {"model": " "},
+        {"timeout_seconds": 0},
+    ],
+)
+def test_client_validates_configuration(overrides: dict[str, Any]) -> None:
     with pytest.raises(LlmRequestError):
-        if field == "base_url":
-            _client(base_url="")
-        elif field == "model":
-            _client(model=" ")
-        else:
-            _client(timeout_seconds=0)
+        _client(**overrides)
 
 
 def test_complete_posts_to_chat_completions(monkeypatch: pytest.MonkeyPatch) -> None:

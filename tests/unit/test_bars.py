@@ -68,7 +68,7 @@ def test_negative_volume_is_rejected() -> None:
 
 def test_naive_timestamp_is_rejected() -> None:
     with pytest.raises(InvalidBarError, match="timezone-aware"):
-        validate_bar(_bar(ts_utc=datetime(2024, 1, 1, 12, 0)))
+        validate_bar(_bar(ts_utc=datetime(2024, 1, 1, 12, 0)))  # noqa: DTZ001 — naive on purpose
 
 
 def test_taker_split_is_unknown_by_default_and_the_sell_side_is_derived() -> None:

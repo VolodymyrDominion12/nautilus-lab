@@ -62,7 +62,8 @@ def test_rolling_volatility_edge_cases() -> None:
 
     # Normal case
     vol = rolling_volatility(bars, 4, window=3)
-    assert vol is not None and vol > 0
+    assert vol is not None
+    assert vol > 0
 
     # Constant prices -> zero variance -> None
     flat_bars = _make_bars([100, 100, 100, 100])

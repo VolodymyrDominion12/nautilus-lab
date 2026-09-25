@@ -19,7 +19,8 @@ def test_bar_span_is_open_at_first_bar_open_and_closed_at_last_close() -> None:
 def test_within_bars_drops_history_and_future() -> None:
     bars = make_bars(3, step_minutes=60, start=datetime(2024, 1, 1, 1, tzinfo=UTC))
     start, end = bar_span(bars) or (None, None)
-    assert start is not None and end is not None
+    assert start is not None
+    assert end is not None
     events = [
         _Event(start),  # exactly the open of the first bar: belongs to the bar before
         _Event(start + timedelta(minutes=1)),

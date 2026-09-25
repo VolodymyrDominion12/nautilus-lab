@@ -88,9 +88,9 @@ def test_arch_forecaster_reuses_the_last_forecast_between_refits() -> None:
         min_observations=2,
         forecaster=lambda _returns: next(values, Decimal("0.09")),
     )
-    seen: list[Decimal | None] = []
-    for index in range(1, 9):
-        seen.append(forecaster.update(_bar(index), _close(index - 1)))
+    seen: list[Decimal | None] = [
+        forecaster.update(_bar(index), _close(index - 1)) for index in range(1, 9)
+    ]
 
     # `seen[0]` is the warm-up bar: no observation has been accumulated yet.
     assert seen[0] is None
@@ -110,9 +110,9 @@ def test_a_failed_refit_keeps_the_previous_forecast() -> None:
         min_observations=2,
         forecaster=lambda _returns: next(results, None),
     )
-    seen: list[Decimal | None] = []
-    for index in range(1, 9):
-        seen.append(forecaster.update(_bar(index), _close(index - 1)))
+    seen: list[Decimal | None] = [
+        forecaster.update(_bar(index), _close(index - 1)) for index in range(1, 9)
+    ]
 
     assert seen[0] is None  # warm-up bar, no observation accumulated yet
     assert all(value == Decimal("0.01") for value in seen[1:])

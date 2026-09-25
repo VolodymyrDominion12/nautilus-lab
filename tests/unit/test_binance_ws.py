@@ -125,7 +125,8 @@ def test_closed_candle_maps_payload_fields_to_decimal_bar() -> None:
     assert bar.instrument_id == "ETH/USDT.SIM"
     # `k.t` (open time) is the bar's timestamp, not `k.T` (close time).
     assert bar.ts_utc == CLOSE_TIME_UTC
-    assert bar.ts_utc.tzinfo is not None and bar.ts_utc.utcoffset() == CLOSE_TIME_UTC.utcoffset()
+    assert bar.ts_utc.tzinfo is not None
+    assert bar.ts_utc.utcoffset() == CLOSE_TIME_UTC.utcoffset()
     assert (bar.open, bar.high, bar.low, bar.close, bar.volume) == (
         Decimal("293.78000000"),
         Decimal("293.96000000"),
@@ -348,11 +349,15 @@ def test_duplicate_closed_bar_is_read_but_never_yielded_twice() -> None:
 
     yielded: list[OhlcvBar] = []
     bars = stream.bars()
+
     # The fake connection fails with a non-transport error once it runs dry: that is
     # not a reconnect case, so it propagates and ends the loop here.
-    with pytest.raises(RuntimeError, match="fake connection exhausted"):
+    def drain() -> None:
         while True:
             yielded.append(next(bars))
+
+    with pytest.raises(RuntimeError, match="fake connection exhausted"):
+        drain()
 
     # The repeated bar was parsed and dropped: a strategy must not see the same bar
     # twice, which would double-count volume and re-fire an already-acted-on signal.

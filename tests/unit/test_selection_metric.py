@@ -77,6 +77,7 @@ def test_annualized_sharpe_scales_by_sqrt_periods() -> None:
         periods_per_year=8760,
     )
     assert per_bar.sharpe_annualized is None
-    assert hourly.sharpe_like is not None and hourly.sharpe_annualized is not None
+    assert hourly.sharpe_like is not None
+    assert hourly.sharpe_annualized is not None
     ratio = hourly.sharpe_annualized / hourly.sharpe_like
     assert abs(ratio - Decimal("93.5949")) < Decimal("0.001")  # sqrt(8760)

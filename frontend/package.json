@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:logic": "vitest run src/lib/research-logic.test.ts"
+    "check:logic": "vitest run src/lib/research-logic.test.ts",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "lightweight-charts": "^5.2.1",

@@ -29,6 +29,7 @@ npm run build        # tsc -b (includes noUnusedLocals) + vite build
 npm run lint         # oxlint
 npm test             # vitest: every src/**/*.test.ts
 npm run check:logic  # only the research-discipline rules, see below
+npm run e2e          # Playwright smoke: built dashboard + real API on synthetic markets
 ```
 
 Unit tests live next to the module they cover (`src/lib/*.test.ts`) and run under vitest in
@@ -40,6 +41,27 @@ Node; `tsc -b` typechecks them with the rest of `src`, so a test cannot drift fr
   result). It replaces the old `scripts/check-research-logic.ts` assertion script.
 - `format.test.ts` pins the rule every result panel shares: an unmeasured number (`null`, `''`,
   `NaN`) comes out as "n/a" / neutral / unknown, never as a zero that reads like a result.
+
+### Browser smoke test
+
+`npm run e2e` starts two servers and drives Chromium through `e2e/smoke.e2e.ts`:
+
+- the API, `scripts/e2e_server.py` on :8765: the real `create_app`, with Binance replaced by
+  synthetic 1m bars (one closed bar per second, no network, keys or journal);
+- the dashboard as it ships (`vite build` into `dist-e2e/`, then `vite preview` on :4173), built
+  with `VITE_API_URL` pointing at that API.
+
+It checks that the dashboard reads `/api/status` through CORS and the origin gate, that a
+started paper session shows in the sessions table, that its WebSocket reports "Stream Active",
+and that new bars keep arriving. It also fails on any uncaught page error. Setup, once:
+
+```bash
+npm i -D @playwright/test
+npx playwright install chromium   # add --with-deps on a fresh Linux machine
+```
+
+The API side has its own `pytest` (`tests/unit/test_e2e_server.py`), so a change that breaks
+the synthetic sessions fails there first, with a Python traceback.
 
 ## Tabs
 

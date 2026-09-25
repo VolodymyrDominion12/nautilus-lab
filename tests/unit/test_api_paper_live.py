@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
-from nautilus_lab.api.app import LIVE_SESSIONS, app
+from nautilus_lab.api.app import app
 from nautilus_lab.api.paper_streamer import LivePaperSessionManager
 
 
@@ -16,7 +16,7 @@ def client() -> TestClient:
 
 
 def _session(session_id: str) -> LivePaperSessionManager:
-    manager = LIVE_SESSIONS.find(session_id)
+    manager = app.state.lab.sessions.find(session_id)
     assert manager is not None
     return manager
 

@@ -323,13 +323,11 @@ def test_journal_path_under_a_file_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not _not_root(), reason="root ignores directory modes")
-def test_api_refuses_to_start_instead_of_running_without_a_ledger(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_api_refuses_to_start_instead_of_running_without_a_ledger(tmp_path: Path) -> None:
     """End to end through the ASGI lifespan: the process dies, it does not trade in memory."""
     from fastapi.testclient import TestClient
 
-    from nautilus_lab.api import app as app_module
+    from nautilus_lab.api.app import create_app
 
     blocked = tmp_path / "data"
     blocked.mkdir()
@@ -337,11 +335,10 @@ def test_api_refuses_to_start_instead_of_running_without_a_ledger(
     # Absolute on purpose: the lifespan resolves a relative path against the project root,
     # which is exactly what makes /app/data/paper fail on the VPS (docs/26).
     cfg = _journal_settings(tmp_path, str(blocked / "paper" / "live_events.jsonl"))
-    monkeypatch.setattr(app_module, "settings", lambda: cfg)
     try:
         with (
             pytest.raises(RuntimeError, match="live paper journal is not writable"),
-            TestClient(app_module.app),  # start-up raises before a request is served
+            TestClient(create_app(cfg)),  # start-up raises before a request is served
         ):
             pass
     finally:

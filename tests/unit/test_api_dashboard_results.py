@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from nautilus_lab.api.app import strategy_spec_payload
 from nautilus_lab.api.catalog_service import (
     describe_catalog_cached,
     invalidate_catalog_cache,
@@ -29,6 +28,7 @@ from nautilus_lab.api.research_runner import (
     _journal_entry,
     config_from_job,
 )
+from nautilus_lab.api.routes.library import strategy_spec_payload
 from nautilus_lab.api.serializers import (
     build_job_result,
     serialize_backtest,

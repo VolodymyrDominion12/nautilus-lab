@@ -14,6 +14,10 @@
 
 Точки входу — CLI `lab` (`src/nautilus_lab/interfaces/cli.py`) і FastAPI-дашборд
 (`src/nautilus_lab/api/app.py`, запускається `uvicorn nautilus_lab.api.app:app`).
+Маршрути — у `api/routes/` (роутер на область), стан процесу — `LabContext`
+(`api/context.py`), фонові джоби — `JobManager` (`api/jobs.py`). Тест будує власний
+застосунок: `create_app(Settings(_env_file=None, ...), root=tmp_path)`, а не
+монкіпатчить модуль.
 Обидві збирають ті самі use cases через `interfaces/composition.py` — другого
 бектесту в проєкті не існує.
 
@@ -60,7 +64,7 @@
   (`Signal`), розмір рахує `application/risk.py`.
 - Лише **закриті** бари (`RollingWindow.prior()`) і `Decimal`, не `float`.
 - API не дублює логіку: зміна поведінки для CLI і для дашборду йде в
-  `application/`/`domain/`, а не в `api/app.py`.
+  `application/`/`domain/`, а не в `api/routes/`.
 
 ## Дані
 
@@ -104,7 +108,14 @@ uv run mypy src tests                            # strict = true
 .venv/bin/python specs/_validator.py             # специфікації проти коду
 make precommit-install                           # один раз: хуки ruff/gitleaks (mypy на push)
 make audit                                       # відомі CVE у uv.lock і npm runtime
+uv run python scripts/golden_backtest.py         # золоті бектести: чи змінились числа
 ```
+
+**Золоті бектести** (`tests/golden/backtests.json`) фіксують fills, комісії, баланси й
+walk-forward-доходності детермінованих синтетичних прогонів. Якщо тест
+`tests/integration/test_golden_backtest.py` упав — це або твоя зміна логіки, або
+оновлення рушія. Не оновлюй знімок мовчки: подивись, які числа й чому змінились,
+потім `--update` і коміт зі знімком та поясненням у повідомленні.
 
 CI — чотири workflow у `.github/workflows/`: `ci.yml` (Python-гейти), `frontend.yml`,
 `images.yml` (Docker + конфіги деплою), `security.yml` (залежності, секрети, самі

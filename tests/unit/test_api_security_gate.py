@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
-from nautilus_lab.api import app as app_module
-from nautilus_lab.api.security import ApiSecurity
+from nautilus_lab.api.app import app, create_app
+from nautilus_lab.infrastructure.settings import Settings
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app_module.app)
+    return TestClient(app)
 
 
 def test_cross_site_settings_write_is_refused(client: TestClient) -> None:
@@ -29,8 +31,9 @@ def test_dashboard_origin_reads_status(client: TestClient) -> None:
     assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
 
-def test_configured_token_is_enforced(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app_module, "SECURITY", ApiSecurity(token="s3cret"))
+def test_configured_token_is_enforced(tmp_path: Path) -> None:
+    cfg = Settings(_env_file=None, api_token="s3cret")  # type: ignore[call-arg]
+    client = TestClient(create_app(cfg, root=tmp_path))
     assert client.get("/api/status").status_code == 403
     assert client.get("/api/status", headers={"X-Lab-Token": "s3cret"}).status_code == 200
 

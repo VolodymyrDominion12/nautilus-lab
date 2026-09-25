@@ -4,7 +4,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from nautilus_lab.domain.decision_log import DecisionRecord
 
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.funding import FundingSnapshot
@@ -161,3 +164,9 @@ class ChatCompleter(Protocol):
     """
 
     def complete(self, *, system: str, user: str) -> str: ...
+
+
+class DecisionLogPort(Protocol):
+    """Writes detailed decision records for offline analysis and frontend visualization."""
+
+    def append(self, record: "DecisionRecord") -> None: ...

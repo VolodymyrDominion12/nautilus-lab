@@ -64,3 +64,6 @@ Claude outputs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Hypothesis example database (docs/27 E-2.7)
+.hypothesis/

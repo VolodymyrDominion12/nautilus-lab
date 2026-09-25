@@ -47,6 +47,38 @@ class RegimeRouter:
             band_k=params.bb_k,
         )
         self._last_regime: MarketRegime | None = None
+        self._last_snapshot: RegimeSnapshot | None = None
+        self._last_vpin_state: VpinState | None = None
+        self._last_hawkes_state: HawkesIntensity | None = None
+        self._last_effective_regime: MarketRegime | None = None
+
+    @property
+    def last_snapshot(self) -> RegimeSnapshot | None:
+        return self._last_snapshot
+
+    @property
+    def last_vpin_state(self) -> VpinState | None:
+        return self._last_vpin_state
+
+    @property
+    def last_hawkes_state(self) -> HawkesIntensity | None:
+        return self._last_hawkes_state
+
+    @property
+    def last_effective_regime(self) -> MarketRegime | None:
+        return self._last_effective_regime
+
+    @property
+    def uptrend_breakout(self) -> UptrendBreakout:
+        return self._uptrend
+
+    @property
+    def downtrend_breakout(self) -> DowntrendBreakout:
+        return self._downtrend
+
+    @property
+    def range_mean_reversion(self) -> RangeMeanReversion:
+        return self._range
 
     def on_trade_tick(self, *, is_buy: bool, volume: Decimal, dt_seconds: Decimal) -> None:
         if self._vpin is not None and hasattr(self._vpin, "update_from_trade"):
@@ -57,16 +89,16 @@ class RegimeRouter:
             )
 
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
-        vpin_state = self._vpin.update(bar) if self._vpin is not None else None
-        hawkes_state = self._hawkes.last if self._hawkes is not None else None
-        snapshot = self._classifier.update(bar.close)
-        if snapshot is None:
+        self._last_vpin_state = self._vpin.update(bar) if self._vpin is not None else None
+        self._last_hawkes_state = self._hawkes.last if self._hawkes is not None else None
+        self._last_snapshot = self._classifier.update(bar.close)
+        if self._last_snapshot is None:
             self._uptrend.on_bar(bar)
             self._downtrend.on_bar(bar)
             self._range.on_bar(bar)
             return None
-        if self._last_regime is not None and snapshot.regime is not self._last_regime:
-            self._last_regime = snapshot.regime
+        if self._last_regime is not None and self._last_snapshot.regime is not self._last_regime:
+            self._last_regime = self._last_snapshot.regime
             self._uptrend.on_bar(bar)
             self._downtrend.on_bar(bar)
             self._range.on_bar(bar)
@@ -74,14 +106,16 @@ class RegimeRouter:
                 instrument_id=self._instrument_id,
                 side=SignalSide.FLAT,
                 bar_ts_utc=bar.ts_utc,
-                reason=f"regime change to {snapshot.regime.value}",
-                regime=snapshot.regime,
+                reason=f"regime change to {self._last_snapshot.regime.value}",
+                regime=self._last_snapshot.regime,
             )
-        self._last_regime = snapshot.regime
-        effective_regime = self._effective_regime(snapshot, vpin_state, hawkes_state)
-        if effective_regime is MarketRegime.UPTREND:
+        self._last_regime = self._last_snapshot.regime
+        self._last_effective_regime = self._effective_regime(
+            self._last_snapshot, self._last_vpin_state, self._last_hawkes_state
+        )
+        if self._last_effective_regime is MarketRegime.UPTREND:
             return self._uptrend.on_bar(bar)
-        if effective_regime is MarketRegime.DOWNTREND:
+        if self._last_effective_regime is MarketRegime.DOWNTREND:
             return self._downtrend.on_bar(bar)
         return self._range.on_bar(bar)
 

@@ -20,8 +20,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from nautilus_lab.api.app import INGEST_SERIES_FLAGS, app
+from nautilus_lab.api.app import app
 from nautilus_lab.api.data_health import describe_data_health, invalidate_data_health_cache
+from nautilus_lab.api.routes.catalog import INGEST_SERIES_FLAGS
 from nautilus_lab.domain.stress_slices import StressSliceName
 
 

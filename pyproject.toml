@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "hypothesis>=6.100",
     "mypy>=1.14",
     "pandas-stubs>=2.2",
     "pytest>=8.0",

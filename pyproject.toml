@@ -12,14 +12,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "hypothesis>=6.100",
-    "mypy>=1.14",
-    "pandas-stubs>=2.2",
-    "pytest>=8.0",
-    "pytest-cov>=6.0",
-    "ruff>=0.11",
-]
 ml = [
     "lightgbm>=4.0",
     "numpy>=2.0",
@@ -46,6 +38,19 @@ api = [
     "pyyaml>=6.0",
     "uvicorn>=0.53.0",
     "websockets>=17.1",
+]
+
+# Dev tools are not a feature of the package, so they are a dependency group, not an
+# extra (docs/27 E-2.9): `uv sync` installs `dev` by default, `uv sync --no-dev` (the
+# Docker image) leaves it out, and nobody can `pip install nautilus-lab[dev]` by mistake.
+[dependency-groups]
+dev = [
+    "hypothesis>=6.100",
+    "mypy>=1.14",
+    "pandas-stubs>=2.2",
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.11",
 ]
 
 [project.scripts]

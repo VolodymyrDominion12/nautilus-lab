@@ -913,14 +913,6 @@ api = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-dev = [
-    { name = "hypothesis" },
-    { name = "mypy" },
-    { name = "pandas-stubs" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
 ml = [
     { name = "lightgbm" },
     { name = "numpy" },
@@ -936,35 +928,49 @@ visualization = [
     { name = "simplejson" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "hypothesis" },
+    { name = "mypy" },
+    { name = "pandas-stubs" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "arch", marker = "extra == 'research'", specifier = ">=7.0" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.141.1" },
     { name = "httpx", marker = "extra == 'alerts'", specifier = ">=0.27" },
-    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
     { name = "kaleido", marker = "extra == 'visualization'", specifier = ">=1.0" },
     { name = "lightgbm", marker = "extra == 'ml'", specifier = ">=4.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.14" },
     { name = "nautilus-trader", specifier = ">=1.231.0" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "numpy", marker = "extra == 'ml'", specifier = ">=2.0" },
     { name = "optuna", marker = "extra == 'research'", specifier = ">=4.0" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "pandas-stubs", marker = "extra == 'dev'", specifier = ">=2.2" },
     { name = "plotly", marker = "extra == 'visualization'", specifier = ">=6.0" },
     { name = "polars", marker = "extra == 'research'", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "python-dotenv", marker = "extra == 'api'", specifier = ">=1.0" },
     { name = "pyyaml", marker = "extra == 'api'", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11" },
     { name = "simplejson", marker = "extra == 'visualization'", specifier = ">=3.20" },
     { name = "uvicorn", marker = "extra == 'api'", specifier = ">=0.53.0" },
     { name = "websockets", marker = "extra == 'api'", specifier = ">=17.1" },
 ]
-provides-extras = ["dev", "ml", "research", "visualization", "alerts", "api"]
+provides-extras = ["ml", "research", "visualization", "alerts", "api"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "hypothesis", specifier = ">=6.100" },
+    { name = "mypy", specifier = ">=1.14" },
+    { name = "pandas-stubs", specifier = ">=2.2" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-cov", specifier = ">=6.0" },
+    { name = "ruff", specifier = ">=0.11" },
+]
 
 [[package]]
 name = "nautilus-trader"

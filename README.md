@@ -77,16 +77,17 @@ cd nautilus-lab
 cp .env.example .env
 
 # Базове встановлення для розробки:
-uv sync --extra dev
+uv sync
 
 # Веб-дашборд (FastAPI + uvicorn):
-uv sync --extra dev --extra api
+uv sync --extra api
 
 # Або повний стек плагінів (LightGBM, Optuna, Plotly, алерти, дашборд):
-uv sync --extra dev --extra ml --extra research --extra visualization --extra alerts --extra api
+uv sync --extra ml --extra research --extra visualization --extra alerts --extra api
 ```
 
-Optional extras із `pyproject.toml`: `dev` (pytest, ruff, mypy, coverage), `api`
+Група `dev` (pytest, ruff, mypy, coverage, hypothesis) ставиться `uv sync` за замовчуванням
+(`[dependency-groups]`). Optional extras із `pyproject.toml`: `api`
 (fastapi, uvicorn, websockets, pyyaml, python-dotenv — потрібен для дашборду),
 `ml` (LightGBM), `research` (optuna, arch, polars), `visualization` (plotly, kaleido),
 `alerts` (httpx).

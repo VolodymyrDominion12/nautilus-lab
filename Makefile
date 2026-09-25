@@ -57,16 +57,16 @@ env-check: ## Перевірити налаштування середовища
 install: install-dev ## Встановити базові залежності та dev-пакети (pytest, ruff, mypy)
 
 install-dev: ## Встановити dev-залежності через uv
-	$(UV) sync --extra dev
+	$(UV) sync
 
 install-api: ## Встановити залежності для FastAPI дашборду (uvicorn, fastapi, websockets)
-	$(UV) sync --extra dev --extra api
+	$(UV) sync --extra api
 
 install-ml: ## Встановити залежності для ML та досліджень (lightgbm, optuna, arch, polars)
-	$(UV) sync --extra dev --extra ml --extra research
+	$(UV) sync --extra ml --extra research
 
 install-all: ## Встановити всі екстри (dev, api, ml, research, alerts, visualization)
-	$(UV) sync --extra dev --extra api --extra ml --extra research --extra alerts --extra visualization
+	$(UV) sync --extra api --extra ml --extra research --extra alerts --extra visualization
 
 # ------------------------------------------------------------------------------
 # Контроль Якості та Тести

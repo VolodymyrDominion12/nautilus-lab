@@ -59,7 +59,7 @@ jobs:
         # plots an equity curve with plotly.
         run: |
           uv python install
-          uv sync --frozen --extra dev --extra ml --extra research --extra alerts --extra api --extra visualization
+          uv sync --frozen --group dev --extra ml --extra research --extra alerts --extra api --extra visualization
 
       - name: ruff check
         run: uv run ruff check

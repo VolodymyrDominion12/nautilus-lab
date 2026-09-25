@@ -15,10 +15,11 @@ import { describe, expect, test } from 'vitest';
 
 const LIMIT_BYTES = 15 * 1024;
 
-/** Still over the limit when the budget started (2026-09-25), capped at that size. */
-const OVERSIZED: Record<string, number> = {
-  './components/LiveTradingTerminal.tsx': 49_656,
-};
+/**
+ * Still over the limit when the budget started (2026-09-25), capped at that size.
+ * As of 2026-09-25 (E-2.5 completion), every component in the frontend is within the 15 KB limit!
+ */
+const OVERSIZED: Record<string, number> = {};
 
 const sources = import.meta.glob<string>('./**/*.tsx', {
   query: '?raw',

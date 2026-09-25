@@ -18,6 +18,7 @@ def client() -> TestClient:
 def _session(session_id: str) -> LivePaperSessionManager:
     manager = app.state.lab.sessions.find(session_id)
     assert manager is not None
+    assert isinstance(manager, LivePaperSessionManager)
     return manager
 
 

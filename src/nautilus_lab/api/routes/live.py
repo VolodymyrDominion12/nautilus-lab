@@ -9,7 +9,7 @@ import json
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from nautilus_lab.api.context import Lab, LabContext
 from nautilus_lab.api.live_paper_boot import live_config_from_settings
@@ -129,18 +129,22 @@ def get_paper_session_decision_log(
 ) -> dict[str, Any]:
     manager = _session_or_404(ctx, key)
     writer = ctx.sessions.decision_log_writer
-    
+
     if writer is None:
-        return {"status": "error", "message": "Decision logging is disabled or not configured", "logs": []}
-        
-    if not hasattr(writer, 'get_recent_logs'):
+        return {
+            "status": "error",
+            "message": "Decision logging is disabled or not configured",
+            "logs": [],
+        }
+
+    if not hasattr(writer, "get_recent_logs"):
         return {"status": "error", "message": "Log writer does not support reading", "logs": []}
-        
+
     try:
         logs = writer.get_recent_logs(manager.config.name, lines=lines)
         return {"status": "ok", "logs": logs}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/api/paper/sessions/{key}/pause")

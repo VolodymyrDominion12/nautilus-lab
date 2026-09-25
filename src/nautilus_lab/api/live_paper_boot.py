@@ -20,9 +20,9 @@ from nautilus_lab.api.paper_streamer import (
     LivePaperSessionManager,
     default_session_name,
 )
+from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
 from nautilus_lab.infrastructure.live_paper_journal import LivePaperJournal
 from nautilus_lab.infrastructure.settings import Settings
-from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
 
 logger = logging.getLogger(__name__)
 
@@ -287,11 +287,11 @@ def registry_from_settings(
     feed_hub: FeedHub | None = None,
 ) -> SessionRegistry:
     legacy = journal_from_settings(cfg, root=root)
-    
+
     decision_log_writer = None
     if cfg.decision_log_enabled:
         decision_log_writer = JsonlDecisionLogWriter(cfg, root=root)
-        
+
     return SessionRegistry(
         sessions_dir=sessions_dir_from_settings(cfg, root=root),
         legacy_journal=None if legacy is None else legacy.path,

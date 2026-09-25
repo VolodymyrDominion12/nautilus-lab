@@ -6,7 +6,7 @@ from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.ema import ExponentialMovingAverage
 from nautilus_lab.domain.signals import Signal, SignalSide
-from nautilus_lab.domain.vpin import VpinModel
+from nautilus_lab.domain.vpin import VpinModel, VpinState
 
 
 class VpinMomentum:
@@ -96,10 +96,12 @@ class VpinMomentum:
             return None
         if bar.close > ema:
             self._enter(direction=1, bar=bar)
-            return self._signal(bar, SignalSide.BUY, f"toxic flow up vpin={self._last_vpin_state.value}")
+            reason = f"toxic flow up vpin={self._last_vpin_state.value}"
+            return self._signal(bar, SignalSide.BUY, reason)
         if bar.close < ema:
             self._enter(direction=-1, bar=bar)
-            return self._signal(bar, SignalSide.SELL, f"toxic flow down vpin={self._last_vpin_state.value}")
+            reason = f"toxic flow down vpin={self._last_vpin_state.value}"
+            return self._signal(bar, SignalSide.SELL, reason)
         return None
 
     @property

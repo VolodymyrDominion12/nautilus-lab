@@ -112,6 +112,9 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "ANN", "RUF"]
 # Решта правил (F, I, N, UP, B, SIM, ANN, E402) до цього файлу застосовується
 # повністю — сам код генератора лишається перевіреним.
 "scripts/generate_research_notebook.py" = ["RUF001", "RUF002", "RUF003", "E501"]
+# scripts/gen_status.py — генератор docs/STATUS.md, українською, як і сама таблиця:
+# RUF001-003 спрацьовують на кожному рядку тексту, а не на коді.
+"scripts/gen_status.py" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.12"

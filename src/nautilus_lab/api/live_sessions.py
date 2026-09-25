@@ -131,8 +131,8 @@ class SessionRegistry:
     # ------------------------------------------------------------------ lifecycle
     def _manager(self, journal: LivePaperJournal | None) -> LivePaperSessionManager:
         return LivePaperSessionManager(
-            history_loader=self.history_loader, 
-            journal=journal, 
+            history_loader=self.history_loader,
+            journal=journal,
             feed_hub=self.feed_hub,
             decision_log=self.decision_log_writer,
         )

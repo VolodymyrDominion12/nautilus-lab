@@ -36,7 +36,9 @@
 | Хочу знати, що виправити в інженерії й безпеці перед наступними дослідженнями | [27-audyt-praktyk-2026-ta-roadmap-E.md](27-audyt-praktyk-2026-ta-roadmap-E.md) |
 | Хочу підняти веб-дашборд і зрозуміти його вкладки (`frontend/` + `api/`) | [../frontend/README.md](../frontend/README.md) → [20-veb-dashbord-ta-alpha-proposer.md](20-veb-dashbord-ta-alpha-proposer.md) |
 | Хочу навчити ML-модель і підключити її до робота (`lab ml train`) | [19-ml-steking-vidpovidnist.md](19-ml-steking-vidpovidnist.md) → [10-cli-dovidnyk.md](10-cli-dovidnyk.md) |
-| Хочу знати, за якими порогами робот допускають до paper | [25-xsmom-ta-vorota-dopusku.md](25-xsmom-ta-vorota-dopusku.md) |
+| Хочу одним поглядом побачити стан кожного робота й пороги гейта | [STATUS.md](STATUS.md) (генерується з коду) |
+| Хочу знати, чому ухвалено ключові архітектурні рішення | [adr/README.md](adr/README.md) |
+| Хочу знати, за якими порогами робот допускають до paper | [STATUS.md](STATUS.md) → [25-xsmom-ta-vorota-dopusku.md](25-xsmom-ta-vorota-dopusku.md) |
 | Хочу знати, які зовнішні дані варто підключати, а які ні | [23-infrastruktura-danyh-plan.md](23-infrastruktura-danyh-plan.md) |
 | Хочу використати MFT-модулі (VPIN, Хоукс, Келлі, GLFT...) у своєму коді | [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md) |
 | Шукаю точний синтаксис команд | [10-cli-dovidnyk.md](10-cli-dovidnyk.md) |

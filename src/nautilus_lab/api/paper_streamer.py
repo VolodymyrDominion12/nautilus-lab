@@ -41,9 +41,11 @@ from nautilus_lab.application.risk import (
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRouter
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.buy_and_hold import HOLD_ROBOT, BuyAndHold
+from nautilus_lab.domain.decision_log import DecisionRecord
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.errors import InvalidBarError
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
+from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.position_plan import Holding, plan_for_signal
 from nautilus_lab.domain.regime import RegimeParams
 from nautilus_lab.domain.regime_router import RegimeRouter
@@ -61,8 +63,6 @@ from nautilus_lab.infrastructure.live_paper_journal import (
     LivePaperJournal,
     ResumableSession,
 )
-from nautilus_lab.domain.decision_log import DecisionRecord
-from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.infrastructure.provenance import code_manifest
 
 if TYPE_CHECKING:
@@ -583,11 +583,11 @@ class LivePaperSessionManager:
     def _record_decision_log(self, bar: OhlcvBar, signal: Signal | None) -> None:
         if self.decision_log is None:
             return
-            
+
         robot_name = self.config.robot.lower()
-        indicators = {}
-        states = {}
-        
+        indicators: dict[str, Any] = {}
+        states: dict[str, Any] = {}
+
         if robot_name == "ema":
             indicators["fast"] = self._robot_instance.fast_value
             indicators["slow"] = self._robot_instance.slow_value
@@ -609,11 +609,12 @@ class LivePaperSessionManager:
                     states["hawkes"] = snap.hawkes
                 if hasattr(snap, "vpin"):
                     states["vpin"] = snap.vpin
-                
+
         # Handle RegimeRouter properties
+        last_reg = getattr(self._robot_instance, "last_effective_regime", None)
         if hasattr(self._robot_instance, "last_effective_regime"):
             # RegimeRouter specifics
-            states["effective_regime"] = self._robot_instance.last_effective_regime.value if self._robot_instance.last_effective_regime else None
+            states["effective_regime"] = last_reg.value if last_reg else None
             if self._robot_instance.last_vpin_state:
                 states["vpin_filter"] = str(self._robot_instance.last_vpin_state.value)
                 states["vpin_toxic"] = str(self._robot_instance.last_vpin_state.toxic)
@@ -621,10 +622,8 @@ class LivePaperSessionManager:
                 states["hawkes_filter"] = str(self._robot_instance.last_hawkes_state.value)
                 states["hawkes_toxic"] = str(self._robot_instance.last_hawkes_state.toxic)
 
-        eff_reg = "UNKNOWN"
-        if hasattr(self._robot_instance, "last_effective_regime") and self._robot_instance.last_effective_regime:
-            eff_reg = self._robot_instance.last_effective_regime.value
-            
+        eff_reg = last_reg.value if last_reg else "UNKNOWN"
+
         record = DecisionRecord(
             bar_end_utc=bar.ts_utc,
             robot=robot_name,

@@ -27,6 +27,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -41,6 +44,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -53,7 +58,7 @@ jobs:
         # for LightGBM, `alerts` for httpx, and `visualization` because the notebook
         # plots an equity curve with plotly.
         run: |
-          uv python install 3.12
+          uv python install
           uv sync --frozen --extra dev --extra ml --extra research --extra alerts --extra api --extra visualization
 
       - name: ruff check
@@ -68,8 +73,6 @@ jobs:
       - name: Spec validator (specs against code)
         run: uv run python specs/_validator.py
 
-      - name: pytest
-        run: uv run pytest
 
       - name: Smoke backtest (synthetic, no network)
         run: uv run lab research --synthetic --bars 3000
@@ -82,7 +85,6 @@ jobs:
       - name: Notebook executes (generated artifact)
         run: uv run python scripts/check_notebook.py
 
-      # ---- coverage: passing (80.50% >= 80), kept non-blocking on purpose ----
-      - name: "pytest coverage (80.50% vs fail_under 80; non-blocking)"
-        continue-on-error: true
+      # ---- coverage: passing (80.50% >= 80) ----
+      - name: "pytest coverage"
         run: uv run pytest --cov --cov-report=term-missing

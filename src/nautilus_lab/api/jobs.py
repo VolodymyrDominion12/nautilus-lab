@@ -14,6 +14,10 @@ Rules kept from the globals, each learned the hard way:
   "not running".
 * A slot is released only when the work finished, whatever way it finished.
 * `cancel` touches a process that exists and is alive; anything else is "idle".
+* With a `JobStore`, every start and end is written down, and `adopt()` at start-up
+  takes back a child an earlier API process left running (an ingest writing to its log
+  survives a restart) or records it as lost. It never kills what it finds: a pid that
+  now belongs to another program is left alone (api/job_store.py).
 """
 
 from __future__ import annotations
@@ -27,9 +31,11 @@ import threading
 from collections.abc import Callable
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from starlette.background import BackgroundTasks
+
+from nautilus_lab.api.job_store import LOST, AdoptedProcess, JobStore
 
 JOB_LABELS: dict[str, str] = {
     "research": "Walk-forward / backtest",
@@ -37,6 +43,18 @@ JOB_LABELS: dict[str, str] = {
     "ml_train": "ML training",
     "paper": "Paper order log",
 }
+
+
+class ProcessHandle(Protocol):
+    """The part of `subprocess.Popen` the manager uses; `AdoptedProcess` has it too."""
+
+    pid: int
+
+    def poll(self) -> int | None: ...
+    def terminate(self) -> None: ...
+    def kill(self) -> None: ...
+    def wait(self, timeout: float | None = None) -> int: ...
+
 
 #: Runs a finished-when-it-returns thunk somewhere other than the request.
 Schedule = Callable[[Callable[[], None]], None]
@@ -52,6 +70,7 @@ class JobManager:
         python: str,
         schedule: Schedule | None = None,
         clock: Callable[[], datetime.datetime] = lambda: datetime.datetime.now(UTC),
+        store: JobStore | None = None,
     ) -> None:
         self.reports_dir = reports_dir
         self.python = python
@@ -60,18 +79,29 @@ class JobManager:
         self._schedule = schedule
         self._clock = clock
         self._lock = threading.Lock()
-        self._processes: dict[str, subprocess.Popen[str] | None] = dict.fromkeys(JOB_LABELS)
+        self._store = store
+        self._processes: dict[str, ProcessHandle | None] = dict.fromkeys(JOB_LABELS)
         self._started: dict[str, datetime.datetime] = {}
         self._starting: set[str] = set()
 
     # ---- slots ----------------------------------------------------------------------
-    def process(self, name: str) -> subprocess.Popen[str] | None:
+    def process(self, name: str) -> ProcessHandle | None:
         return self._processes[name]
 
     def active(self, name: str) -> bool:
         """Accepted and not finished: reserved, or its process is still alive."""
         process = self._processes[name]
-        return name in self._starting or (process is not None and process.poll() is None)
+        if name in self._starting:
+            return True
+        if process is None:
+            return False
+        if process.poll() is None:
+            return True
+        if isinstance(process, AdoptedProcess):
+            # Nobody waits on an adopted child, so its end is noticed here, once.
+            self._processes[name] = None
+            self._record_finish(name, process.returncode)
+        return False
 
     def reserve(self, name: str) -> bool:
         """Claim the slot atomically. False = another run of this job is active."""
@@ -112,15 +142,59 @@ class JobManager:
         elapsed = None
         if running and started is not None:
             elapsed = round((self._clock() - started).total_seconds(), 1)
-        return {
+        payload: dict[str, Any] = {
             "running": running,
             "label": JOB_LABELS.get(name, name),
             "started_at": started.isoformat() if running and started else None,
             "elapsed_seconds": elapsed,
+            "adopted": isinstance(self._processes[name], AdoptedProcess),
         }
+        record = self._store.get(name) if self._store is not None else None
+        if record is not None and not running:
+            # How the last run ended, so "lost in a restart" is not shown as "idle".
+            payload["last_run"] = {
+                "status": record.status,
+                "returncode": record.returncode,
+                "finished_at": record.finished_at,
+            }
+        return payload
 
     def snapshot(self) -> dict[str, dict[str, Any]]:
         return {name: self.payload(name) for name in JOB_LABELS}
+
+    # ---- persistence ------------------------------------------------------------------
+    def adopt(self) -> list[str]:
+        """Take back what an earlier API process left running. One line per job found."""
+        if self._store is None:
+            return []
+        lines: list[str] = []
+        for record in self._store.running():
+            if record.name not in self._processes:
+                continue
+            handle = None if record.pid is None else AdoptedProcess(record.pid, record.command)
+            if handle is not None and handle.poll() is None:
+                self._processes[record.name] = handle
+                if record.started_at:
+                    self._started[record.name] = datetime.datetime.fromisoformat(record.started_at)
+                lines.append(f"adopted {record.name} (pid {record.pid})")
+            else:
+                self._store.finished(
+                    record.name,
+                    returncode=None,
+                    finished_at=self._clock().isoformat(),
+                    status=LOST,
+                )
+                lines.append(f"lost {record.name} (pid {record.pid} ended while the API was down)")
+        return lines
+
+    def _record_start(self, name: str, process: ProcessHandle, cmd: list[str]) -> None:
+        if self._store is not None:
+            started = self._started.get(name) or self._clock()
+            self._store.started(name, pid=process.pid, command=cmd, started_at=started.isoformat())
+
+    def _record_finish(self, name: str, returncode: int | None) -> None:
+        if self._store is not None:
+            self._store.finished(name, returncode=returncode, finished_at=self._clock().isoformat())
 
     # ---- processes --------------------------------------------------------------------
     def cancel(self, name: str) -> bool:
@@ -175,15 +249,20 @@ class JobManager:
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
             )
             self._processes[name] = process
+            self._record_start(name, process, cmd)
             assert process.stdout is not None
             extra_log = process.stdout.read()
             if extra_log.strip():
                 with log_path.open("a", encoding="utf-8") as log_file:
                     log_file.write(extra_log)
-            process.wait()
+            returncode: int | None = process.wait()
+        except BaseException:
+            returncode = None
+            raise
         finally:
             os.unlink(config_path)
             self._processes[name] = None
+            self._record_finish(name, returncode)
 
     def run_to_log(self, name: str, cmd: list[str], log_path: Path) -> int | None:
         """Run `cmd` with its output in `log_path`. Return code, or None if it never ran."""
@@ -198,11 +277,14 @@ class JobManager:
                     cmd, stdout=log_file, stderr=subprocess.STDOUT, text=True
                 )
                 self._processes[name] = process
+                self._record_start(name, process, cmd)
                 process.wait()
             except Exception as exc:
                 log_file.write(f"\nException occurred: {exc!s}\n")
+                self._record_finish(name, None)
                 return None
             log_file.write(f"\nProcess finished with code {process.returncode}\n")
+            self._record_finish(name, process.returncode)
             return process.returncode
 
 

@@ -26,6 +26,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from nautilus_lab.api.health import HealthLimits, Heartbeat, Readiness, check_readiness
+from nautilus_lab.api.job_store import JobStore
 from nautilus_lab.api.jobs import JobManager
 from nautilus_lab.api.live_paper_boot import registry_from_settings
 from nautilus_lab.api.live_sessions import SessionRegistry
@@ -104,7 +105,13 @@ class LabContext:
                 closed_bar_slack_seconds=start.live_paper_closed_bar_slack_seconds,
                 startup_grace_seconds=start.live_paper_feed_grace_seconds,
             ),
-            jobs=jobs or JobManager(reports_dir=reports_dir, python=python_executable(root)),
+            jobs=jobs
+            or JobManager(
+                reports_dir=reports_dir,
+                python=python_executable(root),
+                # Survives a restart: a running ingest is adopted, a lost run is recorded.
+                store=JobStore(root / "data" / "jobs.sqlite"),
+            ),
             settings_provider=provider,
         )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from nautilus_lab.api.routes import catalog, library, live, ml, paper, research, settings, status
+from nautilus_lab.api.routes import catalog, library, live, ml, paper, research, settings, status, decision_analysis
 
 ROUTERS: tuple[APIRouter, ...] = (
     status.router,
@@ -16,4 +16,5 @@ ROUTERS: tuple[APIRouter, ...] = (
     paper.router,
     live.router,
     settings.router,
+    decision_analysis.router,
 )

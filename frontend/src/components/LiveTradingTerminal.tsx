@@ -28,6 +28,7 @@ import {
   stopLivePaper,
   updateLiveStops,
 } from '../services/api';
+import { DecisionLogPanel } from './DecisionLogPanel';
 import type {
   LiveBar,
   LivePaperState,
@@ -68,7 +69,7 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
   const [isConnected, setIsConnected] = useState(false);
   const [statusMsg, setStatusMsg] = useState('Ready');
   const [actionError, setActionError] = useState<string | null>(null);
-  const [activeBottomTab, setActiveBottomTab] = useState<'position' | 'fills' | 'risk'>('position');
+  const [activeBottomTab, setActiveBottomTab] = useState<'position' | 'fills' | 'risk' | 'decision_logs'>('position');
 
   // Editable Stops in UI
   const [editSl, setEditSl] = useState('');
@@ -990,6 +991,17 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
           >
             Equity Trajectory & Risk
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveBottomTab('decision_logs')}
+            className={`px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${
+              activeBottomTab === 'decision_logs'
+                ? 'border-purple-500 text-purple-400'
+                : 'border-transparent text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            Decision Logs
+          </button>
         </div>
 
         {/* Tab Contents */}
@@ -1154,6 +1166,12 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
                   Awaiting the first closed bar to record equity curve snapshots.
                 </div>
               )}
+            </div>
+          )}
+
+          {activeBottomTab === 'decision_logs' && (
+            <div className="p-4">
+              <DecisionLogPanel sessionId={sessionId} />
             </div>
           )}
         </div>

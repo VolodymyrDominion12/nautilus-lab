@@ -952,6 +952,25 @@ export async function updateLiveStops(
   );
 }
 
+export async function fetchDecisionLogs(sessionId: string, lines: number = 100): Promise<any> {
+  return parseJson(
+    await fetch(sessionPath(sessionId, `decision-log?lines=${lines}`), { method: 'GET' })
+  );
+}
+
+export async function analyzeDecisions(records: any[], question: string): Promise<any> {
+  const res = await fetch(apiUrl('/api/decisions/analyze'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ records, question }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 export function getLivePaperWsUrl(sessionId?: string | null): string {
   const query = sessionId ? `?session=${encodeURIComponent(sessionId)}` : '';
   const base = apiUrl(`/api/paper/live-stream${query}`);

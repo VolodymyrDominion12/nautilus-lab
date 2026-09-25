@@ -47,6 +47,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     boot_lines = await boot_sessions(ctx.sessions, cfg, root=ctx.root)
     for line in boot_lines:
         print(f"live paper boot: {line}", flush=True)
+    # Jobs a previous API process left behind: adopt the living, record the lost.
+    for line in await asyncio.to_thread(ctx.jobs.adopt):
+        print(f"jobs boot: {line}", flush=True)
     alerts = notifier(cfg)
     if ctx.sessions.active():
         # One message per start: a deploy or a crash-restart is visible where the alerts

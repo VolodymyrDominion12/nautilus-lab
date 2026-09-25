@@ -68,6 +68,7 @@ ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/paper/sessions/{key}/resume"),
         ("POST", "/api/paper/sessions/{key}/stop"),
         ("POST", "/api/paper/sessions/{key}/update-stops"),
+        ("GET", "/api/paper/sessions/{key}/decision-log"),
         ("POST", "/api/propose"),
         ("POST", "/api/research"),
         ("POST", "/api/research/cancel"),

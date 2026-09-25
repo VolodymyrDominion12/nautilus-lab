@@ -99,6 +99,42 @@ class JsonlDecisionLogWriter(DecisionLogPort):
         except Exception as e:
             logger.error(f"Failed to write decision log to {path}: {e}")
 
+    def get_recent_logs(self, robot_name: str, lines: int = 100) -> list[dict[str, Any]]:
+        """Returns the most recent decision logs for a given robot."""
+        if not self._enabled:
+            return []
+            
+        safe_robot_name = robot_name.replace("/", "_")
+        log_files = sorted(self._dir.glob(f"{safe_robot_name}_*.jsonl"))
+        if not log_files:
+            return []
+            
+        results = []
+        for log_file in reversed(log_files):
+            try:
+                # Read backwards if possible, but simplest is reading all lines of recent files
+                # For small logs (1 file per day), this is OK
+                file_lines = log_file.read_text(encoding="utf-8").splitlines()
+                # Parse JSON
+                for line in reversed(file_lines):
+                    if not line.strip():
+                        continue
+                    try:
+                        results.append(json.loads(line))
+                        if len(results) >= lines:
+                            break
+                    except json.JSONDecodeError:
+                        continue
+                        
+                if len(results) >= lines:
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to read decision log {log_file}: {e}")
+                
+        # Return chronologically (oldest to newest among the requested slice)
+        results.reverse()
+        return results
+
 class NullDecisionLogWriter(DecisionLogPort):
     def log(self, record: DecisionRecord) -> None:
         pass

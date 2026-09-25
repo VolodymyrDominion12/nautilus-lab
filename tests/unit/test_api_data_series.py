@@ -177,7 +177,8 @@ def test_status_reports_stress_slice_windows(client: TestClient) -> None:
     for item in slices:
         start = datetime.fromisoformat(item["start"])
         end = datetime.fromisoformat(item["end"])
-        assert start.tzinfo is not None and end.tzinfo is not None
+        assert start.tzinfo is not None
+        assert end.tzinfo is not None
         assert start < end
         assert item["description"]
 

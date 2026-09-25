@@ -77,7 +77,8 @@ def test_python_gates_block_and_coverage_runs_once() -> None:
     assert not [s for s in steps if s.get("continue-on-error")], "every Python gate blocks"
     runs = [str(s.get("run", "")) for s in steps]
     pytest_runs = [r for r in runs if "pytest" in r]
-    assert len(pytest_runs) == 1 and "--cov" in pytest_runs[0], "one run, under coverage"
+    assert len(pytest_runs) == 1, "one pytest run"
+    assert "--cov" in pytest_runs[0], "under coverage"
 
 
 def test_engine_adapters_are_measured_by_coverage() -> None:

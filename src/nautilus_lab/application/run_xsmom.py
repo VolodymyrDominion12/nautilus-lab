@@ -218,7 +218,8 @@ def run_xsmom_walk_forward(
             score = _score(request, run)
             if best is None or score > best[0]:
                 best = (score, params, run)
-        assert best is not None  # candidates is never empty
+        if best is None:  # candidates is never empty; say so if that ever changes
+            raise RuntimeError("xsmom selection saw no candidate configuration")
         _, selected, is_run = best
 
         warm_ref = warmup_tail(reference, oos_ref, warmup)

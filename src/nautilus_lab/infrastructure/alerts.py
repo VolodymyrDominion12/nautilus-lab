@@ -45,7 +45,7 @@ class TelegramAlertNotifier:
                 resp.text,
             )
             return False
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — an alert must never break the caller
             logger.warning("Telegram notification failed: %s", exc)
             return False
 
@@ -76,7 +76,7 @@ class WebhookAlertNotifier:
                 resp.text,
             )
             return False
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — an alert must never break the caller
             logger.warning("Webhook notification failed: %s", exc)
             return False
 

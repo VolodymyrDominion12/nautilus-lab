@@ -52,7 +52,7 @@ def session_record(report: PaperSessionReport, *, created_at: str) -> dict[str, 
                 "entry_price": str(report.open_position.entry_price),
             }
         ),
-        "risk_breaches": {reason: count for reason, count in report.risk_breaches},
+        "risk_breaches": dict(report.risk_breaches),
         "fills": [
             {
                 "ts_utc": fill.ts_utc.isoformat(),

@@ -108,9 +108,11 @@ def discrepancies(strategies: Iterable[Mapping[str, Any]]) -> list[str]:
     """Places where a spec and the code say different things. Empty = consistent."""
     problems: list[str] = []
     by_name = {str(spec["name"]): spec for spec in strategies}
-    for robot in RobotName:
-        if robot.value not in by_name:
-            problems.append(f"{robot.value}: у коді є робот, але немає специфікації")
+    problems.extend(
+        f"{robot.value}: у коді є робот, але немає специфікації"
+        for robot in RobotName
+        if robot.value not in by_name
+    )
     known = {robot.value for robot in RobotName}
     for name, spec in by_name.items():
         if name not in known:
@@ -183,13 +185,15 @@ def _gate_table() -> list[str]:
 
 
 def _component_table(components: list[dict[str, Any]]) -> list[str]:
-    lines = ["| Компонент | Статус | Суть |", "|---|---|---|"]
-    for spec in components:
-        lines.append(
+    return [
+        "| Компонент | Статус | Суть |",
+        "|---|---|---|",
+        *(
             f"| [`{spec['name']}`](../{spec['_file']}) | {spec.get('status', '?')} "
             f"| {_first_sentence(spec.get('title', ''))} |"
-        )
-    return lines
+            for spec in components
+        ),
+    ]
 
 
 def render() -> str:

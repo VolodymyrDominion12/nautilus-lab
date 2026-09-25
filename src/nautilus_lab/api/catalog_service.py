@@ -107,7 +107,7 @@ def describe_catalog(catalog_path: str | None = None) -> dict[str, Any]:
             "instruments": instruments_info,
             "total_instruments": len(instruments_info),
         }
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — an unreadable catalog is reported, not raised
         return {
             "catalog_path": str(resolved),
             "exists": True,

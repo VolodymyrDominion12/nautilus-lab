@@ -186,7 +186,8 @@ def test_torn_last_line_is_skipped_not_fatal(tmp_path: Path) -> None:
 def test_boot_prefers_resume_over_autostart_and_autostarts_otherwise(tmp_path: Path) -> None:
     fresh = _manager(LivePaperJournal(tmp_path / "empty.jsonl"))
     assert asyncio.run(boot_live_paper(fresh, autostart=_config())) == "started"
-    assert fresh.is_active and fresh.session_id is not None
+    assert fresh.is_active
+    assert fresh.session_id is not None
 
     again = _manager(LivePaperJournal(tmp_path / "empty.jsonl"))
     other = LivePaperConfig(symbol="BTCUSDT")

@@ -51,7 +51,8 @@ def test_store_keeps_the_last_run_of_each_job(tmp_path: Path) -> None:
     # A new run replaces the row: one row per job kind, the last run.
     store.started("ingest", pid=456, command=["lab"], started_at="2026-09-25T11:00")
     again = store.get("ingest")
-    assert again is not None and (again.status, again.pid, again.returncode) == (RUNNING, 456, None)
+    assert again is not None
+    assert (again.status, again.pid, again.returncode) == (RUNNING, 456, None)
 
 
 def test_a_finished_run_is_written_down(tmp_path: Path) -> None:
@@ -59,7 +60,9 @@ def test_a_finished_run_is_written_down(tmp_path: Path) -> None:
     code = jobs.run_to_log("ingest", [sys.executable, "-c", "print('ok')"], tmp_path / "i.log")
     assert code == 0
     record = JobStore(tmp_path / "jobs.sqlite").get("ingest")
-    assert record is not None and record.status == FINISHED and record.returncode == 0
+    assert record is not None
+    assert record.status == FINISHED
+    assert record.returncode == 0
 
 
 def test_a_living_child_is_adopted_and_blocks_a_second_run(
@@ -74,14 +77,16 @@ def test_a_living_child_is_adopted_and_blocks_a_second_run(
     assert jobs.active("ingest")
     assert not jobs.reserve("ingest"), "no second ingest on top of the adopted one"
     payload = jobs.payload("ingest")
-    assert payload["running"] and payload["adopted"]
+    assert payload["running"]
+    assert payload["adopted"]
     assert payload["started_at"] == "2026-09-25T10:00:00+00:00"
 
     assert jobs.cancel("ingest")
     sleeper.wait(timeout=5)  # reaped by its real parent, the test
     assert not jobs.active("ingest")
     record = JobStore(tmp_path / "jobs.sqlite").get("ingest")
-    assert record is not None and record.status == FINISHED
+    assert record is not None
+    assert record.status == FINISHED
     assert record.returncode == AdoptedProcess.UNKNOWN_EXIT
 
 

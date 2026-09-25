@@ -90,10 +90,25 @@ src = ["src", "tests"]
 extend-exclude = [".venv", "notebooks"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM", "ANN", "RUF"]
+# Beyond style (docs/27 E-2.9): S = bandit security checks, ASYNC = blocking calls in
+# async code, DTZ = naive datetimes, PT = pytest idioms, C4/PERF = needless work,
+# BLE = `except Exception` that swallows. Intentional boundaries say so with a
+# `# noqa: <code>` and a reason on the same line, so every exception is reviewable.
+select = [
+    "E", "F", "I", "N", "UP", "B", "SIM", "ANN", "RUF",
+    "S", "ASYNC", "DTZ", "PT", "C4", "PERF", "BLE",
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "ANN"]
+# Tests: asserts are the point; fake tokens/passwords, /tmp paths, 0.0.0.0 and
+# subprocess calls on fixed argv are fixtures, not secrets or attack surface.
+"tests/**" = ["S101", "ANN", "S104", "S105", "S106", "S108", "S311", "S603"]
+# Files the decision-log work (2026-09-25) is editing right now: their BLE001/S101/C416
+# findings are left to that change instead of racing it. Remove this entry once it lands.
+"src/nautilus_lab/api/paper_streamer.py" = ["BLE001", "S101"]
+"src/nautilus_lab/infrastructure/decision_log_writer.py" = ["BLE001"]
+"src/nautilus_lab/api/live_sessions.py" = ["C416"]
+"src/nautilus_lab/api/routes/live.py" = ["BLE001", "S110"]
 # specs/_validator.py — інструмент, який перевіряє УКРАЇНСЬКІ специфікації, тож
 # його повідомлення й коментарі навмисно тією ж мовою, що й specs/*.yaml: людина
 # читає звіт поруч зі спекою. RUF001-003 шукають «неоднозначні» символи Unicode

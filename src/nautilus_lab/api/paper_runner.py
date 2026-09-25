@@ -108,7 +108,7 @@ def execute_paper(job: PaperRunConfig) -> tuple[dict[str, Any], str]:
                 f"qty={order['qty']} px={order['price']} fee={order['commission']}"
             )
         return payload, buffer.getvalue()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — job boundary: the error goes into the result file
         traceback.print_exc()
         return (
             {"is_finished": True, "is_error": True, "error_message": str(exc)},

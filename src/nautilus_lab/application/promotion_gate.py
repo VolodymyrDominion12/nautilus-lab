@@ -47,7 +47,7 @@ class WalkForwardEvidence(Protocol):
 
 
 class CheckStatus(StrEnum):
-    PASS = "pass"
+    PASS = "pass"  # noqa: S105 — a check outcome, not a password
     FAIL = "fail"
     NOT_MEASURED = "not measured"
 

@@ -213,17 +213,15 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         return holding_from_signed_qty(signed)
 
     def _open_lots(self) -> list[OpenLot]:
-        lots: list[OpenLot] = []
-        for leg in (self.config.leg_a_id, self.config.leg_b_id):
-            for position in self.cache.positions_open(instrument_id=leg):
-                lots.append(
-                    OpenLot(
-                        instrument_id=str(leg),
-                        signed_qty=_as_decimal(position.signed_qty),
-                        avg_price=_as_decimal(position.avg_px_open),
-                    )
-                )
-        return lots
+        return [
+            OpenLot(
+                instrument_id=str(leg),
+                signed_qty=_as_decimal(position.signed_qty),
+                avg_price=_as_decimal(position.avg_px_open),
+            )
+            for leg in (self.config.leg_a_id, self.config.leg_b_id)
+            for position in self.cache.positions_open(instrument_id=leg)
+        ]
 
     @property
     def equity_curve(self) -> tuple[Decimal, ...]:

@@ -204,8 +204,10 @@ def test_paper_trading_position_statelessness() -> None:
     logger.log_signal(sig2, Decimal("2.0"))
 
     assert len(logger.orders) == 2
-    assert logger.orders[0].side == "buy" and logger.orders[0].qty == Decimal("1.5")
-    assert logger.orders[1].side == "buy" and logger.orders[1].qty == Decimal("2.0")
+    assert logger.orders[0].side == "buy"
+    assert logger.orders[0].qty == Decimal("1.5")
+    assert logger.orders[1].side == "buy"
+    assert logger.orders[1].qty == Decimal("2.0")
 
     # Verify RunPaperResearch: open_positions is always 0 in the snapshot
     runner = RunPaperResearch(logger)

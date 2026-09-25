@@ -59,26 +59,22 @@ def _falling_bars(count: int = 20) -> list[OhlcvBar]:
 
 
 def _bid_heavy_books(bars: list[OhlcvBar], per_bar: int = 20) -> list[OrderBookSnapshot]:
-    snapshots: list[OrderBookSnapshot] = []
-    for bar in bars:
-        for step in range(per_bar):
-            snapshots.append(
-                OrderBookSnapshot(
-                    instrument_id=bar.instrument_id,
-                    ts_utc=bar.ts_utc + timedelta(seconds=step),
-                    bids=tuple(
-                        BookLevel(
-                            price=bar.close - Decimal("0.1") * (index + 1), size=Decimal("30")
-                        )
-                        for index in range(10)
-                    ),
-                    asks=tuple(
-                        BookLevel(price=bar.close + Decimal("0.1") * (index + 1), size=Decimal("5"))
-                        for index in range(10)
-                    ),
-                )
-            )
-    return snapshots
+    return [
+        OrderBookSnapshot(
+            instrument_id=bar.instrument_id,
+            ts_utc=bar.ts_utc + timedelta(seconds=step),
+            bids=tuple(
+                BookLevel(price=bar.close - Decimal("0.1") * (index + 1), size=Decimal("30"))
+                for index in range(10)
+            ),
+            asks=tuple(
+                BookLevel(price=bar.close + Decimal("0.1") * (index + 1), size=Decimal("5"))
+                for index in range(10)
+            ),
+        )
+        for bar in bars
+        for step in range(per_bar)
+    ]
 
 
 def _request(*, protective_stop: bool) -> BacktestRequest:

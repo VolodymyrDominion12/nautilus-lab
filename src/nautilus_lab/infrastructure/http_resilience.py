@@ -132,12 +132,12 @@ class UrllibJsonTransport:
         self._timeout_seconds = timeout_seconds
 
     def get(self, url: str, params: Mapping[str, str]) -> JsonResponse:
-        request = Request(
+        request = Request(  # noqa: S310 — callers pass the fixed https Binance endpoints
             f"{url}?{urlencode(params)}",
             headers={"User-Agent": "nautilus-lab/research"},
         )
         try:
-            with urlopen(request, timeout=self._timeout_seconds) as response:
+            with urlopen(request, timeout=self._timeout_seconds) as response:  # noqa: S310
                 body = response.read()
                 return JsonResponse(
                     status=int(response.status),

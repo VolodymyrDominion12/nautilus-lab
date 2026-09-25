@@ -32,7 +32,7 @@ def find_negative_cycles(edges: tuple[FxEdge, ...]) -> list[TriangularOpportunit
     opportunities: list[TriangularOpportunity] = []
     for start in nodes:
         dist = {node: Decimal("0") if node == start else Decimal("Infinity") for node in nodes}
-        predecessor: dict[str, str | None] = {node: None for node in nodes}
+        predecessor: dict[str, str | None] = dict.fromkeys(nodes)
         for _ in range(len(nodes) - 1):
             updated = False
             for (src, dst), w in weight.items():

@@ -1,0 +1,103 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 9c6c13b..703f909 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -59,7 +59,7 @@ jobs:
+         # plots an equity curve with plotly.
+         run: |
+           uv python install
+-          uv sync --frozen --extra dev --extra ml --extra research --extra alerts --extra api --extra visualization
++          uv sync --frozen --group dev --extra ml --extra research --extra alerts --extra api --extra visualization
+ 
+       - name: ruff check
+         run: uv run ruff check
+diff --git a/Makefile b/Makefile
+index 6cb07f4..d825339 100644
+--- a/Makefile
++++ b/Makefile
+@@ -57,16 +57,16 @@ env-check: ## Перевірити налаштування середовища
+ install: install-dev ## Встановити базові залежності та dev-пакети (pytest, ruff, mypy)
+ 
+ install-dev: ## Встановити dev-залежності через uv
+-	$(UV) sync --extra dev
++	$(UV) sync
+ 
+ install-api: ## Встановити залежності для FastAPI дашборду (uvicorn, fastapi, websockets)
+-	$(UV) sync --extra dev --extra api
++	$(UV) sync --extra api
+ 
+ install-ml: ## Встановити залежності для ML та досліджень (lightgbm, optuna, arch, polars)
+-	$(UV) sync --extra dev --extra ml --extra research
++	$(UV) sync --extra ml --extra research
+ 
+ install-all: ## Встановити всі екстри (dev, api, ml, research, alerts, visualization)
+-	$(UV) sync --extra dev --extra api --extra ml --extra research --extra alerts --extra visualization
++	$(UV) sync --extra api --extra ml --extra research --extra alerts --extra visualization
+ 
+ # ------------------------------------------------------------------------------
+ # Контроль Якості та Тести
+diff --git a/README.md b/README.md
+index 2d2d2c3..468c98c 100644
+--- a/README.md
++++ b/README.md
+@@ -77,16 +77,17 @@ cd nautilus-lab
+ cp .env.example .env
+ 
+ # Базове встановлення для розробки:
+-uv sync --extra dev
++uv sync
+ 
+ # Веб-дашборд (FastAPI + uvicorn):
+-uv sync --extra dev --extra api
++uv sync --extra api
+ 
+ # Або повний стек плагінів (LightGBM, Optuna, Plotly, алерти, дашборд):
+-uv sync --extra dev --extra ml --extra research --extra visualization --extra alerts --extra api
++uv sync --extra ml --extra research --extra visualization --extra alerts --extra api
+ ```
+ 
+-Optional extras із `pyproject.toml`: `dev` (pytest, ruff, mypy, coverage), `api`
++Група `dev` (pytest, ruff, mypy, coverage, hypothesis) ставиться `uv sync` за замовчуванням
++(`[dependency-groups]`). Optional extras із `pyproject.toml`: `api`
+ (fastapi, uvicorn, websockets, pyyaml, python-dotenv — потрібен для дашборду),
+ `ml` (LightGBM), `research` (optuna, arch, polars), `visualization` (plotly, kaleido),
+ `alerts` (httpx).
+diff --git a/pyproject.toml b/pyproject.toml
+index 3a246b0..a906312 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -12,14 +12,6 @@ dependencies = [
+ ]
+ 
+ [project.optional-dependencies]
+-dev = [
+-    "hypothesis>=6.100",
+-    "mypy>=1.14",
+-    "pandas-stubs>=2.2",
+-    "pytest>=8.0",
+-    "pytest-cov>=6.0",
+-    "ruff>=0.11",
+-]
+ ml = [
+     "lightgbm>=4.0",
+     "numpy>=2.0",
+@@ -48,6 +40,19 @@ api = [
+     "websockets>=17.1",
+ ]
+ 
++# Dev tools are not a feature of the package, so they are a dependency group, not an
++# extra (docs/27 E-2.9): `uv sync` installs `dev` by default, `uv sync --no-dev` (the
++# Docker image) leaves it out, and nobody can `pip install nautilus-lab[dev]` by mistake.
++[dependency-groups]
++dev = [
++    "hypothesis>=6.100",
++    "mypy>=1.14",
++    "pandas-stubs>=2.2",
++    "pytest>=8.0",
++    "pytest-cov>=6.0",
++    "ruff>=0.11",
++]
++
+ [project.scripts]
+ lab = "nautilus_lab.interfaces.cli:main"
+ 

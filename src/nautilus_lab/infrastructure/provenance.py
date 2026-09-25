@@ -154,8 +154,8 @@ def file_sha256(path: Path) -> str | None:
 
 def _git(repo_root: Path, *args: str) -> str | None:
     try:
-        completed = subprocess.run(
-            ["git", *args],
+        completed = subprocess.run(  # noqa: S603 — fixed git argv, no shell
+            ["git", *args],  # noqa: S607 — git from PATH, as a developer runs it
             cwd=repo_root,
             capture_output=True,
             text=True,

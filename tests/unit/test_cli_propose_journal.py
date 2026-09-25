@@ -72,7 +72,7 @@ def journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[P
     monkeypatch.setenv("JOURNAL_PATH", str(markdown))
     monkeypatch.setenv("JOURNAL_JSONL_PATH", str(jsonl))
     monkeypatch.setenv("JOURNAL_ENABLED", "false")
-    yield markdown, jsonl
+    return markdown, jsonl
 
 
 def test_propose_dry_run_needs_no_key_and_no_network(

@@ -51,7 +51,7 @@ def _parquet_rows(path: Path) -> int | None:
     """Row count from the Parquet footer. None when the file cannot be read."""
     try:
         metadata = pq.ParquetFile(path).metadata
-    except Exception:
+    except Exception:  # noqa: BLE001 — a broken file shows as "no data", not a 500
         return None
     if metadata is None:
         return None
@@ -72,7 +72,7 @@ def _parquet_span(path: Path, column: str) -> tuple[str | None, str | None]:
     """First and last value of one timestamp column, read alone. (None, None) on failure."""
     try:
         table = pq.read_table(path, columns=[column])
-    except Exception:
+    except Exception:  # noqa: BLE001 — a broken file shows as "no data", not a 500
         return None, None
     if table.num_rows == 0:
         return None, None

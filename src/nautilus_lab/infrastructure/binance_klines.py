@@ -17,11 +17,11 @@ _HTTP_TIMEOUT_SECONDS = 30
 
 class UrllibJsonClient:
     def get_json(self, url: str, params: Mapping[str, str]) -> object:
-        request = Request(
+        request = Request(  # noqa: S310 — callers pass the fixed https Binance endpoints
             f"{url}?{urlencode(params)}",
             headers={"User-Agent": "nautilus-lab/research"},
         )
-        with urlopen(request, timeout=_HTTP_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=_HTTP_TIMEOUT_SECONDS) as response:  # noqa: S310
             payload = response.read()
         return json.loads(payload.decode())
 

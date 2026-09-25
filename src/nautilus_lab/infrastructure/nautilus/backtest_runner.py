@@ -357,7 +357,7 @@ def _try_tearsheet(engine: BacktestEngine, request: BacktestRequest) -> str | No
             title=f"nautilus-lab {request.robot.value} Backtest Results",
         )
         return path
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — a tearsheet is optional; the run result is not
         _log.warning("Failed to generate tearsheet: %s", exc)
         return None
 

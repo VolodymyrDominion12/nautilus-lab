@@ -181,5 +181,4 @@ class AdoptedProcess:
             if deadline is not None and time.monotonic() >= deadline:
                 raise subprocess.TimeoutExpired(self.command, timeout or 0)
             time.sleep(0.05)
-        assert self.returncode is not None
-        return self.returncode
+        return self.UNKNOWN_EXIT if self.returncode is None else self.returncode

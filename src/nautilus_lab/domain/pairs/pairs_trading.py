@@ -118,13 +118,13 @@ class PairsTrading:
         the life of the position, exactly like mu and sigma, so a threshold can
         never be revised by bars the robot had not yet seen.
         """
-        assert self._state is not None
+        state = self._fitted()
         probability = self._params.z_entry_quantile
         if probability is None:
             return -self._params.z_entry, self._params.z_entry
-        ou = self._state.ou
-        low = empirical_quantile(self._state.spreads, probability)
-        high = empirical_quantile(self._state.spreads, Decimal("1") - probability)
+        ou = state.ou
+        low = empirical_quantile(state.spreads, probability)
+        high = empirical_quantile(state.spreads, Decimal("1") - probability)
         return (
             z_score(low, ou.mean, ou.sigma),
             z_score(high, ou.mean, ou.sigma),
@@ -186,9 +186,19 @@ class PairsTrading:
             return None
         return _PairState(coint=coint, ou=ou, spreads=spread)
 
+    def _fitted(self) -> _PairState:
+        """The current fit. Only called after `_fit_state` succeeded; says so if not.
+
+        An explicit raise rather than `assert`: `python -O` strips asserts, and this
+        invariant guards which hedge ratio an order is sized with.
+        """
+        if self._state is None:
+            raise RuntimeError("pairs robot used before a cointegration fit")
+        return self._state
+
     def _current_spread(self, price_a: Decimal, price_b: Decimal) -> Decimal:
-        assert self._state is not None
-        return price_a - self._state.coint.intercept - self._state.coint.hedge_ratio * price_b
+        state = self._fitted()
+        return price_a - state.coint.intercept - state.coint.hedge_ratio * price_b
 
     def _entry_signal(
         self,
@@ -198,8 +208,8 @@ class PairsTrading:
         short_a: bool,
         reason: str,
     ) -> SpreadSignal:
-        assert self._state is not None
-        hedge = self._state.coint.hedge_ratio
+        state = self._fitted()
+        hedge = state.coint.hedge_ratio
         if short_a:
             leg_a = LegIntent(self._leg_a, SignalSide.SELL, Decimal("1"))
             leg_b = LegIntent(self._leg_b, SignalSide.BUY, abs(hedge))
@@ -213,7 +223,7 @@ class PairsTrading:
             reason=reason,
             hedge_ratio=hedge,
             z_score=z,
-            half_life_bars=self._state.ou.half_life_bars,
+            half_life_bars=state.ou.half_life_bars,
         )
 
     def _flat_signal(
@@ -223,10 +233,9 @@ class PairsTrading:
         hedge_ratio: Decimal | None = None,
         half_life_bars: Decimal | None = None,
     ) -> SpreadSignal:
-        assert self._state is not None or hedge_ratio is not None
-        hedge = hedge_ratio if hedge_ratio is not None else self._state.coint.hedge_ratio  # type: ignore[union-attr]
+        hedge = hedge_ratio if hedge_ratio is not None else self._fitted().coint.hedge_ratio
         half_life = (
-            half_life_bars if half_life_bars is not None else self._state.ou.half_life_bars  # type: ignore[union-attr]
+            half_life_bars if half_life_bars is not None else self._fitted().ou.half_life_bars
         )
         return SpreadSignal(
             leg_a=LegIntent(self._leg_a, SignalSide.FLAT),

@@ -74,7 +74,8 @@ def test_atr_uses_wilders_recursion_not_a_rolling_mean() -> None:
     spike = _bar(origin + timedelta(hours=3), "130", "100", "130")
     atr.update(spike)
     spiked = atr.value
-    assert spiked is not None and spiked > Decimal("2")
+    assert spiked is not None
+    assert spiked > Decimal("2")
 
     # Three more quiet bars: with a rolling mean of 3 the spike would be gone by now.
     for index in range(4, 7):

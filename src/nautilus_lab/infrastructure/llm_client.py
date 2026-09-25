@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 DEFAULT_TIMEOUT_SECONDS = 120
@@ -41,6 +42,9 @@ class OpenAICompatibleChatClient:
             )
         if not base_url.strip():
             raise LlmRequestError("LLM_BASE_URL must not be empty")
+        if urlsplit(base_url.strip()).scheme not in ("http", "https"):
+            # urllib also opens file: and custom schemes; the key must only go to an API.
+            raise LlmRequestError("LLM_BASE_URL must be an http(s) URL")
         if not model.strip():
             raise LlmRequestError("LLM_MODEL must not be empty")
         if timeout_seconds < 1:
@@ -68,7 +72,7 @@ class OpenAICompatibleChatClient:
                 "stream": False,
             }
         ).encode("utf-8")
-        request = Request(
+        request = Request(  # noqa: S310 — scheme checked in __init__
             self._endpoint,
             data=body,
             method="POST",
@@ -79,7 +83,7 @@ class OpenAICompatibleChatClient:
             },
         )
         try:
-            with urlopen(request, timeout=self._timeout_seconds) as response:
+            with urlopen(request, timeout=self._timeout_seconds) as response:  # noqa: S310
                 raw = response.read()
         except HTTPError as exc:
             raise LlmRequestError(

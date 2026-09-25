@@ -43,7 +43,7 @@ DEFAULT_ALLOWED_ORIGINS: tuple[str, ...] = (
     "http://localhost:8000",
     "http://127.0.0.1:8000",
 )
-TOKEN_HEADER = "x-lab-token"
+TOKEN_HEADER = "x-lab-token"  # noqa: S105 — a header name, not a secret
 
 ROLE_FULL = "full"
 ROLE_PAPER = "paper"

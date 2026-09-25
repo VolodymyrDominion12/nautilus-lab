@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -167,8 +168,10 @@ class Watchdog:
         for key, text in current.items():
             if key not in self.known:
                 messages.append(("WARNING", f"live paper problem: {text}"))
-        for key in sorted(self.known - current.keys()):
-            messages.append(("INFO", f"live paper recovered: {self.subjects.get(key, key)}"))
+        messages.extend(
+            ("INFO", f"live paper recovered: {self.subjects.get(key, key)}")
+            for key in sorted(self.known - current.keys())
+        )
         self.known = set(current)
         self.subjects = {key: _subject(text) for key, text in current.items()}
         return messages
@@ -208,8 +211,14 @@ class Watchdog:
 
 
 def http_get(url: str, *, timeout_seconds: float = 10.0) -> None:
-    """One GET; raises on network errors and non-2xx answers (urllib does both)."""
-    with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
+    """One GET; raises on network errors and non-2xx answers (urllib does both).
+
+    Only http(s): the URL comes from `.env`, and urllib would otherwise open `file:`
+    paths too — a heartbeat setting must not be a way to read files on the server.
+    """
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise ValueError("heartbeat URL must be http(s)")
+    with urllib.request.urlopen(url, timeout=timeout_seconds) as response:  # noqa: S310 — scheme checked above
         response.read(1024)
 
 
@@ -243,7 +252,7 @@ class Heartbeat:
         if target is not None:
             try:
                 await asyncio.to_thread(self.send, target)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — a missed ping must never stop the watchdog
                 # The URL can carry a secret check id: log the failure, not the URL.
                 logger.warning("live paper heartbeat not delivered: %s", type(exc).__name__)
                 return

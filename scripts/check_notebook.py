@@ -88,8 +88,8 @@ def execute_notebook(path: Path) -> int:
         # indistinguishable from a slow one in CI logs.
         print(f"  cell {index}: running…", flush=True)
         try:
-            exec(compile(source, f"{path}:cell {index}", "exec"), namespace)
-        except Exception:  # deliberately broad: any cell failure is the finding
+            exec(compile(source, f"{path}:cell {index}", "exec"), namespace)  # noqa: S102 — running the generated notebook IS the check
+        except Exception:  # noqa: BLE001 — deliberately broad: any cell failure is the finding
             print(f"\n{path}: cell {index} raised:", file=sys.stderr)
             traceback.print_exc()
             return 1

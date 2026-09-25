@@ -290,7 +290,7 @@ def build_job_result(
         "robot": robot,
         "source": source,
         "report_label": report_label,
-        "finished_at": (finished_at or datetime.now()).isoformat(),
+        "finished_at": (finished_at or datetime.now().astimezone()).isoformat(),
         "tearsheet_url": ts_url,
         "error_message": error_message,
         "starting_equity": _optional_float(starting_equity),

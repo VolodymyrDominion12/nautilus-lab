@@ -38,7 +38,8 @@ def _load_report_script() -> ModuleType:
     """scripts/ is not a package; load the report the way `uv run python scripts/...` does."""
     path = Path(__file__).resolve().parents[2] / "scripts" / "live_paper_report.py"
     spec = importlib.util.spec_from_file_location("live_paper_report", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     # Registered before running: its dataclasses resolve string annotations through it.
     sys.modules[spec.name] = module
@@ -119,7 +120,7 @@ def test_warnings_say_why_a_run_is_not_reproducible(manifest: RunManifest, reaso
     [{"code_dirty": "no"}, {"catalog_files": "12"}, {"catalog_files": True}, {"lock_sha256": 1}],
 )
 def test_from_dict_rejects_wrong_types(payload: dict[str, object]) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must be"):
         RunManifest.from_dict(payload)
 
 
@@ -129,7 +130,8 @@ def test_from_dict_rejects_wrong_types(payload: dict[str, object]) -> None:
 def test_clean_checkout_is_reproducible(repo: Path) -> None:
     manifest = collect_manifest(repo_root=repo, environ={})
     assert manifest.revision_source == "git"
-    assert manifest.code_revision is not None and len(manifest.code_revision) == 40
+    assert manifest.code_revision is not None
+    assert len(manifest.code_revision) == 40
     assert manifest.code_dirty is False
     assert manifest.reproducible
     assert manifest.lock_sha256 is not None

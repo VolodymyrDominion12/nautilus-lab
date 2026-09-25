@@ -224,7 +224,7 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
 
         msg = f"unknown model_type: {job.model_type}"
         raise ValueError(msg)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — job boundary: the error goes into the result file
         traceback.print_exc()
         return (
             {

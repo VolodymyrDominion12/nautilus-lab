@@ -104,7 +104,9 @@ def get_reports(ctx: Lab) -> dict[str, Any]:
                 "filename": os.path.basename(f),
                 "path": f,
                 "url": f"/static_reports/{os.path.basename(f)}",
-                "modified": datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "modified": datetime.datetime.fromtimestamp(mtime, tz=UTC)
+                .astimezone()
+                .strftime("%Y-%m-%d %H:%M:%S"),
                 "size_kb": round(size / 1024, 1),
             }
         )
@@ -184,8 +186,9 @@ def get_hypotheses(ctx: Lab) -> dict[str, Any]:
                 review = data.get("review")
                 if isinstance(review, dict):
                     item["review_status"] = review.get("status", "pending")
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            # Unreadable or not JSON: list the file anyway, without its summary fields.
+            item["review_status"] = "unreadable"
         items.append(item)
     return {"hypotheses": items}
 

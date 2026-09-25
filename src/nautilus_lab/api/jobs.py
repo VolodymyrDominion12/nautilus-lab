@@ -246,13 +246,12 @@ class JobManager:
             (self.reports_dir / json_name).unlink(missing_ok=True)
 
         try:
-            process = subprocess.Popen(
+            process = subprocess.Popen(  # noqa: S603 — fixed argv built by the API, no shell
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
             )
             self._processes[name] = process
             self._record_start(name, process, cmd)
-            assert process.stdout is not None
-            extra_log = process.stdout.read()
+            extra_log = process.stdout.read() if process.stdout is not None else ""
             if extra_log.strip():
                 with log_path.open("a", encoding="utf-8") as log_file:
                     log_file.write(extra_log)
@@ -270,17 +269,17 @@ class JobManager:
         with log_path.open("w", encoding="utf-8") as log_file:
             log_file.write(f"Command: {' '.join(cmd)}\n")
             log_file.write(
-                f"Started at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"Started at: {datetime.datetime.now().astimezone():%Y-%m-%d %H:%M:%S}\n\n"
             )
             log_file.flush()
             try:
-                process = subprocess.Popen(
+                process = subprocess.Popen(  # noqa: S603 — fixed argv built by the API, no shell
                     cmd, stdout=log_file, stderr=subprocess.STDOUT, text=True
                 )
                 self._processes[name] = process
                 self._record_start(name, process, cmd)
                 process.wait()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — the log is where the dashboard shows it
                 log_file.write(f"\nException occurred: {exc!s}\n")
                 self._record_finish(name, None)
                 return None

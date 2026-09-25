@@ -162,9 +162,11 @@ def differences(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> list[
             lines.append(f"{name}: new case (not in the snapshot)")
             continue
         old, new = old_cases[name], new_cases[name]
-        for key in sorted(old.keys() | new.keys()):
-            if old.get(key) != new.get(key):
-                lines.append(f"{name}.{key}: {old.get(key)!r} -> {new.get(key)!r}")
+        lines.extend(
+            f"{name}.{key}: {old.get(key)!r} -> {new.get(key)!r}"
+            for key in sorted(old.keys() | new.keys())
+            if old.get(key) != new.get(key)
+        )
     return lines
 
 

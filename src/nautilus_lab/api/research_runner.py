@@ -499,7 +499,7 @@ def execute_research(
                 ),
             )
         return _stamped(result, manifest), buffer.getvalue()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — job boundary: the error goes into the result file
         traceback.print_exc()
         result = build_job_result(
             run_type="error",
@@ -569,7 +569,7 @@ def write_job_artifacts(
         }
     log_path = reports_dir / "last_run.log"
     json_path = reports_dir / "last_run.json"
-    started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    started = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     header = f"Command: {command_line}\nStarted at: {started}\n\n"
     log_path.write_text(header + log_text, encoding="utf-8")
     if not result.get("is_error"):

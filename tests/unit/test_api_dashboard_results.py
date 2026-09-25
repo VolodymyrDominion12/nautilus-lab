@@ -532,7 +532,8 @@ def test_paper_route_rejects_a_robot_without_an_adapter() -> None:
     detail = response.json()["detail"]
     assert "funding" in detail
     # the supported set must be named, or the user cannot pick a working robot
-    assert "regime" in detail and "ema" in detail
+    assert "regime" in detail
+    assert "ema" in detail
 
 
 def test_status_reports_every_job_and_the_selected_catalog() -> None:

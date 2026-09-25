@@ -22,7 +22,8 @@ def _refusal(security: ApiSecurity, **overrides: str | None) -> str | None:
 def test_foreign_origin_is_refused_even_without_a_token() -> None:
     """The attack: any page in the browser rewriting .env through the dashboard API."""
     reason = _refusal(ApiSecurity(), origin="https://evil.example")
-    assert reason is not None and "origin" in reason
+    assert reason is not None
+    assert "origin" in reason
 
 
 def test_dashboard_origin_and_non_browser_clients_pass_without_a_token() -> None:
@@ -63,7 +64,8 @@ def test_paper_role_refuses_research_and_settings_writes() -> None:
         ("PATCH", "/api/journal/3"),
     ]:
         reason = _refusal(paper, method=method, path=path)
-        assert reason is not None and "LAB_ROLE=paper" in reason, (method, path)
+        assert reason is not None, (method, path)
+        assert "LAB_ROLE=paper" in reason, (method, path)
 
 
 def test_paper_role_keeps_reads_and_live_terminal_controls() -> None:
@@ -91,7 +93,8 @@ def test_full_role_is_the_default_and_unknown_role_fails_closed() -> None:
 def test_paper_role_still_checks_origin_and_token_first() -> None:
     paper = ApiSecurity.from_values(origins="https://lab.example", token="s3cret", role="paper")
     reason = _refusal(paper, method="GET", path="/api/status", origin="https://evil.example")
-    assert reason is not None and "origin" in reason
+    assert reason is not None
+    assert "origin" in reason
     assert _refusal(paper, method="GET", path="/api/status") == "missing or invalid API token"
     assert (
         _refusal(paper, method="POST", path="/api/paper/live/stop", presented_token="s3cret")

@@ -124,7 +124,7 @@ class MarketFeed:
             except asyncio.CancelledError:
                 self.connected = False
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — any feed error means reconnect
                 self.connected = False
                 self.reconnects += 1
                 logger.warning("Feed %s error: %s. Reconnecting in %ss", self.key, exc, backoff)

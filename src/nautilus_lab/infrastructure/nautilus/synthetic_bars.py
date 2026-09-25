@@ -18,7 +18,7 @@ def synthetic_ohlcv(
     """Deterministic random-walk bars. Validated, UTC, no future timestamps."""
     if count < 1:
         raise ValueError("count must be >= 1")
-    rng = Random(seed)
+    rng = Random(seed)  # noqa: S311 — seeded test data, reproducibility is the point
     origin = start or datetime(2024, 1, 1, tzinfo=UTC)
     price = start_price
     bars: list[OhlcvBar] = []
@@ -50,7 +50,7 @@ def synthetic_regime_ohlcv(
     """Up trend, then range, then down trend — enough structure for regime tests."""
     if count < 3:
         raise ValueError("count must be >= 3")
-    rng = Random(seed)
+    rng = Random(seed)  # noqa: S311 — seeded test data, reproducibility is the point
     origin = start or datetime(2024, 1, 1, tzinfo=UTC)
     third = count // 3
     segments = (

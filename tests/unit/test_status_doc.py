@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _generator() -> ModuleType:
     spec = importlib.util.spec_from_file_location("gen_status", ROOT / "scripts" / "gen_status.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -41,7 +42,8 @@ def test_a_spec_claiming_an_adapter_the_code_lacks_is_reported() -> None:
         for spec in specs
     ]
     problems = generator.discrepancies(lying)
-    assert len(problems) == 1 and problems[0].startswith("glft:")
+    assert len(problems) == 1
+    assert problems[0].startswith("glft:")
 
 
 def test_a_robot_without_a_spec_is_reported() -> None:

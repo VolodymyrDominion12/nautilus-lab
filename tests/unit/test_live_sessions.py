@@ -119,7 +119,8 @@ def test_two_sessions_share_one_feed_and_see_the_same_bars(tmp_path: Path) -> No
     assert len(market.opened) == 1, "one socket for two sessions on ETHUSDT 1h"
     assert [bar.time for bar in a.recent_bars] == [bar.time for bar in b.recent_bars]
     assert len(a.recent_bars) == 6
-    assert b.position is not None and b.position.side == "LONG", "hold buys and keeps"
+    assert b.position is not None, "hold buys and keeps"
+    assert b.position.side == "LONG", "hold buys and keeps"
     assert b.position.stop_loss is None, "the benchmark has no stop"
     assert b.current_equity > 0
 
@@ -260,8 +261,10 @@ def test_single_file_session_from_before_is_resumed_and_named(tmp_path: Path) ->
     registry, outcome = asyncio.run(upgraded())
     assert outcome == ["running regime-eth"], "the running session is recognised, not doubled"
     manager = registry.find("regime-eth")
-    assert manager is not None and manager.session_id == old.session_id
-    assert manager.journal is not None and manager.journal.path == legacy
+    assert manager is not None
+    assert manager.session_id == old.session_id
+    assert manager.journal is not None
+    assert manager.journal.path == legacy
 
 
 def test_summaries_compare_each_robot_with_the_benchmark(tmp_path: Path) -> None:
@@ -316,7 +319,8 @@ def test_portfolio_file_is_parsed_strictly() -> None:
     assert [c.name for c in configs] == ["regime-eth", "hold-eth"]
     assert configs[0].starting_equity == Decimal("5000")
     assert configs[0].risk_per_trade == Decimal("0.003"), "risk comes from the tested settings"
-    assert configs[1].symbol == "ETHUSDT" and configs[1].notes == "benchmark"
+    assert configs[1].symbol == "ETHUSDT"
+    assert configs[1].notes == "benchmark"
     assert configs[0].created_from == "portfolio"
     for bad, message in [
         ({"sessions": [{"robot": "ema"}]}, "name"),

@@ -175,7 +175,7 @@ def test_unknown_robot_fails_closed_instead_of_becoming_regime() -> None:
 
 def test_start_with_unknown_robot_keeps_the_previous_session_config() -> None:
     manager = LivePaperSessionManager(LivePaperConfig(symbol="BTCUSDT"))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="cannot build robot"):
         asyncio.run(manager.start(LivePaperConfig(symbol="ETHUSDT", robot="nope")))
     assert manager.config.symbol == "BTCUSDT"
     assert not manager.is_active

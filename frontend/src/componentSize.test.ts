@@ -17,7 +17,6 @@ const LIMIT_BYTES = 15 * 1024;
 
 /** Still over the limit when the budget started (2026-09-25), capped at that size. */
 const OVERSIZED: Record<string, number> = {
-  './components/ResearchLab.tsx': 56_894,
   './components/LiveTradingTerminal.tsx': 49_656,
   './components/AlphaIdeasTab.tsx': 24_570,
   './components/CommandCenter.tsx': 23_002,

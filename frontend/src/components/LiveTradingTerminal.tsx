@@ -1169,10 +1169,14 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
             </div>
           )}
 
-          {activeBottomTab === 'decision_logs' && sessionId && (
-            <div className="p-4">
+          {activeBottomTab === 'decision_logs' && (
+            sessionId ? (
               <DecisionLogPanel sessionId={sessionId} />
-            </div>
+            ) : (
+              <div className="py-8 text-center text-xs text-gray-500">
+                No active session. Start a session to see decision logs.
+              </div>
+            )
           )}
         </div>
       </div>

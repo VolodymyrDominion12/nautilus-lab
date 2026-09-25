@@ -1,51 +1,30 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronUp,
-  ClipboardCopy,
-  ExternalLink,
-  FileText,
-  Layers,
-  Play,
-  RefreshCw,
-  RotateCcw,
-  Settings2,
-  Square,
-  Zap,
-} from 'lucide-react';
-import { staticReportUrl } from '../config';
-import {
-  cancelResearch,
-  fetchCatalog,
-  fetchDataHealth,
-  fetchResearchLog,
-  fetchReports,
-  runResearch,
-} from '../services/api';
-import type {
-  CatalogResponse,
-  DataHealthInstrument,
-  HistoryEntry,
-  ReportItem,
-  ResearchRunConfig,
-  ResearchSummary,
-  StrategySpec,
-  StressSliceInfo,
-} from '../services/api';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Layers, Zap } from 'lucide-react';
+
+import type { HistoryEntry, StrategySpec, StressSliceInfo } from '../services/api';
+import { catalogQuery, dataHealthQuery, queryKeys, reportsQuery } from '../services/queries';
+import { cliCommand, preflight, preflightBlocking } from '../lib/research';
+import type { PreflightIssue } from '../lib/research';
+import { toCliInput, toRunParams } from '../lib/researchForm';
 import { WalkForwardBuilder } from './WalkForwardBuilder';
 import { ExperimentHistory } from './ExperimentHistory';
 import { RunsCompare } from './RunsCompare';
 import { VerdictPanel } from './VerdictPanel';
 import { FoldBreakdown } from './FoldBreakdown';
-import { InfoTooltip } from './InfoTooltip';
 import { PboPanel } from './PboPanel';
 import { LogPanel } from './LogPanel';
 import { ResearchPresets } from './ResearchPresets';
 import type { ResearchPresetConfig } from './ResearchPresets';
-import { formatDateTime } from '../lib/format';
-import { cliCommand, preflight, preflightBlocking, sliceOverlapsCatalog } from '../lib/research';
-import type { PreflightIssue } from '../lib/research';
+import { AdvancedGates } from './research/AdvancedGates';
+import { BasicControls } from './research/BasicControls';
+import { ParamOverrides } from './research/ParamOverrides';
+import { ResearchBanners } from './research/ResearchBanners';
+import { RunConditions } from './research/RunConditions';
+import { RunControls } from './research/RunControls';
+import { TearsheetPanel } from './research/TearsheetPanel';
+import { useResearchForm } from './research/useResearchForm';
+import { useResearchRun } from './research/useResearchRun';
 
 interface ResearchLabProps {
   strategies: StrategySpec[];
@@ -60,297 +39,79 @@ interface ResearchLabProps {
   onClearExternalConfig?: () => void;
 }
 
-interface PersistedForm {
-  robot?: string;
-  source?: 'catalog' | 'synthetic';
-  bars?: number;
-  folds?: number;
-  isFraction?: number;
-  embargoBars?: number;
-  useOptuna?: boolean;
-  optunaTrials?: number;
-  usePbo?: boolean;
-  pboBlocks?: number;
-  barVpin?: boolean;
-  tickVpin?: boolean;
-  hawkes?: boolean;
-  stressSlice?: string;
-  generateTearsheet?: boolean;
-  journal?: boolean;
-  notify?: boolean;
-  fullSample?: boolean;
-  windowMode?: 'fraction' | 'custom';
-  isStart?: string;
-  isEnd?: string;
-  oosStart?: string;
-  oosEnd?: string;
-  overrideParams?: boolean;
-  paramOverrides?: Record<string, string>;
-  instrumentId?: string;
-}
+const NO_ROBOTS: string[] = [];
+const NO_SLICES: StressSliceInfo[] = [];
 
-const FORM_STORAGE_KEY = 'nautilus-lab:research-form:v2';
-
-const loadPersistedForm = (): PersistedForm => {
-  try {
-    const raw = window.localStorage.getItem(FORM_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as PersistedForm) : {};
-  } catch {
-    return {};
-  }
-};
-
-/** Poll the log only while a run is in flight; a finished run never re-polls. */
+/**
+ * The research tab: the form (`research/useResearchForm`), the job
+ * (`research/useResearchRun`) and the result panels. Parameters are chosen on the
+ * in-sample window only; the out-of-sample run is the result.
+ */
 export const ResearchLab: React.FC<ResearchLabProps> = ({
   strategies,
   initialRobot = 'regime',
   selectedCatalogPath,
-  tickVpinRobots = [],
-  hawkesRobots = [],
-  stressSlices = [],
+  tickVpinRobots = NO_ROBOTS,
+  hawkesRobots = NO_ROBOTS,
+  stressSlices = NO_SLICES,
   externalConfig = null,
   onClearExternalConfig,
 }) => {
-  const persisted = useMemo(() => loadPersistedForm(), []);
+  const queryClient = useQueryClient();
+  const catalogResult = useQuery(catalogQuery(selectedCatalogPath ?? ''));
+  // Which optional series (ticks, taker flow, funding) sit beside the bars. The engine
+  // reads a missing tick series as an empty one, so the tick filters are checked against
+  // this before a run is launched rather than discovered in the log afterwards.
+  const healthResult = useQuery(dataHealthQuery(selectedCatalogPath ?? ''));
+  const reports = useQuery(reportsQuery()).data?.reports ?? [];
+
+  const catalog = catalogResult.data;
+  const catalogError =
+    catalog?.error ??
+    (catalogResult.error ? catalogResult.error.message || 'Failed to load the catalog' : null);
+  const catalogInstruments = useMemo(() => catalog?.instruments ?? [], [catalog?.instruments]);
+
+  const { form, update, applyPreset, loadArchived, reset } = useResearchForm({
+    initialRobot,
+    externalConfig,
+    strategies,
+    catalogInstruments,
+  });
+  const { source, fullSample, usePbo, windowMode, isFraction, embargoBars, folds } = form;
+  const { isStart, isEnd, oosStart, oosEnd } = form;
 
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
-  const [robot, setRobot] = useState(externalConfig?.robot ?? persisted.robot ?? initialRobot);
-  const [source, setSource] = useState<'catalog' | 'synthetic'>(persisted.source ?? 'catalog');
-  const [bars, setBars] = useState(persisted.bars ?? 3000);
-  const [folds, setFolds] = useState(persisted.folds ?? 2);
-  const [isFraction, setIsFraction] = useState(persisted.isFraction ?? 0.7);
-  const [embargoBars, setEmbargoBars] = useState(persisted.embargoBars ?? 10);
-  const [useOptuna, setUseOptuna] = useState(persisted.useOptuna ?? false);
-  const [optunaTrials, setOptunaTrials] = useState(persisted.optunaTrials ?? 20);
-  const [usePbo, setUsePbo] = useState(persisted.usePbo ?? false);
-  const [pboBlocks, setPboBlocks] = useState(persisted.pboBlocks ?? 8);
-  const [barVpin, setBarVpin] = useState(persisted.barVpin ?? false);
-  const [tickVpin, setTickVpin] = useState(persisted.tickVpin ?? false);
-  const [hawkes, setHawkes] = useState(persisted.hawkes ?? false);
-  const [stressSlice, setStressSlice] = useState(persisted.stressSlice ?? '');
-  const [generateTearsheet, setGenerateTearsheet] = useState(persisted.generateTearsheet ?? true);
-  const [journal, setJournal] = useState(persisted.journal ?? false);
-  const [notify, setNotify] = useState(persisted.notify ?? false);
-  const [fullSample, setFullSample] = useState(persisted.fullSample ?? false);
-  const [windowMode, setWindowMode] = useState<'fraction' | 'custom'>(
-    persisted.windowMode ?? 'fraction',
-  );
-  const [isStart, setIsStart] = useState(persisted.isStart ?? '');
-  const [isEnd, setIsEnd] = useState(persisted.isEnd ?? '');
-  const [oosStart, setOosStart] = useState(persisted.oosStart ?? '');
-  const [oosEnd, setOosEnd] = useState(persisted.oosEnd ?? '');
-  const [overrideParams, setOverrideParams] = useState(persisted.overrideParams ?? false);
-  const [paramOverrides, setParamOverrides] = useState<Record<string, string>>(
-    persisted.paramOverrides ?? {},
-  );
-  const [instrumentId, setInstrumentId] = useState(persisted.instrumentId ?? '');
-
-  const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [dataHealth, setDataHealth] = useState<DataHealthInstrument[] | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
+  const [pickedTearsheet, setPickedTearsheet] = useState<string | null>(null);
+  const selectedTearsheetUrl = pickedTearsheet ?? reports[0]?.url ?? null;
 
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [log, setLog] = useState('');
-  const [summary, setSummary] = useState<ResearchSummary | null>(null);
-  const [launchError, setLaunchError] = useState<string | null>(null);
-  const [launchedAtIso, setLaunchedAtIso] = useState<string | null>(null);
-  const [staleNotice, setStaleNotice] = useState<string | null>(null);
-  const [reports, setReports] = useState<ReportItem[]>([]);
-  const [selectedTearsheetUrl, setSelectedTearsheetUrl] = useState<string | null>(null);
-  const [copiedCli, setCopiedCli] = useState(false);
+  const onFinished = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.reports });
+    setHistoryKey((value) => value + 1);
+  }, [queryClient]);
+  const job = useResearchRun({ onFinished, onTearsheet: setPickedTearsheet });
+  const summary = job.summary;
 
-  // Wall-clock marker of the launch, used to tell this run's result from a previous one.
-  const launchRef = useRef<{ startedAtMs: number; sawRunning: boolean; polls: number } | null>(null);
-
-  const catalogInstruments = useMemo(() => catalog?.instruments ?? [], [catalog?.instruments]);
   const selectedInstrument =
-    catalogInstruments.find((item) => item.instrument_id === instrumentId) ??
+    catalogInstruments.find((item) => item.instrument_id === form.instrumentId) ??
     catalogInstruments[0] ??
     null;
-
-  // Persist the form so a reload does not silently reset research conditions.
-  useEffect(() => {
-    const payload: PersistedForm = {
-      robot,
-      source,
-      bars,
-      folds,
-      isFraction,
-      embargoBars,
-      useOptuna,
-      optunaTrials,
-      usePbo,
-      pboBlocks,
-      barVpin,
-      tickVpin,
-      hawkes,
-      stressSlice,
-      generateTearsheet,
-      journal,
-      notify,
-      fullSample,
-      windowMode,
-      isStart,
-      isEnd,
-      oosStart,
-      oosEnd,
-      overrideParams,
-      paramOverrides,
-      instrumentId,
-    };
-    try {
-      window.localStorage.setItem(FORM_STORAGE_KEY, JSON.stringify(payload));
-    } catch {
-      // storage disabled: losing form memory is acceptable, losing the run is not
-    }
-  }, [
-    robot,
-    source,
-    bars,
-    folds,
-    isFraction,
-    embargoBars,
-    useOptuna,
-    optunaTrials,
-    usePbo,
-    pboBlocks,
-    barVpin,
-    tickVpin,
-    hawkes,
-    stressSlice,
-    generateTearsheet,
-    journal,
-    notify,
-    fullSample,
-    windowMode,
-    isStart,
-    isEnd,
-    oosStart,
-    oosEnd,
-    overrideParams,
-    paramOverrides,
-    instrumentId,
-  ]);
-
-  const loadReports = async () => {
-    try {
-      const data = await fetchReports();
-      setReports(data.reports);
-      setSelectedTearsheetUrl((current) => current ?? data.reports[0]?.url ?? null);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  useEffect(() => {
-    loadReports();
-  }, []);
-
-  useEffect(() => {
-    setRobot(initialRobot);
-  }, [initialRobot]);
-
-  useEffect(() => {
-    if (externalConfig) {
-      if (externalConfig.robot) setRobot(externalConfig.robot);
-      if (externalConfig.formula) {
-        setOverrideParams(true);
-        setParamOverrides((prev) => ({
-          ...prev,
-          formula: externalConfig.formula!,
-        }));
-      }
-    }
-  }, [externalConfig]);
-
-  const handleApplyPreset = (preset: ResearchPresetConfig) => {
-    setActivePresetId(preset.id);
-    const c = preset.config;
-    if (c.robot) setRobot(c.robot);
-    if (c.source) setSource(c.source);
-    if (c.bars !== undefined) setBars(c.bars);
-    if (c.folds !== undefined) setFolds(c.folds);
-    if (c.isFraction !== undefined) setIsFraction(c.isFraction);
-    if (c.embargoBars !== undefined) setEmbargoBars(c.embargoBars);
-    if (c.useOptuna !== undefined) setUseOptuna(c.useOptuna);
-    if (c.optunaTrials !== undefined) setOptunaTrials(c.optunaTrials);
-    if (c.usePbo !== undefined) setUsePbo(c.usePbo);
-    if (c.pboBlocks !== undefined) setPboBlocks(c.pboBlocks);
-    if (c.barVpin !== undefined) setBarVpin(c.barVpin);
-    if (c.tickVpin !== undefined) setTickVpin(c.tickVpin);
-    if (c.hawkes !== undefined) setHawkes(c.hawkes);
-    if (c.stressSlice !== undefined) setStressSlice(c.stressSlice);
-    if (c.generateTearsheet !== undefined) setGenerateTearsheet(c.generateTearsheet);
-    if (c.fullSample !== undefined) setFullSample(c.fullSample);
-    if (c.windowMode !== undefined) setWindowMode(c.windowMode);
-  };
-
-  useEffect(() => {
-    fetchCatalog(selectedCatalogPath)
-      .then((data) => {
-        setCatalog(data);
-        setCatalogError(data.error ?? null);
-      })
-      .catch((err) =>
-        setCatalogError(err instanceof Error ? err.message : 'Failed to load the catalog'),
-      );
-  }, [selectedCatalogPath]);
-
-  // Which optional series (ticks, taker flow, funding) sit beside the bars. The engine
-  // reads a missing tick series as an empty one, so the tick filters have to be checked
-  // against this before a run is launched rather than discovered in the log afterwards.
-  useEffect(() => {
-    fetchDataHealth(selectedCatalogPath)
-      .then((data) => setDataHealth(data.instruments))
-      .catch(() => setDataHealth(null));
-  }, [selectedCatalogPath]);
-
-  // Keep the instrument selection valid when the catalog changes.
-  useEffect(() => {
-    const first = catalogInstruments[0];
-    if (first === undefined) return;
-    if (!catalogInstruments.some((item) => item.instrument_id === instrumentId)) {
-      setInstrumentId(first.instrument_id);
-    }
-  }, [catalogInstruments, instrumentId]);
-
-  const selectedStrategyInfo = strategies.find((s) => s.name === robot);
-
-  // Seed override inputs from the spec defaults the first time the toggle is used.
-  useEffect(() => {
-    const spec = strategies.find((s) => s.name === robot);
-    if (!spec?.params?.length) return;
-    setParamOverrides((prev) => {
-      if (Object.keys(prev).length > 0) return prev;
-      const defaults: Record<string, string> = {};
-      for (const param of spec.params) {
-        if (param.env && param.default != null && param.default !== '') {
-          defaults[param.env] = String(param.default);
-        }
-      }
-      return defaults;
-    });
-  }, [robot, strategies]);
+  const instrumentIdForRun = selectedInstrument?.instrument_id;
+  const selectedStrategyInfo = strategies.find((s) => s.name === form.robot);
 
   const selectedSliceWindow = useMemo(() => {
-    if (!stressSlice) return null;
-    const slice = stressSlices.find((item) => item.name === stressSlice);
-    if (!slice) return null;
-    return { name: slice.name, start: slice.start, end: slice.end };
-  }, [stressSlice, stressSlices]);
+    const slice = stressSlices.find((item) => item.name === form.stressSlice);
+    return slice ? { name: slice.name, start: slice.start, end: slice.end } : null;
+  }, [form.stressSlice, stressSlices]);
 
-  // Coverage of the tick series for the instrument this run would use. null means the
-  // health endpoint has not answered (yet): unknown is reported as unknown, not as absent.
+  // Tick coverage of the instrument this run would use. null means the health endpoint
+  // has not answered (yet): unknown is reported as unknown, not as absent.
   const tickDataAvailable = useMemo(() => {
-    if (dataHealth == null) return null;
-    const entry = dataHealth.find(
-      (item) => item.instrument_id === (selectedInstrument?.instrument_id ?? ''),
-    );
-    if (!entry) return null;
-    return entry.ticks.present;
-  }, [dataHealth, selectedInstrument]);
+    const health = healthResult.data?.instruments;
+    if (health == null) return null;
+    const entry = health.find((item) => item.instrument_id === (instrumentIdForRun ?? ''));
+    return entry ? entry.ticks.present : null;
+  }, [healthResult.data, instrumentIdForRun]);
 
   const issues: PreflightIssue[] = useMemo(() => {
     if (strategies.length === 0) {
@@ -363,16 +124,16 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
       ];
     }
     return preflight({
-      robot,
+      robot: form.robot,
       spec: selectedStrategyInfo,
       source,
       totalBars: selectedInstrument?.bars_count ?? null,
-      syntheticBars: bars,
+      syntheticBars: form.bars,
       folds,
       isFraction,
       embargoBars,
       fullSample,
-      useOptuna,
+      useOptuna: form.useOptuna,
       pbo: usePbo,
       windowMode,
       isStart,
@@ -381,8 +142,8 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
       oosEnd,
       instrument: selectedInstrument,
       catalogInstruments: catalogInstruments.length,
-      tickVpin,
-      hawkes,
+      tickVpin: form.tickVpin,
+      hawkes: form.hawkes,
       tickVpinRobots,
       hawkesRobots,
       tickDataAvailable,
@@ -390,281 +151,67 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
     });
   }, [
     strategies.length,
-    robot,
+    form,
     selectedStrategyInfo,
-      source,
-      selectedInstrument,
-      bars,
-      folds,
-      isFraction,
-      embargoBars,
-      fullSample,
-      useOptuna,
-      usePbo,
-      windowMode,
-      isStart,
-      isEnd,
-      oosStart,
-      oosEnd,
-      catalogInstruments.length,
-      tickVpin,
-      hawkes,
-      tickVpinRobots,
-      hawkesRobots,
-      tickDataAvailable,
-      selectedSliceWindow,
-    ],
-  );
+    source,
+    selectedInstrument,
+    folds,
+    isFraction,
+    embargoBars,
+    fullSample,
+    usePbo,
+    windowMode,
+    isStart,
+    isEnd,
+    oosStart,
+    oosEnd,
+    catalogInstruments.length,
+    tickVpinRobots,
+    hawkesRobots,
+    tickDataAvailable,
+    selectedSliceWindow,
+  ]);
   const blocked = preflightBlocking(issues);
 
-  const stopPolling = () => {
-    launchRef.current = null;
-    setRunning(false);
-    loadReports();
-    setHistoryKey((value) => value + 1);
+  const handleRun = () => {
+    void job.run(toRunParams(form, instrumentIdForRun, selectedCatalogPath));
   };
 
-  useEffect(() => {
-    if (!running) return;
-    let cancelled = false;
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetchResearchLog();
-        if (cancelled) return;
-        setLog(res.log);
-        setSummary(res.summary);
-        if (res.summary.tearsheet_url) setSelectedTearsheetUrl(res.summary.tearsheet_url);
-
-        const launch = launchRef.current;
-        if (launch) {
-          launch.polls += 1;
-          if (res.is_running) launch.sawRunning = true;
-        }
-
-        if (!res.is_running && res.summary.is_finished) {
-          const finishedMs = res.summary.finished_at ? Date.parse(res.summary.finished_at) : null;
-          const launchMs = launch?.startedAtMs ?? 0;
-          if (finishedMs != null && finishedMs >= launchMs - 2000) {
-            setStaleNotice(null);
-          } else {
-            // The job never wrote its own result; what is on screen belongs to an older run.
-            setStaleNotice(
-              'The numbers below are from a previous run: this job ended without writing a result. Check the log.',
-            );
-          }
-          stopPolling();
-          return;
-        }
-
-        // The process died before writing last_run.json. Without this the UI would say
-        // "Simulating..." forever because polling only stops on a finished result. A job
-        // that died before the first poll never shows `is_running`, so a quiet idle
-        // server also ends the wait after a few polls.
-        if (
-          launch &&
-          !res.is_running &&
-          launch.polls > 2 &&
-          (launch.sawRunning || launch.polls > 5)
-        ) {
-          setStaleNotice(
-            'The research process stopped without writing a result. The log above has the reason.',
-          );
-          stopPolling();
-        }
-      } catch (err) {
-        if (!cancelled) console.error(err);
-      }
-    }, 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [running]);
-
-  const handleRun = async () => {
-    setLaunchError(null);
-    setStaleNotice(null);
-    try {
-      const response = await runResearch({
-        robot,
-        source,
-        bars: source === 'synthetic' ? bars : undefined,
-        folds,
-        is_fraction: isFraction,
-        embargo_bars: embargoBars,
-        use_optuna: useOptuna,
-        optuna_trials: useOptuna ? optunaTrials : undefined,
-        pbo: usePbo,
-        pbo_blocks: usePbo ? pboBlocks : undefined,
-        bar_vpin: barVpin,
-        tick_vpin: tickVpin,
-        hawkes,
-        stress_slice: stressSlice || undefined,
-        generate_tearsheet: generateTearsheet,
-        journal,
-        notify,
-        full_sample: source === 'catalog' ? fullSample : false,
-        instrument_id: source === 'catalog' ? selectedInstrument?.instrument_id : undefined,
-        is_start: windowMode === 'custom' ? isStart || undefined : undefined,
-        is_end: windowMode === 'custom' ? isEnd || undefined : undefined,
-        oos_start: windowMode === 'custom' ? oosStart || undefined : undefined,
-        oos_end: windowMode === 'custom' ? oosEnd || undefined : undefined,
-        param_overrides: overrideParams ? paramOverrides : {},
-        catalog_path: selectedCatalogPath || undefined,
-      });
-
-      if (response.status !== 'started') {
-        // HTTP 200 with status "error" — the old UI ignored this and spun forever.
-        setLaunchError(response.message ?? 'The run was refused by the API.');
-        setRunning(false);
-        return;
-      }
-
-      launchRef.current = { startedAtMs: Date.now(), sawRunning: false, polls: 0 };
-      setLaunchedAtIso(new Date().toISOString());
-      setRunning(true);
-      setLog(`Starting research for ${robot} (${source} mode)...\n`);
-    } catch (err) {
-      setRunning(false);
-      setLaunchError(err instanceof Error ? err.message : 'Failed to start research');
-    }
-  };
-
-  const handleCancel = async () => {
-    try {
-      const response = await cancelResearch();
-      setLog((prev) => `${prev}\nCancellation requested: ${response.message ?? response.status}\n`);
-    } catch (err) {
-      setLog((prev) => `${prev}\nCancel failed: ${err instanceof Error ? err.message : err}\n`);
-    }
+  const handleApplyPreset = (preset: ResearchPresetConfig) => {
+    setActivePresetId(preset.id);
+    applyPreset(preset.config);
   };
 
   const handleLoadHistory = (entry: HistoryEntry) => {
-    const config: ResearchRunConfig | undefined = entry.config;
-    if (!config) return;
-    if (config.config_version !== 2) {
-      setLaunchError(
-        'This archived run predates full config capture, so only its basic fields can be restored.',
-      );
-    } else {
-      setLaunchError(null);
-    }
-    if (config.robot) setRobot(config.robot);
-    if (config.source === 'catalog' || config.source === 'synthetic') setSource(config.source);
-    if (typeof config.bars === 'number') setBars(config.bars);
-    if (typeof config.folds === 'number') setFolds(config.folds);
-    if (config.is_fraction) setIsFraction(Number(config.is_fraction));
-    if (typeof config.embargo_bars === 'number') setEmbargoBars(config.embargo_bars);
-    if (typeof config.use_optuna === 'boolean') setUseOptuna(config.use_optuna);
-    if (typeof config.optuna_trials === 'number') setOptunaTrials(config.optuna_trials);
-    if (typeof config.pbo === 'boolean') setUsePbo(config.pbo);
-    if (typeof config.pbo_blocks === 'number') setPboBlocks(config.pbo_blocks);
-    if (typeof config.bar_vpin === 'boolean') setBarVpin(config.bar_vpin);
-    if (typeof config.tick_vpin === 'boolean') setTickVpin(config.tick_vpin);
-    if (typeof config.hawkes === 'boolean') setHawkes(config.hawkes);
-    if (typeof config.stress_slice === 'string') setStressSlice(config.stress_slice);
-    if (typeof config.generate_tearsheet === 'boolean') setGenerateTearsheet(config.generate_tearsheet);
-    if (typeof config.journal === 'boolean') setJournal(config.journal);
-    if (typeof config.notify === 'boolean') setNotify(config.notify);
-    if (typeof config.full_sample === 'boolean') setFullSample(config.full_sample);
-    if (config.instrument_id) setInstrumentId(config.instrument_id);
-    if (config.is_start) {
-      setWindowMode('custom');
-      setIsStart(config.is_start);
-      setIsEnd(config.is_end ?? '');
-      setOosStart(config.oos_start ?? '');
-      setOosEnd(config.oos_end ?? '');
-    } else {
-      setWindowMode('fraction');
-    }
-    if (config.param_overrides && Object.keys(config.param_overrides).length > 0) {
-      setOverrideParams(true);
-      setParamOverrides(config.param_overrides);
-    } else {
-      setOverrideParams(false);
-    }
-  };
-
-  const handleResetForm = () => {
-    try {
-      window.localStorage.removeItem(FORM_STORAGE_KEY);
-    } catch {
-      // ignore: the form still resets in memory
-    }
-    setFolds(2);
-    setIsFraction(0.7);
-    setEmbargoBars(10);
-    setParamOverrides({});
-    setOverrideParams(false);
+    if (!entry.config) return;
+    job.setLaunchError(loadArchived(entry.config));
   };
 
   const onRunKeyDown = (event: React.KeyboardEvent) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !running && !blocked) {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !job.running && !blocked) {
       event.preventDefault();
       handleRun();
     }
   };
 
-  // The banner must describe the result on screen, not the toggle that is currently set:
+  // The banners describe the result on screen, not the toggle that is currently set:
   // switching back to "catalog" used to hide the warning while synthetic numbers stayed.
-  const displayedSource = summary?.source ?? null;
-  const syntheticResultOnScreen = displayedSource === 'synthetic';
-  const errors = issues.filter((issue) => issue.level === 'error');
-  const warnings = issues.filter((issue) => issue.level === 'warning');
-
   return (
     <div className="flex flex-col gap-6" onKeyDown={onRunKeyDown}>
-      {(syntheticResultOnScreen || source === 'synthetic') && (
-        <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl flex items-center gap-3 text-amber-300 text-xs font-medium">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span>
-            {syntheticResultOnScreen
-              ? 'The result below came from synthetic bars — a smoke test of the plumbing, never evidence of an edge.'
-              : 'Synthetic bars are for smoke tests only and can produce absurd returns. Real research needs the Parquet catalog with walk-forward folds.'}
-          </span>
-        </div>
-      )}
-
-      {source === 'catalog' && fullSample && (
-        <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl flex items-center gap-3 text-amber-300 text-xs font-medium">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span>
-            Full-sample runs use the whole series with no split, so the numbers are in-sample only.
-            They are not an out-of-sample report.
-          </span>
-        </div>
-      )}
-
-      {catalogError && (
-        <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-xl flex items-center gap-3 text-red-300 text-xs">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span>Catalog error: {catalogError}</span>
-        </div>
-      )}
-
-      {launchError && (
-        <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-xl flex items-center justify-between gap-3 text-red-300 text-xs">
-          <span className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            {launchError}
-          </span>
-          <button type="button" onClick={() => setLaunchError(null)} className="text-red-400/70 hover:text-red-300">
-            dismiss
-          </button>
-        </div>
-      )}
-
-      {staleNotice && (
-        <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl flex items-center gap-3 text-amber-300 text-xs">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span>{staleNotice}</span>
-        </div>
-      )}
+      <ResearchBanners
+        syntheticResultOnScreen={summary?.source === 'synthetic'}
+        source={source}
+        fullSample={fullSample}
+        catalogError={catalogError}
+        launchError={job.launchError}
+        onDismissLaunchError={() => job.setLaunchError(null)}
+        staleNotice={job.staleNotice}
+      />
 
       {source === 'catalog' && !fullSample && !usePbo && (
         <WalkForwardBuilder
           mode={windowMode}
-          onModeChange={setWindowMode}
+          onModeChange={(value) => update({ windowMode: value })}
           isFraction={isFraction}
           embargoBars={embargoBars}
           folds={folds}
@@ -672,10 +219,10 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           isEnd={isEnd}
           oosStart={oosStart}
           oosEnd={oosEnd}
-          onIsStartChange={setIsStart}
-          onIsEndChange={setIsEnd}
-          onOosStartChange={setOosStart}
-          onOosEndChange={setOosEnd}
+          onIsStartChange={(value) => update({ isStart: value })}
+          onIsEndChange={(value) => update({ isEnd: value })}
+          onOosStartChange={(value) => update({ oosStart: value })}
+          onOosEndChange={(value) => update({ oosEnd: value })}
           catalogFirstDate={selectedInstrument?.first_date}
           catalogLastDate={selectedInstrument?.last_date}
           catalogBarsCount={selectedInstrument?.bars_count}
@@ -701,7 +248,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           <div className="flex items-center gap-2 bg-gray-950 p-1 border border-gray-800 rounded-xl">
             <button
               type="button"
-              onClick={() => setSource('catalog')}
+              onClick={() => update({ source: 'catalog' })}
               className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                 source === 'catalog' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
               }`}
@@ -710,7 +257,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setSource('synthetic')}
+              onClick={() => update({ source: 'synthetic' })}
               className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                 source === 'synthetic' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-gray-200'
               }`}
@@ -747,516 +294,37 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
 
         <div className="border-t border-gray-800/80" />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 items-end">
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-1">
-              <label className="text-xs font-medium text-gray-300">Robot</label>
-              <InfoTooltip
-                title="Торговий робот (Стратегія)"
-                content="Алгоритмічна модель, що генерує торгові сигнали. Роботи з позначкою fail-closed блокуються, якщо вони не реалізовані для бектесту."
-                size="xs"
-              />
-            </div>
-            <select
-              value={robot}
-              onChange={(e) => setRobot(e.target.value)}
-              disabled={strategies.length === 0}
-              className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {strategies.length === 0 ? (
-                <option value="">Loading strategies...</option>
-              ) : (
-                strategies.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.name} {s.wired_in_backtest ? '✓' : '(fail-closed)'}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
+        <BasicControls
+          form={form}
+          update={update}
+          strategies={strategies}
+          catalogInstruments={catalogInstruments}
+          selectedInstrument={selectedInstrument}
+          catalogError={catalogError}
+        />
 
-          {source === 'catalog' ? (
-            <div className="flex flex-col gap-1.5 xl:col-span-2">
-              <div className="flex items-center gap-1">
-                <label className="text-xs font-medium text-gray-300">
-                  Instrument {catalogInstruments.length > 1 && `(${catalogInstruments.length} in catalog)`}
-                </label>
-                <InfoTooltip
-                  title="Торговий інструмент"
-                  content="Історичні дані з локального Parquet-каталогу. Для додавання нових пар запустіть ingest у вкладці Parquet Catalog."
-                  size="xs"
-                />
-              </div>
-              {catalogInstruments.length === 0 ? (
-                // A disabled select with a single "no instruments" option is a dead control:
-                // it opens nothing and explains nothing. Say what to do instead.
-                <div className="bg-amber-950/30 border border-amber-800/50 text-amber-300 text-xs rounded-xl p-2.5 flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>
-                    This catalog has no instruments, so there is nothing to backtest. Open{' '}
-                    <span className="font-mono">Parquet Catalog</span> and run an ingest
-                    {catalogError ? ` (catalog error: ${catalogError})` : ''}.
-                  </span>
-                </div>
-              ) : (
-                <select
-                  value={selectedInstrument?.instrument_id ?? ''}
-                  onChange={(e) => setInstrumentId(e.target.value)}
-                  className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 font-mono focus:border-blue-500 focus:outline-none"
-                >
-                  {catalogInstruments.map((item) => (
-                    <option key={item.instrument_id} value={item.instrument_id}>
-                      {item.raw_symbol} · {item.bars_count.toLocaleString()} bars ·{' '}
-                      {item.first_date?.slice(0, 10) ?? '?'} → {item.last_date?.slice(0, 10) ?? '?'}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1.5 xl:col-span-2">
-              <div className="flex items-center gap-1">
-                <label className="text-xs font-medium text-gray-300">Synthetic bars</label>
-                <InfoTooltip
-                  title="Синтетичні дані (Smoke test)"
-                  content="Штучно згенеровані бари. Використовуються ВИКЛЮЧНО для швидкої перевірки коду на помилки (smoke test). Дохідність на синтетиці є фіктивною."
-                  badge="Smoke Only"
-                  size="xs"
-                />
-              </div>
-              <input
-                type="number"
-                value={bars}
-                onChange={(e) => setBars(Number(e.target.value))}
-                className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 focus:border-blue-500 focus:outline-none font-mono"
-              />
-            </div>
-          )}
+        <RunControls
+          issues={issues}
+          blocked={blocked}
+          running={job.running}
+          launchedAtIso={job.launchedAtIso}
+          onRun={handleRun}
+          onCancel={job.cancel}
+          onReset={reset}
+          cliText={() => cliCommand(toCliInput(form, instrumentIdForRun, selectedCatalogPath))}
+          strategy={selectedStrategyInfo}
+        />
 
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-1">
-              <label className="text-xs font-medium text-gray-300">Fold{source === 'catalog' && `s`}</label>
-              <InfoTooltip term="folds" size="xs" />
-            </div>
-            <select
-              value={folds}
-              onChange={(e) => setFolds(Number(e.target.value))}
-              className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 focus:border-blue-500 focus:outline-none font-mono"
-            >
-              <option value={1}>
-                {source === 'catalog' ? '1 (single split, no baseline)' : '1 (single backtest)'}
-              </option>
-              <option value={2}>2 (multi-window, recommended)</option>
-              <option value={4}>4 (quarterly windows)</option>
-              <option value={8}>8 (deep stress)</option>
-            </select>
-          </div>
+        <ParamOverrides form={form} update={update} strategy={selectedStrategyInfo} />
 
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-1">
-              <label className="text-xs font-medium text-gray-300">
-                IS fraction ({(isFraction * 100).toFixed(0)}% / {((1 - isFraction) * 100).toFixed(0)}%)
-              </label>
-              <InfoTooltip term="is_fraction" size="xs" />
-            </div>
-            <input
-              type="number"
-              step="0.05"
-              min="0.4"
-              max="0.9"
-              value={isFraction}
-              onChange={(e) => setIsFraction(Number(e.target.value))}
-              disabled={windowMode === 'custom'}
-              className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 focus:border-blue-500 focus:outline-none font-mono disabled:text-gray-600"
-            />
-          </div>
-        </div>
-
-        {(errors.length > 0 || warnings.length > 0) && (
-          <div className="flex flex-col gap-1.5 border-t border-gray-800/80 pt-4">
-            {errors.map((issue) => (
-              <div key={issue.message} className="flex items-start gap-2 text-[11px] text-red-400">
-                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                <span>{issue.message}</span>
-              </div>
-            ))}
-            {warnings.map((issue) => (
-              <div key={issue.message} className="flex items-start gap-2 text-[11px] text-amber-400/90">
-                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                <span>{issue.message}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="flex flex-col md:flex-row gap-3 md:items-center flex-wrap">
-          <button
-            type="button"
-            onClick={handleRun}
-            disabled={running || blocked}
-            title={blocked ? 'Fix the blocking issues above first' : 'Run research (⌘/Ctrl + Enter)'}
-            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-500 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
-          >
-            {running ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {running ? 'Simulating…' : blocked ? 'Run blocked' : 'Run research'}
-            {!running && !blocked && (
-              <kbd className="ml-1 text-[10px] font-mono bg-blue-800/70 px-1.5 py-0.5 rounded border border-blue-700/60 leading-tight">
-                ⌘↵
-              </kbd>
-            )}
-          </button>
-
-          {running && (
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="px-4 py-2.5 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
-            >
-              <Square className="w-3.5 h-3.5" />
-              Cancel
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={handleResetForm}
-            className="px-3 py-2.5 text-xs text-gray-400 hover:text-gray-200 border border-gray-800 rounded-xl flex items-center gap-1.5"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Reset form
-          </button>
-
-          {/* Copy CLI command — lets the user reproduce the run from the terminal */}
-          <button
-            type="button"
-            onClick={() => {
-              const command = cliCommand({
-                robot,
-                source,
-                bars,
-                folds,
-                isFraction,
-                embargoBars,
-                useOptuna,
-                optunaTrials,
-                pbo: usePbo,
-                pboBlocks,
-                barVpin,
-                tickVpin,
-                hawkes,
-                stressSlice,
-                generateTearsheet,
-                journal,
-                notify,
-                fullSample,
-                catalogPath: selectedCatalogPath,
-                instrumentId: selectedInstrument?.instrument_id,
-                windowMode,
-                isStart,
-                isEnd,
-                oosStart,
-                oosEnd,
-              });
-              navigator.clipboard.writeText(command).then(() => {
-                setCopiedCli(true);
-                setTimeout(() => setCopiedCli(false), 2000);
-              });
-            }}
-            className="px-3 py-2.5 text-xs text-gray-400 hover:text-gray-200 border border-gray-800 rounded-xl flex items-center gap-1.5 transition-colors"
-            title="Copy equivalent CLI command to clipboard"
-          >
-            <ClipboardCopy className="w-3.5 h-3.5" />
-            {copiedCli ? 'Copied!' : 'Copy CLI'}
-          </button>
-
-          {running && launchedAtIso && (
-            <span className="text-[11px] text-gray-500 font-mono">
-              started {formatDateTime(launchedAtIso)}
-            </span>
-          )}
-        </div>
-
-        {selectedStrategyInfo && (
-          <div className="text-xs bg-gray-950/60 p-3 rounded-xl border border-gray-800/80 flex flex-col md:flex-row md:items-center justify-between gap-2 text-gray-400">
-            <div>
-              <span className="text-gray-300 font-semibold">{selectedStrategyInfo.name}</span>:{' '}
-              {selectedStrategyInfo.summary}
-              <span className="block text-[10px] text-gray-600 font-mono mt-1">
-                min bars {selectedStrategyInfo.minimum_bars} · grid{' '}
-                {selectedStrategyInfo.grid_source ?? 'n/a'} · status {selectedStrategyInfo.status}
-              </span>
-            </div>
-            <span
-              className={`px-2 py-0.5 rounded text-[11px] font-mono self-start ${
-                selectedStrategyInfo.wired_in_backtest
-                  ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50'
-                  : 'bg-red-950/80 text-red-400 border border-red-800/50'
-              }`}
-            >
-              {selectedStrategyInfo.wired_in_backtest ? 'Wired to engine' : 'Fail-closed block'}
-            </span>
-          </div>
-        )}
-
-        <div className="border-t border-gray-800/80 pt-4">
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-            <input
-              type="checkbox"
-              checked={overrideParams}
-              onChange={(e) => setOverrideParams(e.target.checked)}
-              className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-            />
-            Override robot parameters for this run
-          </label>
-          <p className="text-[10px] text-gray-500 mt-1 ml-6">
-            {overrideParams
-              ? 'These values replace the saved .env settings for this run only.'
-              : 'Off: the run uses the values from the Settings tab (.env).'}
-          </p>
-
-          {overrideParams && selectedStrategyInfo && selectedStrategyInfo.params?.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-              {selectedStrategyInfo.params
-                .filter((param) => param.env)
-                .slice(0, 12)
-                .map((param) => (
-                  <label key={param.env} className="flex flex-col gap-1 text-[11px]">
-                    <span className="font-mono text-gray-500">
-                      {param.env} <span className="text-gray-600">default {String(param.default)}</span>
-                    </span>
-                    <input
-                      type="text"
-                      value={paramOverrides[param.env] ?? ''}
-                      onChange={(e) =>
-                        setParamOverrides((prev) => ({ ...prev, [param.env]: e.target.value }))
-                      }
-                      className="bg-gray-950 border border-gray-800 rounded-lg p-2 font-mono text-gray-200"
-                    />
-                  </label>
-                ))}
-            </div>
-          )}
-        </div>
-
-        <div>
-          <button
-            type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium"
-          >
-            {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            {showAdvanced ? 'Hide advanced gates' : 'Show advanced gates (Optuna, PBO, embargo, VPIN, Hawkes, journal)'}
-          </button>
-
-          {showAdvanced && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 mt-2 border-t border-gray-800/80">
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-1.5">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                    <input
-                      type="checkbox"
-                      checked={useOptuna}
-                      onChange={(e) => setUseOptuna(e.target.checked)}
-                      className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-                    />
-                    Bayesian selection (Optuna TPE)
-                  </label>
-                  <InfoTooltip term="optuna_trials" size="xs" />
-                </div>
-                {useOptuna && (
-                  <div className="flex items-center gap-2 pl-5">
-                    <span className="text-[11px] text-gray-400">Trials:</span>
-                    <input
-                      type="number"
-                      value={optunaTrials}
-                      onChange={(e) => setOptunaTrials(Number(e.target.value))}
-                      className="w-20 bg-gray-950 border border-gray-800 text-xs rounded p-1 font-mono"
-                    />
-                  </div>
-                )}
-                {useOptuna && fullSample && (
-                  <span className="text-[10px] text-red-400 pl-5">
-                    Cannot be combined with full-sample.
-                  </span>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-1.5">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                    <input
-                      type="checkbox"
-                      checked={usePbo}
-                      onChange={(e) => setUsePbo(e.target.checked)}
-                      className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-                    />
-                    Overfitting audit (PBO / CSCV)
-                  </label>
-                  <InfoTooltip term="pbo" size="xs" />
-                </div>
-                {usePbo && (
-                  <div className="flex items-center gap-2 pl-5">
-                    <span className="text-[11px] text-gray-400">Blocks:</span>
-                    <input
-                      type="number"
-                      value={pboBlocks}
-                      onChange={(e) => setPboBlocks(Number(e.target.value))}
-                      className="w-20 bg-gray-950 border border-gray-800 text-xs rounded p-1 font-mono"
-                    />
-                  </div>
-                )}
-                {usePbo && (
-                  <span className="text-[10px] text-gray-500 pl-5">
-                    Simulates blocks × configurations runs; no tearsheet, no single PnL verdict.
-                  </span>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-gray-400">Purged embargo bars</span>
-                  <InfoTooltip term="embargo_bars" size="xs" />
-                </div>
-                <input
-                  type="number"
-                  value={embargoBars}
-                  onChange={(e) => setEmbargoBars(Number(e.target.value))}
-                  className="bg-gray-950 border border-gray-800 text-xs text-gray-200 rounded-lg p-1.5 font-mono"
-                />
-                <span className="text-[10px] text-gray-600">
-                  A gap between the legs so overlapping bars cannot leak forward.
-                </span>
-              </div>
-
-              <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                <input
-                  type="checkbox"
-                  checked={barVpin}
-                  onChange={(e) => {
-                    setBarVpin(e.target.checked);
-                    if (e.target.checked) setTickVpin(false);
-                  }}
-                  className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-                />
-                Bar-level VPIN regime filter (volume proxy)
-              </label>
-
-              <div className="flex flex-col gap-1">
-                <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={tickVpin}
-                    onChange={(e) => {
-                      setTickVpin(e.target.checked);
-                      if (e.target.checked) setBarVpin(false);
-                    }}
-                    className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-                  />
-                  Tick-level VPIN regime filter
-                </label>
-                <span className="text-[10px] text-gray-600 pl-5">
-                  Real aggressor split from aggregated trades
-                  {tickDataAvailable === false
-                    ? ' — no tick series in this catalog'
-                    : tickDataAvailable === true
-                      ? ' — tick series present'
-                      : ' — coverage unknown'}
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={hawkes}
-                    onChange={(e) => setHawkes(e.target.checked)}
-                    className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-                  />
-                  Hawkes intensity filter
-                </label>
-                <span className="text-[10px] text-gray-600 pl-5">
-                  Clustered-flow gate built from the same tick series; runs only for{' '}
-                  {hawkesRobots.join(', ') || 'the regime router'}.
-                </span>
-              </div>
-
-              <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                <input
-                  type="checkbox"
-                  checked={generateTearsheet}
-                  onChange={(e) => setGenerateTearsheet(e.target.checked)}
-                  disabled={usePbo}
-                  className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0 disabled:opacity-50"
-                />
-                Generate HTML tearsheet {usePbo && '(not available for PBO)'}
-              </label>
-
-              <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                <input
-                  type="checkbox"
-                  checked={journal}
-                  onChange={(e) => setJournal(e.target.checked)}
-                  className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-                />
-                Append a row to research/journal.md
-              </label>
-
-              <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                <input
-                  type="checkbox"
-                  checked={notify}
-                  onChange={(e) => setNotify(e.target.checked)}
-                  className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-                />
-                Notify on completion (Telegram / webhook)
-              </label>
-
-              {source === 'catalog' && (
-                <label className="flex items-center gap-2 cursor-pointer text-xs text-amber-300">
-                  <input
-                    type="checkbox"
-                    checked={fullSample}
-                    onChange={(e) => setFullSample(e.target.checked)}
-                    className="rounded bg-gray-950 border-gray-700 text-amber-500 focus:ring-0"
-                  />
-                  Full-sample (in-sample only, no split)
-                </label>
-              )}
-
-              <div className="flex flex-col gap-1">
-                <span className="text-[11px] text-gray-400">Stress slice</span>
-                <select
-                  value={stressSlice}
-                  onChange={(e) => setStressSlice(e.target.value)}
-                  disabled={stressSlices.length === 0}
-                  className="bg-gray-950 border border-gray-800 text-xs text-gray-300 rounded-lg p-1.5 disabled:opacity-50"
-                >
-                  <option value="">Full range (no slice)</option>
-                  {/* The list and its dates come from the backend (`domain/stress_slices.py`),
-                      so a slice renamed or moved in code cannot linger here as a stale label.
-                      A value restored from an archived run is kept visible but flagged. */}
-                  {stressSlice && !stressSlices.some((slice) => slice.name === stressSlice) && (
-                    <option value={stressSlice}>{stressSlice} (unknown to this backend)</option>
-                  )}
-                  {stressSlices.map((slice) => {
-                    const covers = sliceOverlapsCatalog(slice, selectedInstrument);
-                    return (
-                      <option key={slice.name} value={slice.name}>
-                        {slice.name} ({slice.start.slice(0, 10)} → {slice.end.slice(0, 10)})
-                        {covers ? '' : ' — outside this catalog'}
-                      </option>
-                    );
-                  })}
-                </select>
-                <span className="text-[10px] text-gray-600">
-                  {stressSlices.length === 0
-                    ? 'The backend did not report any stress slices, so none can be selected.'
-                    : 'A slice replaces the load window, so it must lie inside the catalog\u2019s own range; the dates above are the ones the backend will use.'}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
+        <AdvancedGates
+          form={form}
+          update={update}
+          tickDataAvailable={tickDataAvailable}
+          hawkesRobots={hawkesRobots}
+          stressSlices={stressSlices}
+          selectedInstrument={selectedInstrument}
+        />
       </div>
 
       {summary?.is_error && summary.error_message && (
@@ -1276,107 +344,19 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
 
       {summary?.pbo && <PboPanel pbo={summary.pbo} />}
 
-      {summary?.is_finished && !summary.is_error && (
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <Settings2 className="w-4 h-4 text-gray-400" />
-            <h3 className="text-xs font-bold text-gray-100">Conditions of this run</h3>
-            <span className="text-[10px] text-gray-500">
-              archived in reports/history, restorable from the history panel
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono text-gray-400">
-            <span>run: {summary.run_type}</span>
-            <span>source: {summary.source ?? 'n/a'}</span>
-            {summary.config?.folds != null && <span>folds: {summary.config.folds}</span>}
-            {summary.config?.is_fraction && <span>is_fraction: {summary.config.is_fraction}</span>}
-            {summary.config?.embargo_bars != null && (
-              <span>embargo: {summary.config.embargo_bars}</span>
-            )}
-            <span>optuna: {String(summary.config?.use_optuna ?? false)}</span>
-            <span>pbo: {String(summary.config?.pbo ?? false)}</span>
-            <span>vpin: {String(summary.config?.bar_vpin ?? false)}</span>
-            {summary.config?.stress_slice && <span>slice: {summary.config.stress_slice}</span>}
-            {summary.config?.instrument_id && <span>instrument: {summary.config.instrument_id}</span>}
-            {summary.starting_equity != null && (
-              <span>starting equity: ${summary.starting_equity.toLocaleString()}</span>
-            )}
-            {summary.config?.param_overrides &&
-              Object.keys(summary.config.param_overrides).length > 0 && (
-                <span className="text-amber-400/80">
-                  overrides: {Object.entries(summary.config.param_overrides)
-                    .map(([key, value]) => `${key}=${value}`)
-                    .join(' ')}
-                </span>
-              )}
-          </div>
-        </div>
-      )}
+      {summary?.is_finished && !summary.is_error && <RunConditions summary={summary} />}
 
       <ExperimentHistory key={historyKey} onRerun={handleLoadHistory} />
 
       <RunsCompare refreshKey={historyKey} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <LogPanel log={log} running={running} heightClass="h-[460px]" />
-
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl flex flex-col overflow-hidden h-[460px]">
-          <div className="bg-gray-900 px-5 py-3 border-b border-gray-800 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-blue-400" />
-              <h3 className="text-sm font-bold text-gray-100">Interactive tearsheet</h3>
-            </div>
-            {selectedTearsheetUrl && (
-              <a
-                href={staticReportUrl(selectedTearsheetUrl)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
-              >
-                Open in new tab <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            )}
-          </div>
-
-          <div className="flex-1 bg-gray-950 flex flex-col">
-            {selectedTearsheetUrl ? (
-              <iframe
-                src={staticReportUrl(selectedTearsheetUrl)}
-                title="Tearsheet view"
-                className="w-full h-full border-0 bg-white"
-              />
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-gray-500 text-xs">
-                <FileText className="w-8 h-8 text-gray-700 mb-2" />
-                No tearsheet generated yet.
-                <br />
-                Run a backtest with &quot;Generate HTML tearsheet&quot; enabled.
-              </div>
-            )}
-          </div>
-
-          {reports.length > 0 && (
-            <div className="p-2.5 bg-gray-950 border-t border-gray-800 flex items-center gap-2 overflow-x-auto text-xs">
-              <span className="text-gray-500 text-[11px] whitespace-nowrap">Reports:</span>
-              {reports.slice(0, 6).map((report) => (
-                <button
-                  type="button"
-                  key={report.filename}
-                  onClick={() => setSelectedTearsheetUrl(report.url)}
-                  title={`${report.modified} · ${report.size_kb} KB`}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-colors whitespace-nowrap ${
-                    selectedTearsheetUrl === report.url
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-900 text-gray-400 hover:bg-gray-800'
-                  }`}
-                >
-                  {report.filename.replace('.html', '')}
-                  <span className="text-[9px] text-gray-500 ml-1">{report.size_kb}KB</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <LogPanel log={job.log} running={job.running} heightClass="h-[460px]" />
+        <TearsheetPanel
+          reports={reports}
+          selectedTearsheetUrl={selectedTearsheetUrl}
+          onSelect={setPickedTearsheet}
+        />
       </div>
     </div>
   );

@@ -81,8 +81,12 @@ API data goes through one TanStack Query cache (`src/services/queries.ts`). Comp
   read `catalogQuery`);
 - a finished job invalidates the cache, so every panel re-reads what the job may have written.
 
-Keys and poll intervals live only in `queries.ts`. So far the sidebar, the status banner and
-the Catalog tab use it; the other tabs move over as they are split.
+Keys and poll intervals live only in `queries.ts`. The sidebar, the status banner, the Catalog
+tab and the Research tab use it; the remaining tabs move over as they are split.
+
+The Research tab keeps its form as one value (`src/lib/researchForm.ts`): restoring the saved
+form, applying a preset, restoring an archived run, resetting, and turning the form into the
+POST body or the `lab research` command are pure functions with their own tests.
 
 ## Tabs
 

@@ -20,6 +20,8 @@ import {
   fetchCatalogs,
   fetchDataHealth,
   fetchIngestLog,
+  fetchReports,
+  fetchResearchLog,
   fetchStatus,
   fetchStrategies,
 } from './api';
@@ -28,6 +30,8 @@ import {
 export const STATUS_POLL_MS = 15_000;
 /** How often a running ingest's log is re-read. */
 export const INGEST_LOG_POLL_MS = 1_500;
+/** How often a running research job's log and summary are re-read. */
+export const RESEARCH_LOG_POLL_MS = 1_000;
 
 export function createQueryClient(): QueryClient {
   return new QueryClient({
@@ -52,6 +56,8 @@ export const queryKeys = {
   dataHealth: (catalogPath: string) => ['data-health', catalogPath] as const,
   strategies: ['strategies'] as const,
   ingestLog: ['ingest-log'] as const,
+  researchLog: ['research-log'] as const,
+  reports: ['reports'] as const,
 };
 
 export const statusQuery = (catalogPath: string) =>
@@ -89,6 +95,17 @@ export const ingestLogQuery = (polling: boolean) =>
     enabled: polling,
     refetchInterval: polling ? INGEST_LOG_POLL_MS : false,
   });
+
+export const researchLogQuery = (polling: boolean) =>
+  queryOptions({
+    queryKey: queryKeys.researchLog,
+    queryFn: fetchResearchLog,
+    enabled: polling,
+    refetchInterval: polling ? RESEARCH_LOG_POLL_MS : false,
+  });
+
+/** HTML tearsheets in reports/, newest first. */
+export const reportsQuery = () => queryOptions({ queryKey: queryKeys.reports, queryFn: fetchReports });
 
 /** Everything an ingest can change: the catalog, its coverage, the status counts. */
 export const catalogDataKeys = [

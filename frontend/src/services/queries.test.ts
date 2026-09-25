@@ -9,6 +9,8 @@ import {
   STATUS_POLL_MS,
   createQueryClient,
   ingestLogQuery,
+  RESEARCH_LOG_POLL_MS,
+  researchLogQuery,
   queryKeys,
   statusQuery,
 } from './queries';
@@ -34,6 +36,11 @@ describe('query options', () => {
     expect(ingestLogQuery(false).refetchInterval).toBe(false);
     expect(ingestLogQuery(true).enabled).toBe(true);
     expect(ingestLogQuery(true).refetchInterval).toBe(INGEST_LOG_POLL_MS);
+  });
+
+  test('the research log is read only while a job runs', () => {
+    expect(researchLogQuery(false).enabled).toBe(false);
+    expect(researchLogQuery(true).refetchInterval).toBe(RESEARCH_LOG_POLL_MS);
   });
 
   test('keys of different catalogs differ', () => {

@@ -32,6 +32,11 @@ test('the dashboard opens and reads the API', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Parquet Data Catalog' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Ingest Binance data' })).toBeVisible();
 
+  // The research tab: form, preflight and result panels render from the shared queries.
+  await page.getByRole('button', { name: 'Research & Backtest' }).click();
+  await expect(page.getByRole('heading', { name: 'Research Lab' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Run research|Run blocked/ })).toBeVisible();
+
   expect(errors).toEqual([]);
 });
 

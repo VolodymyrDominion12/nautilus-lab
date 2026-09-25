@@ -1,0 +1,96 @@
+{
+  "bars": 3000,
+  "cases": {
+    "adaptive_ema": {
+      "ending_balance": "95180.11477887",
+      "fees_paid": "3502.95355113",
+      "fills": 36,
+      "max_drawdown": "0.05139194709273466076137366032",
+      "positions": 18,
+      "realized_balance": "95180.11477887",
+      "risk_breaches": [
+        [
+          "order already working",
+          8
+        ],
+        [
+          "daily loss circuit breaker",
+          294
+        ]
+      ],
+      "sharpe_like": "-0.05609855516197917224571529709",
+      "traded_notional": "3502953.5511300000486747",
+      "turnover": "1752104.23855",
+      "unrealized_pnl": "0"
+    },
+    "ema": {
+      "ending_balance": "94344.334943969994112",
+      "fees_paid": "3192.47718603",
+      "fills": 33,
+      "max_drawdown": "0.058948409908500135186",
+      "positions": 17,
+      "realized_balance": "94186.50112397",
+      "risk_breaches": [
+        [
+          "order already working",
+          17
+        ],
+        [
+          "daily loss circuit breaker",
+          2794
+        ]
+      ],
+      "sharpe_like": "-0.04209922611984583853565905164",
+      "traded_notional": "3192477.1860299999514223",
+      "turnover": "1642777.99968",
+      "unrealized_pnl": "157.833819999994112"
+    },
+    "regime": {
+      "ending_balance": "630511.81421230007688",
+      "fees_paid": "30513.44875771",
+      "fills": 57,
+      "max_drawdown": "0.04488394533474526769077250537",
+      "positions": 29,
+      "realized_balance": "529282.87801230",
+      "risk_breaches": [
+        [
+          "order already working",
+          18
+        ],
+        [
+          "daily loss circuit breaker",
+          893
+        ]
+      ],
+      "sharpe_like": "0.6932363700466582972775968828",
+      "traded_notional": "30513448.757709999714366",
+      "turnover": "15296254.77331",
+      "unrealized_pnl": "101228.93620000007688"
+    },
+    "vpin_momentum": {
+      "ending_balance": "100000.00000000",
+      "fees_paid": "0",
+      "fills": 0,
+      "max_drawdown": "0",
+      "positions": 0,
+      "realized_balance": "100000.00000000",
+      "risk_breaches": [],
+      "sharpe_like": null,
+      "traded_notional": "0",
+      "turnover": "0",
+      "unrealized_pnl": "0"
+    },
+    "walk_forward_regime": {
+      "folds": 2,
+      "mean_buy_and_hold_return": "-0.4105542817366560838001067274",
+      "mean_oos_return": "0.40755365817339993945",
+      "oos_returns": [
+        "0.4082912832852000241",
+        "0.4068160330615998548"
+      ],
+      "profitable_folds": 2,
+      "total_oos_fills": 2
+    }
+  },
+  "nautilus_trader": "1.231.0"
+}

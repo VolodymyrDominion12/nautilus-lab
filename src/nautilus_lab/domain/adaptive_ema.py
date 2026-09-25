@@ -218,30 +218,47 @@ class AdaptiveEmaRouter:
             band_k=params.bb_k,
         )
         self._last_regime: MarketRegime | None = None
+        self._last_snapshot: AdaptiveEmaSnapshot | None = None
+
+    @property
+    def last_snapshot(self) -> AdaptiveEmaSnapshot | None:
+        return self._last_snapshot
+
+    @property
+    def uptrend_breakout(self) -> UptrendBreakout:
+        return self._uptrend
+
+    @property
+    def downtrend_breakout(self) -> DowntrendBreakout:
+        return self._downtrend
+
+    @property
+    def range_mean_reversion(self) -> RangeMeanReversion:
+        return self._range
 
     @property
     def classifier(self) -> AdaptiveEma:
         return self._classifier
 
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
-        snapshot = self._classifier.update(bar.close)
-        if snapshot is None:
+        self._last_snapshot = self._classifier.update(bar.close)
+        if self._last_snapshot is None:
             self._warm_up(bar)
             return None
-        if self._last_regime is not None and snapshot.regime is not self._last_regime:
-            self._last_regime = snapshot.regime
+        if self._last_regime is not None and self._last_snapshot.regime is not self._last_regime:
+            self._last_regime = self._last_snapshot.regime
             self._warm_up(bar)
             return Signal(
                 instrument_id=self._instrument_id,
                 side=SignalSide.FLAT,
                 bar_ts_utc=bar.ts_utc,
-                reason=f"regime change to {snapshot.regime.value}",
-                regime=snapshot.regime,
+                reason=f"regime change to {self._last_snapshot.regime.value}",
+                regime=self._last_snapshot.regime,
             )
-        self._last_regime = snapshot.regime
-        if snapshot.regime is MarketRegime.UPTREND:
+        self._last_regime = self._last_snapshot.regime
+        if self._last_snapshot.regime is MarketRegime.UPTREND:
             return self._uptrend.on_bar(bar)
-        if snapshot.regime is MarketRegime.DOWNTREND:
+        if self._last_snapshot.regime is MarketRegime.DOWNTREND:
             return self._downtrend.on_bar(bar)
         return self._range.on_bar(bar)
 

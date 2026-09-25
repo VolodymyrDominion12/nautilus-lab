@@ -39,17 +39,34 @@ class VpinMomentum:
         self._direction = 0
         self._bars_in_position = 0
         self._extreme = Decimal("0")
+        self._last_vpin_state: VpinState | None = None
+        self._last_atr: Decimal | None = None
+        self._last_ema_value: Decimal | None = None
+
+    @property
+    def last_vpin_state(self) -> VpinState | None:
+        return self._last_vpin_state
+
+    @property
+    def last_atr(self) -> Decimal | None:
+        return self._last_atr
+
+    @property
+    def last_ema_value(self) -> Decimal | None:
+        return self._last_ema_value
 
     def on_trade_tick(self, *, is_buy: bool, volume: Decimal, dt_seconds: Decimal) -> None:
         if self._vpin is not None and hasattr(self._vpin, "update_from_trade"):
             self._vpin.update_from_trade(is_buy=is_buy, volume=volume)
 
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
-        state = self._vpin.update(bar)
+        self._last_vpin_state = self._vpin.update(bar)
         self._ema.update(bar.close)
         self._atr.update(bar)
         ema = self._ema.value
         atr = self._atr.value
+        self._last_ema_value = ema
+        self._last_atr = atr
         if ema is None or atr is None:
             return None
 
@@ -75,14 +92,14 @@ class VpinMomentum:
                 )
             return None
 
-        if state is None or not state.toxic:
+        if self._last_vpin_state is None or not self._last_vpin_state.toxic:
             return None
         if bar.close > ema:
             self._enter(direction=1, bar=bar)
-            return self._signal(bar, SignalSide.BUY, f"toxic flow up vpin={state.value}")
+            return self._signal(bar, SignalSide.BUY, f"toxic flow up vpin={self._last_vpin_state.value}")
         if bar.close < ema:
             self._enter(direction=-1, bar=bar)
-            return self._signal(bar, SignalSide.SELL, f"toxic flow down vpin={state.value}")
+            return self._signal(bar, SignalSide.SELL, f"toxic flow down vpin={self._last_vpin_state.value}")
         return None
 
     @property

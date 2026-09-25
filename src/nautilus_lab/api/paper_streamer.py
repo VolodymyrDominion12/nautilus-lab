@@ -61,6 +61,8 @@ from nautilus_lab.infrastructure.live_paper_journal import (
     LivePaperJournal,
     ResumableSession,
 )
+from nautilus_lab.domain.decision_log import DecisionRecord
+from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.infrastructure.provenance import code_manifest
 
 if TYPE_CHECKING:
@@ -254,10 +256,12 @@ class LivePaperSessionManager:
         history_loader: HistoryLoader | None = None,
         journal: LivePaperJournal | None = None,
         feed_hub: FeedHub | None = None,
+        decision_log: DecisionLogPort | None = None,
     ) -> None:
         self.config = config or LivePaperConfig()
         self._history_loader = history_loader
         self.journal = journal
+        self.decision_log = decision_log
         #: Failed journal writes since start, and whether the latest write failed. The
         #: health checks and the watchdog read these (api/health.py, docs/27 E-1.6).
         self.journal_errors = 0
@@ -566,6 +570,7 @@ class LivePaperSessionManager:
             if self._accept_closed_bar(bar_obj):
                 self._roll_equity_marks(bar_obj.ts_utc)
                 signal = self._robot_instance.on_bar(bar_obj)
+                self._record_decision_log(bar_obj, signal)
                 if signal is not None and self.is_active and self.config.auto_trade:
                     events.extend(self._apply_signal(signal, close_price))
 
@@ -574,6 +579,64 @@ class LivePaperSessionManager:
                 equity_point=self.equity_history[-1] if is_closed and self.equity_history else None
             )
         return events
+
+    def _record_decision_log(self, bar: OhlcvBar, signal: Signal | None) -> None:
+        if self.decision_log is None:
+            return
+            
+        robot_name = self.config.robot.lower()
+        indicators = {}
+        states = {}
+        
+        if robot_name == "ema":
+            indicators["fast"] = self._robot_instance.fast_value
+            indicators["slow"] = self._robot_instance.slow_value
+        elif robot_name == "vpin_momentum":
+            indicators["ema"] = self._robot_instance.last_ema_value
+            indicators["atr"] = self._robot_instance.last_atr
+            vpin_state = self._robot_instance.last_vpin_state
+            if vpin_state:
+                states["vpin"] = str(vpin_state.value)
+                states["vpin_toxic"] = str(vpin_state.toxic)
+        elif hasattr(self._robot_instance, "last_snapshot"):
+            snap = self._robot_instance.last_snapshot
+            if snap is not None:
+                if hasattr(snap, "fast_ema"):
+                    indicators["fast"] = snap.fast_ema
+                if hasattr(snap, "slow_ema"):
+                    indicators["slow"] = snap.slow_ema
+                if hasattr(snap, "hawkes"):
+                    states["hawkes"] = snap.hawkes
+                if hasattr(snap, "vpin"):
+                    states["vpin"] = snap.vpin
+                
+        # Handle RegimeRouter properties
+        if hasattr(self._robot_instance, "last_effective_regime"):
+            # RegimeRouter specifics
+            states["effective_regime"] = self._robot_instance.last_effective_regime.value if self._robot_instance.last_effective_regime else None
+            if self._robot_instance.last_vpin_state:
+                states["vpin_filter"] = str(self._robot_instance.last_vpin_state.value)
+                states["vpin_toxic"] = str(self._robot_instance.last_vpin_state.toxic)
+            if self._robot_instance.last_hawkes_state:
+                states["hawkes_filter"] = str(self._robot_instance.last_hawkes_state.value)
+                states["hawkes_toxic"] = str(self._robot_instance.last_hawkes_state.toxic)
+
+        eff_reg = "UNKNOWN"
+        if hasattr(self._robot_instance, "last_effective_regime") and self._robot_instance.last_effective_regime:
+            eff_reg = self._robot_instance.last_effective_regime.value
+            
+        record = DecisionRecord(
+            bar_end_utc=bar.ts_utc,
+            robot=robot_name,
+            instrument_id=bar.instrument_id,
+            close_price=bar.close,
+            regime=signal.regime.value if signal and signal.regime else eff_reg,
+            signal=signal.side.value if signal else None,
+            signal_reason=signal.reason if signal else None,
+            indicators={k: str(v) for k, v in indicators.items() if v is not None},
+            states={k: v for k, v in states.items() if v is not None},
+        )
+        self.decision_log.log(record)
 
     def _check_stops(
         self, high_price: Decimal, low_price: Decimal, *, ts: datetime | None = None

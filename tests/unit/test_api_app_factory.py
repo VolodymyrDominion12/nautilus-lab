@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.routing import Route, WebSocketRoute
+from starlette.routing import WebSocketRoute
 
 from nautilus_lab.api.app import create_app
 from nautilus_lab.api.jobs import JobManager
@@ -84,13 +84,38 @@ def _cfg(**overrides: Any) -> Settings:
 
 
 def _served(app: Any) -> set[tuple[str, str]]:
-    served: set[tuple[str, str]] = set()
-    for route in app.routes:
-        if isinstance(route, WebSocketRoute):
-            served.add(("WS", route.path))
-        elif isinstance(route, Route) and route.methods:
-            served.update((method, route.path) for method in route.methods - {"HEAD"})
+    """HTTP routes from the OpenAPI schema, WebSocket routes from the route tree.
+
+    Newer FastAPI keeps an included router as one nested entry in `app.routes` instead of
+    copying its routes up, so walking `app.routes` alone sees almost nothing. The schema is
+    the public contract and lists every HTTP route however it was mounted; a WebSocket
+    has no schema entry, so those are found by walking whatever nesting FastAPI uses.
+    """
+    served = {
+        (method.upper(), path)
+        for path, operations in app.openapi()["paths"].items()
+        for method in operations
+    }
+    served.update(("WS", path) for path in _websocket_paths(app.routes, set()))
     return served
+
+
+def _websocket_paths(routes: Any, seen: set[int]) -> set[str]:
+    found: set[str] = set()
+    for route in routes or ():
+        if id(route) in seen:
+            continue
+        seen.add(id(route))
+        if isinstance(route, WebSocketRoute):
+            found.add(route.path)
+        for attr in ("routes", "original_router", "router", "original_route", "app"):
+            child = getattr(route, attr, None)
+            if child is None or child is route:
+                continue
+            nested = getattr(child, "routes", None) if attr != "routes" else child
+            if nested is not None and not isinstance(nested, (str, bytes)):
+                found |= _websocket_paths(nested, seen)
+    return found
 
 
 def test_every_route_survived_the_split_into_routers(tmp_path: Path) -> None:

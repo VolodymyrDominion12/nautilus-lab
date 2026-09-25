@@ -159,6 +159,11 @@ class Settings(BaseSettings):
     journal_enabled: bool = False
     journal_path: str = "research/journal.md"
     journal_jsonl_path: str = "research/journal.jsonl"
+    
+    # Decision Log for Live Paper API (infrastructure/decision_log_writer.py)
+    decision_log_enabled: bool = False
+    decision_log_dir: str = "logs/decisions"
+    decision_log_retention_days: int = 7
 
     def all_catalog_paths(self) -> list[str]:
         paths: list[str] = []

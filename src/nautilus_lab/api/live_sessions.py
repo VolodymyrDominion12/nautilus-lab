@@ -36,6 +36,7 @@ from nautilus_lab.api.paper_streamer import (
     default_session_name,
 )
 from nautilus_lab.domain.buy_and_hold import HOLD_ROBOT
+from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.infrastructure.live_paper_journal import (
     LivePaperJournal,
     ResumableSession,
@@ -76,12 +77,14 @@ class SessionRegistry:
         legacy_journal: Path | None = None,
         history_loader: HistoryLoader | None = None,
         feed_hub: FeedHub | None = None,
+        decision_log_writer: DecisionLogPort | None = None,
         max_sessions: int = DEFAULT_MAX_SESSIONS,
     ) -> None:
         self.sessions_dir = sessions_dir
         self.legacy_journal = legacy_journal
         self.history_loader = history_loader
         self.feed_hub = feed_hub
+        self.decision_log_writer = decision_log_writer
         self.max_sessions = max_sessions
         #: Sessions this process has run, in start order (stopped ones stay until restart).
         self.sessions: dict[str, LivePaperSessionManager] = {}
@@ -128,7 +131,10 @@ class SessionRegistry:
     # ------------------------------------------------------------------ lifecycle
     def _manager(self, journal: LivePaperJournal | None) -> LivePaperSessionManager:
         return LivePaperSessionManager(
-            history_loader=self.history_loader, journal=journal, feed_hub=self.feed_hub
+            history_loader=self.history_loader, 
+            journal=journal, 
+            feed_hub=self.feed_hub,
+            decision_log=self.decision_log_writer,
         )
 
     async def create(self, config: LivePaperConfig) -> LivePaperSessionManager:

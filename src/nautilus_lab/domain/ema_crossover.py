@@ -18,6 +18,14 @@ class EmaCrossover:
         self._fast = ExponentialMovingAverage(fast_period)
         self._slow = ExponentialMovingAverage(slow_period)
 
+    @property
+    def fast_value(self) -> Decimal | None:
+        return self._fast.value
+
+    @property
+    def slow_value(self) -> Decimal | None:
+        return self._slow.value
+
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
         return self.on_close(close=bar.close, bar_ts_utc=bar.ts_utc)
 

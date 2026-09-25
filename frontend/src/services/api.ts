@@ -1,79 +1,31 @@
 import { apiUrl } from '../config';
 import { withWsToken } from '../lib/apiAuth';
+import type {
+  ActionResult,
+  CatalogSummary,
+  CatalogsResponse,
+  JobLogResponse,
+  JobState,
+  MlModelInfo,
+  MlModelsResponse,
+  ReportsResponse,
+  StatusResponse,
+} from './api.gen';
 
-export interface JobState {
-  running: boolean;
-  label: string;
-  started_at: string | null;
-  elapsed_seconds: number | null;
-}
+// Response types generated from the API's Pydantic models (api.gen.ts, docs/27 E-2.3).
+// Re-exported so components keep importing from here; the rest move over route by route.
+export type {
+  ActionResult,
+  CatalogSummary,
+  CatalogsResponse,
+  JobLogResponse,
+  JobState,
+  MlModelInfo,
+  StatusResponse,
+};
+export type { ReportItem, StressSliceInfo } from './api.gen';
 
-export type JobKey = 'research' | 'ingest' | 'ml_train' | 'paper';
-
-export interface StressSliceInfo {
-  name: string;
-  description: string;
-  /** ISO-8601 UTC window the slice replaces the load window with. A slice outside the
-   * catalog's own range loads zero bars, which fails the run rather than stressing it. */
-  start: string;
-  end: string;
-}
-
-export interface StatusResponse {
-  active_bots: number;
-  research_running: boolean;
-  ingest_running: boolean;
-  ml_running: boolean;
-  paper_running: boolean;
-  jobs: Record<JobKey, JobState>;
-  strategies_available: string[];
-  wired_robots: string[];
-  /** Robots whose regime filter can read aggregated trades (`--tick-vpin`). */
-  tick_vpin_robots: string[];
-  /** Robots whose regime filter can read Hawkes intensity (`--hawkes`). */
-  hawkes_robots: string[];
-  /** Named stress windows, with the dates they actually cover. */
-  stress_slices: StressSliceInfo[];
-  /** Robots `lab paper` can actually build. Others are refused, never substituted. */
-  paper_robots: string[];
-  catalog_exists: boolean;
-  catalog_instruments: number;
-  catalog_path: string;
-  bar_interval: string;
-  trading_mode: string;
-  is_live: boolean;
-  live_safe_mode: string;
-  /** `paper` = a server that only runs the live paper terminal (LAB_ROLE). */
-  lab_role?: 'full' | 'paper';
-  /** Robots the live paper terminal can build (differs from the batch `paper_robots`). */
-  live_paper_robots?: string[];
-  /** True when the live paper ledger is journalled and survives restarts. */
-  live_paper_persisted?: boolean;
-}
-
-/**
- * Every job-launching `POST` answers HTTP 200 with `status: "error"` when another job of
- * the same kind is already running. Callers must check this: ignoring it left the UI
- * spinning while showing the previous run's numbers as if they were new.
- */
-export interface ActionResult {
-  status: 'started' | 'error' | 'idle' | 'cancelled' | 'success' | 'dry_run';
-  message?: string;
-  command?: string;
-  disclaimer?: string;
-}
-
-export interface CatalogSummary {
-  path: string;
-  exists: boolean;
-  total_instruments: number;
-  error?: string;
-}
-
-export interface CatalogsResponse {
-  default: string;
-  catalogs: CatalogSummary[];
-}
+export type JobKey = keyof StatusResponse['jobs'];
 
 export interface CatalogInstrument {
   instrument_id: string;
@@ -113,14 +65,6 @@ export interface StrategySpec {
   invariants?: unknown[];
   /** `env` is required by the spec schema (`params[].env` is validated against Settings). */
   params: Array<{ env: string; name?: string; type?: string; default?: unknown; description?: string }>;
-}
-
-export interface ReportItem {
-  filename: string;
-  path: string;
-  url: string;
-  modified: string;
-  size_kb: number;
 }
 
 export interface ResearchRunParams {
@@ -465,7 +409,7 @@ export async function cancelIngest(): Promise<ActionResult> {
   );
 }
 
-export async function fetchIngestLog(): Promise<{ is_running: boolean; log: string }> {
+export async function fetchIngestLog(): Promise<JobLogResponse> {
   return parseJson(await fetch(apiUrl('/api/catalog/ingest/log')));
 }
 
@@ -499,7 +443,7 @@ export async function fetchResearchHistory(limit = 20): Promise<{ history: Histo
   return parseJson(await fetch(apiUrl(`/api/research/history?limit=${limit}`)));
 }
 
-export async function fetchReports(): Promise<{ reports: ReportItem[] }> {
+export async function fetchReports(): Promise<ReportsResponse> {
   return parseJson(await fetch(apiUrl('/api/reports')));
 }
 
@@ -619,13 +563,6 @@ export interface JournalEntry {
   artifact?: string | null;
 }
 
-export interface MlModelInfo {
-  filename: string;
-  path: string;
-  size_kb: number;
-  modified: number;
-}
-
 export interface MlTrainSummary {
   is_finished: boolean;
   is_error: boolean;
@@ -694,7 +631,7 @@ export async function patchJournalDecision(index: number, decision: string) {
   );
 }
 
-export async function fetchMlModels(): Promise<{ models: MlModelInfo[] }> {
+export async function fetchMlModels(): Promise<MlModelsResponse> {
   return parseJson(await fetch(apiUrl('/api/ml/models')));
 }
 

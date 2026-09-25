@@ -8,7 +8,8 @@ Every model allows extra fields: a route that returns a key the model does not d
 yet keeps sending it (FastAPI would otherwise drop it silently and break a screen). The
 declared fields are the contract; the extras are the migration still to do.
 
-Covered so far: status, health, job start/cancel results, ingest log, catalog list.
+Covered so far: status, health, job start/cancel results, ingest log, catalog list,
+reports, trained models.
 The rest of `frontend/src/services/api.ts` moves here route by route.
 """
 
@@ -93,6 +94,10 @@ class HealthResponse(ApiModel):
 class ActionResult(ApiModel):
     """What a start/stop/cancel button gets back. `status` names the outcome.
 
+    Every job-launching `POST` answers HTTP 200 with `status: "error"` when another job
+    of the same kind is already running. Callers must check this: ignoring it left the UI
+    spinning while showing the previous run's numbers as if they were new.
+
     Sent without the fields a route did not fill (`response_model_exclude_none`), as
     before the model existed, so they are optional here.
     """
@@ -122,6 +127,31 @@ class CatalogsResponse(ApiModel):
     catalogs: list[CatalogSummary]
 
 
+class ReportItem(ApiModel):
+    filename: str
+    path: str
+    url: str
+    modified: str
+    """Local time of the file, `YYYY-MM-DD HH:MM:SS`."""
+    size_kb: float
+
+
+class ReportsResponse(ApiModel):
+    reports: list[ReportItem]
+
+
+class MlModelInfo(ApiModel):
+    filename: str
+    path: str
+    size_kb: float
+    modified: float
+    """File modification time, seconds since the epoch."""
+
+
+class MlModelsResponse(ApiModel):
+    models: list[MlModelInfo]
+
+
 #: Every model the generator writes to TypeScript, in output order.
 RESPONSE_MODELS: tuple[type[BaseModel], ...] = (
     LastRun,
@@ -133,4 +163,8 @@ RESPONSE_MODELS: tuple[type[BaseModel], ...] = (
     JobLogResponse,
     CatalogSummary,
     CatalogsResponse,
+    ReportItem,
+    ReportsResponse,
+    MlModelInfo,
+    MlModelsResponse,
 )

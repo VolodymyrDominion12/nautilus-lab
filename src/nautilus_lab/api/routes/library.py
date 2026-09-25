@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 from nautilus_lab.api.context import Lab
 from nautilus_lab.api.journal_service import list_journal_entries, update_journal_decision
 from nautilus_lab.api.requests import JournalPatchRequest, ProposeRequest
+from nautilus_lab.api.responses import ReportsResponse
 from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
 from nautilus_lab.domain.errors import InvalidHypothesisError
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
@@ -87,7 +88,7 @@ def get_strategies(ctx: Lab) -> dict[str, Any]:
     return {"strategies": results, "failed_specs": failed}
 
 
-@router.get("/api/reports")
+@router.get("/api/reports", response_model=ReportsResponse)
 def get_reports(ctx: Lab) -> dict[str, Any]:
     reports_dir = str(ctx.reports_dir)
     if not os.path.exists(reports_dir):

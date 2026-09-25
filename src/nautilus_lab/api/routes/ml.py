@@ -10,7 +10,7 @@ from nautilus_lab.api.context import Lab
 from nautilus_lab.api.jobs import load_json_report, read_log
 from nautilus_lab.api.ml_runner import list_models
 from nautilus_lab.api.requests import MLTrainRequest
-from nautilus_lab.api.responses import ActionResult
+from nautilus_lab.api.responses import ActionResult, MlModelsResponse
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ def _busy() -> dict[str, Any]:
     return {"status": "error", "message": "Another ML training job is already running."}
 
 
-@router.get("/api/ml/models")
+@router.get("/api/ml/models", response_model=MlModelsResponse)
 def get_ml_models() -> dict[str, Any]:
     return {"models": list_models()}
 

@@ -102,6 +102,18 @@ def test_catalog_list_and_ingest_log_match_their_models(client: TestClient) -> N
     _conforms(responses.JobLogResponse, client.get("/api/catalog/ingest/log").json())
 
 
+def test_reports_and_models_match_their_models(client: TestClient, tmp_path: Path) -> None:
+    (tmp_path / "reports" / "tearsheet_regime.html").write_text("<html></html>")
+    reports = client.get("/api/reports").json()
+    _conforms(responses.ReportsResponse, reports)
+    assert len(reports["reports"]) == 1
+    _conforms(responses.ReportItem, reports["reports"][0])
+    models = client.get("/api/ml/models").json()
+    _conforms(responses.MlModelsResponse, models)
+    for model in models["models"]:
+        _conforms(responses.MlModelInfo, model)
+
+
 @pytest.mark.parametrize(
     ("path", "body"),
     [

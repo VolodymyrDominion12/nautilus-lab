@@ -65,6 +65,10 @@ export interface HealthResponse {
 /**
  * What a start/stop/cancel button gets back. `status` names the outcome.
  *
+ * Every job-launching `POST` answers HTTP 200 with `status: "error"` when another job
+ * of the same kind is already running. Callers must check this: ignoring it left the UI
+ * spinning while showing the previous run's numbers as if they were new.
+ *
  * Sent without the fields a route did not fill (`response_model_exclude_none`), as
  * before the model existed, so they are optional here.
  */
@@ -90,6 +94,31 @@ export interface CatalogSummary {
 export interface CatalogsResponse {
   default: string;
   catalogs: CatalogSummary[];
+}
+
+export interface ReportItem {
+  filename: string;
+  path: string;
+  url: string;
+  /** Local time of the file, `YYYY-MM-DD HH:MM:SS`. */
+  modified: string;
+  size_kb: number;
+}
+
+export interface ReportsResponse {
+  reports: ReportItem[];
+}
+
+export interface MlModelInfo {
+  filename: string;
+  path: string;
+  size_kb: number;
+  /** File modification time, seconds since the epoch. */
+  modified: number;
+}
+
+export interface MlModelsResponse {
+  models: MlModelInfo[];
 }
 
 // ---- requests ----------------------------------------------------------------------------

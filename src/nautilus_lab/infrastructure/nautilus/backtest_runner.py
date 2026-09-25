@@ -9,7 +9,7 @@ import pandas as pd
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.backtest.models import FillModel, LatencyModel, MakerTakerFeeModel
 from nautilus_trader.config import BacktestEngineConfig, LoggingConfig, RiskEngineConfig
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.data import Bar, BarType, FundingRateUpdate
 from nautilus_trader.model.enums import AccountType, OmsType
 from nautilus_trader.model.identifiers import TraderId, Venue
 from nautilus_trader.model.instruments import Instrument
@@ -22,7 +22,8 @@ from nautilus_lab.application.dtos import (
     PaperPosition,
     PaperSessionReport,
 )
-from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
+from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.marking import OpenLot, unrealized_pnl
 from nautilus_lab.domain.metrics import PERIODS_PER_YEAR, compute_metrics
 from nautilus_lab.domain.order_book import OrderBookSnapshot
@@ -30,9 +31,14 @@ from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.domain.windowing import within_bars
 from nautilus_lab.infrastructure.nautilus.bar_convert import datetime_to_nanos, to_engine_bars
+from nautilus_lab.infrastructure.nautilus.funding_strategy import (
+    FundingRobot,
+    FundingRobotConfig,
+)
 from nautilus_lab.infrastructure.nautilus.instrument import resolve_instrument
 from nautilus_lab.infrastructure.nautilus.signal_strategy import SignalRobot, SignalRobotConfig
 from nautilus_lab.infrastructure.nautilus.spread_strategy import SpreadRobot, SpreadRobotConfig
+from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_funding_pair
 from nautilus_lab.infrastructure.timeframe import interval_from_bar_type, nautilus_bar_type
 
 _log = logging.getLogger(__name__)
@@ -107,17 +113,34 @@ class NautilusResearchBacktest:
         self,
         request: BacktestRequest,
         bars_by_instrument: dict[str, list[OhlcvBar]],
+        funding: list[FundingSnapshot] | None = None,
     ) -> BacktestReport:
-        report, _ = self._execute(_spread_run(request, bars_by_instrument))
+        spec = (
+            _funding_run(request, bars_by_instrument, funding=funding)
+            if request.robot is RobotName.FUNDING
+            else _spread_run(request, bars_by_instrument)
+        )
+        report, _ = self._execute(spec)
         return report
 
     def run_paper_spread(
         self,
         request: BacktestRequest,
         bars_by_instrument: dict[str, list[OhlcvBar]],
+        funding: list[FundingSnapshot] | None = None,
     ) -> PaperSessionReport:
-        report, ledger = self._execute(_spread_run(request, bars_by_instrument))
-        leg_a = _traded(bars_by_instrument.get(request.pairs.leg_a, []), request)
+        spec = (
+            _funding_run(request, bars_by_instrument, funding=funding)
+            if request.robot is RobotName.FUNDING
+            else _spread_run(request, bars_by_instrument)
+        )
+        report, ledger = self._execute(spec)
+        primary_id = (
+            (request.funding_spot_id or "ETH/USDT.SIM")
+            if request.robot is RobotName.FUNDING
+            else request.pairs.leg_a
+        )
+        leg_primary = _traded(bars_by_instrument.get(primary_id, []), request)
         traded = [_traded(bars, request) for bars in bars_by_instrument.values()]
         starts = [bars[0].ts_utc for bars in traded if bars]
         ends = [bars[-1].ts_utc for bars in traded if bars]
@@ -125,10 +148,10 @@ class NautilusResearchBacktest:
             request,
             report,
             ledger,
-            bar_count=len(leg_a),
+            bar_count=len(leg_primary),
             window_start=min(starts) if starts else None,
             window_end=max(ends) if ends else None,
-            mark_price=leg_a[-1].close if leg_a else None,
+            mark_price=leg_primary[-1].close if leg_primary else None,
         )
 
     def _execute(self, spec: _RunSpec) -> tuple[BacktestReport, _Ledger]:
@@ -171,6 +194,9 @@ class NautilusResearchBacktest:
             account = engine.trader.generate_account_report(venue=Venue("SIM"))
             realized = _ending_balance(account)
             open_pnl = unrealized_pnl(_open_lots(positions), spec.marks)
+            accumulated_funding = getattr(strategy, "accumulated_funding", Decimal("0"))
+            if realized is not None:
+                realized = realized + accumulated_funding
             ending = None if realized is None else realized + open_pnl
             fees_paid = _fees_paid(fills_report)
             equity_curve = tuple(getattr(strategy, "equity_curve", ()))
@@ -664,4 +690,84 @@ def _spread_run(
         data=[*data_a, *data_b],
         strategy=strategy,
         marks=_last_closes({str(instrument_a.id): bars_a, str(instrument_b.id): bars_b}),
+    )
+
+
+def _funding_run(
+    request: BacktestRequest,
+    bars_by_instrument: dict[str, list[OhlcvBar]],
+    *,
+    funding: list[FundingSnapshot] | None = None,
+) -> _RunSpec:
+    """Everything `_execute` needs for the funding cash-and-carry run."""
+    spot_id = request.funding_spot_id or "ETH/USDT.SIM"
+    perp_id = request.funding_perp_id or "ETHUSDT-PERP.SIM"
+    bars_spot = bars_by_instrument.get(spot_id)
+    bars_perp = bars_by_instrument.get(perp_id)
+    if bars_spot is None or bars_perp is None:
+        raise ValueError(f"missing bars for funding pair {spot_id}/{perp_id}")
+    instrument_spot = resolve_instrument(spot_id, fees=request.fee_schedule)
+    instrument_perp = resolve_instrument(perp_id, fees=request.fee_schedule)
+    interval = interval_from_bar_type(request.bar_type)
+    bar_type_spot = BarType.from_str(nautilus_bar_type(spot_id, interval))
+    bar_type_perp = BarType.from_str(nautilus_bar_type(perp_id, interval))
+    data_spot = to_engine_bars(bars_spot, bar_type=bar_type_spot, instrument=instrument_spot)
+    data_perp = to_engine_bars(bars_perp, bar_type=bar_type_perp, instrument=instrument_perp)
+
+    funding_snapshots = funding
+    if funding_snapshots is None and request.source is BarOrigin.SYNTHETIC:
+        _, funding_snapshots = synthetic_funding_pair(
+            spot_id=spot_id,
+            perp_id=perp_id,
+            count=request.bar_count,
+            seed=request.seed,
+        )
+
+    funding_data: list[FundingRateUpdate] = []
+    if funding_snapshots:
+        for snap in funding_snapshots:
+            ts_ns = datetime_to_nanos(snap.ts_utc)
+            funding_data.append(
+                FundingRateUpdate(
+                    instrument_id=instrument_perp.id,
+                    rate=snap.funding_rate,
+                    ts_event=ts_ns,
+                    ts_init=ts_ns,
+                    interval=480,
+                )
+            )
+
+    strategy = FundingRobot(
+        FundingRobotConfig(
+            leg_spot_id=instrument_spot.id,
+            leg_perp_id=instrument_perp.id,
+            bar_type_spot=bar_type_spot,
+            bar_type_perp=bar_type_perp,
+            params=request.funding,
+            risk_per_trade=request.risk.risk_per_trade,
+            stop_pct=request.risk.stop_pct,
+            max_daily_loss=request.risk.max_daily_loss,
+            max_drawdown=request.risk.max_drawdown,
+            max_open_positions=request.risk.max_open_positions,
+            kelly_fraction=request.risk.kelly_fraction,
+            max_var_99=request.risk.max_var_99,
+            use_vol_scaling=request.risk_overlay.use_vol_scaling,
+            vol_scaling_target=request.risk_overlay.vol_scaling_target,
+            use_fractional_kelly=request.risk_overlay.use_fractional_kelly,
+            kelly_min_trades=request.risk_overlay.kelly_min_trades,
+            use_cvar_breaker=request.risk_overlay.use_cvar_breaker,
+            max_cvar_99=request.risk_overlay.max_cvar_99,
+            qty_step_spot=instrument_spot.size_increment.as_decimal(),
+            qty_step_perp=instrument_perp.size_increment.as_decimal(),
+            trade_start_ns=_trade_start_ns(request),
+            drawdown_cooldown_days=request.risk_overlay.drawdown_cooldown_days,
+            quote_currency="USDT",
+        ),
+    )
+    return _RunSpec(
+        request=request,
+        instruments=[instrument_spot, instrument_perp],
+        data=[*data_spot, *data_perp, *funding_data],
+        strategy=strategy,
+        marks=_last_closes({str(instrument_spot.id): bars_spot, str(instrument_perp.id): bars_perp}),
     )

@@ -26,6 +26,7 @@ from nautilus_lab.application.run_research_backtest import RunResearchBacktest
 from nautilus_lab.application.run_walk_forward import RunWalkForward
 from nautilus_lab.application.select_params import RunParamSelection
 from nautilus_lab.domain.bars import BarOrigin
+from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.ports import ChatCompleter
 from nautilus_lab.domain.provenance import RunManifest
@@ -50,6 +51,7 @@ from nautilus_lab.infrastructure.nautilus.instrument import (
     binance_symbol_to_instrument_id,
 )
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
+from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_funding_pair
 from nautilus_lab.infrastructure.orderbook_catalog import ParquetOrderBookCatalog
 from nautilus_lab.infrastructure.provenance import collect_manifest
 from nautilus_lab.infrastructure.settings import Settings
@@ -73,6 +75,11 @@ def taker_flow_catalog(cfg: Settings, *, path: str | None = None) -> ParquetTake
 def orderbook_catalog(cfg: Settings, *, path: str | None = None) -> ParquetOrderBookCatalog:
     """L2 Orderbook snapshots."""
     return ParquetOrderBookCatalog(Path(path or cfg.catalog_path))
+
+
+def funding_catalog(cfg: Settings, *, path: str | None = None) -> ParquetFundingCatalog:
+    """Funding settlements series under the catalog root."""
+    return ParquetFundingCatalog(Path(path or cfg.catalog_path))
 
 
 def research_feed(cfg: Settings, *, path: str | None = None) -> ResearchBarFeed:
@@ -111,14 +118,36 @@ class _BookFeedAdapter:
         return self._catalog.load(symbol=symbol, start=request.start, end=request.end)
 
 
+class _FundingFeedAdapter:
+    def __init__(self, catalog: ParquetFundingCatalog) -> None:
+        self._catalog = catalog
+
+    def load(self, request: BacktestRequest) -> list[FundingSnapshot]:
+        if request.source is BarOrigin.SYNTHETIC:
+            spot_id = request.funding_spot_id or "ETH/USDT.SIM"
+            perp_id = request.funding_perp_id or "ETHUSDT-PERP.SIM"
+            _, snapshots = synthetic_funding_pair(
+                spot_id=spot_id,
+                perp_id=perp_id,
+                count=request.bar_count,
+                seed=request.seed,
+            )
+            return snapshots
+        perp_id = request.funding_perp_id or "ETHUSDT-PERP.SIM"
+        symbol = binance_symbol_for_instrument(perp_id) or "ETHUSDT"
+        return self._catalog.load(symbol=symbol, start=request.start, end=request.end)
+
+
 def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
     resolved = cfg or settings()
     tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
     book_catalog = orderbook_catalog(resolved)
+    funding_cat = funding_catalog(resolved)
     tick_feed = _TickFeedAdapter(tick_catalog)
     book_feed = _BookFeedAdapter(book_catalog)
+    funding_feed = _FundingFeedAdapter(funding_cat)
     return RunResearchBacktest(
-        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed
+        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed, funding_feed
     )
 
 
@@ -250,9 +279,12 @@ def research_request(
         else nautilus_bar_type(cfg.instrument_id, cfg.bar_interval)
     )
     pairs = cfg.pairs_params()
+    funding = cfg.funding_params()
     instrument_ids: tuple[str, ...] = ()
     if resolved_robot is RobotName.PAIRS:
         instrument_ids = (pairs.leg_a, pairs.leg_b)
+    elif resolved_robot is RobotName.FUNDING:
+        instrument_ids = (cfg.funding_spot_id, cfg.funding_perp_id)
     return BacktestRequest(
         mode=cfg.trading_mode,
         instrument_id=cfg.instrument_id,
@@ -265,6 +297,9 @@ def research_request(
         slow_ema=cfg.slow_ema,
         regime=cfg.regime_params(),
         pairs=pairs,
+        funding=funding,
+        funding_spot_id=cfg.funding_spot_id,
+        funding_perp_id=cfg.funding_perp_id,
         source=source,
         bar_type=bar_type,
         bar_types=tuple(
@@ -304,10 +339,12 @@ def paper_use_case(cfg: Settings | None = None) -> RunPaperSession:
     resolved = cfg or settings()
     tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
     book_catalog = orderbook_catalog(resolved)
+    funding_cat = funding_catalog(resolved)
     tick_feed = _TickFeedAdapter(tick_catalog)
     book_feed = _BookFeedAdapter(book_catalog)
+    funding_feed = _FundingFeedAdapter(funding_cat)
     return RunPaperSession(
-        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed
+        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed, funding_feed
     )
 
 

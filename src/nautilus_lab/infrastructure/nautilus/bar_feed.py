@@ -41,6 +41,10 @@ class ResearchBarFeed:
             multi = self.load_multi(request)
             leg_a = request.pairs.leg_a
             return list(multi[leg_a])
+        if request.robot is RobotName.FUNDING:
+            multi = self.load_multi(request)
+            spot_id = request.funding_spot_id or "ETH/USDT.SIM"
+            return list(multi[spot_id])
         if request.source is BarOrigin.SYNTHETIC:
             return _synthetic(request)
         start, end = _stress_window(request)
@@ -66,11 +70,28 @@ class ResearchBarFeed:
                     count=request.bar_count,
                     seed=request.seed,
                 )
+            if request.robot is RobotName.FUNDING:
+                spot_id = request.funding_spot_id or "ETH/USDT.SIM"
+                perp_id = request.funding_perp_id or "ETHUSDT-PERP.SIM"
+                bars, _ = synthetic_funding_pair(
+                    spot_id=spot_id,
+                    perp_id=perp_id,
+                    count=request.bar_count,
+                    seed=request.seed,
+                )
+                return bars
             bars = _synthetic(request)
             return {request.instrument_id: bars}
         start, end = _stress_window(request)
         interval = interval_from_bar_type(request.bar_type)
-        ids = request.instrument_ids or (request.pairs.leg_a, request.pairs.leg_b)
+        ids = (
+            request.instrument_ids
+            or (
+                (request.funding_spot_id or "ETH/USDT.SIM", request.funding_perp_id or "ETHUSDT-PERP.SIM")
+                if request.robot is RobotName.FUNDING
+                else (request.pairs.leg_a, request.pairs.leg_b)
+            )
+        )
         raw: dict[str, list[OhlcvBar]] = {}
         for instrument_id in ids:
             bar_type = nautilus_bar_type(instrument_id, interval)

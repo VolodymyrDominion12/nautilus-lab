@@ -19,6 +19,7 @@ from decimal import Decimal
 from nautilus_lab.application.dtos import (
     BacktestRequest,
     BarFeed,
+    FundingFeed,
     OrderBookFeed,
     PaperBacktestPort,
     PaperSessionReport,
@@ -59,6 +60,7 @@ PAPER_SUPPORTED_ROBOTS: frozenset[RobotName] = frozenset(
         RobotName.META_LABEL,
         RobotName.ADAPTIVE_EMA,
         RobotName.ML_OBI,
+        RobotName.FUNDING,
     }
 )
 
@@ -89,11 +91,13 @@ class RunPaperSession:
         feed: BarFeed,
         tick_feed: TickFeed | None = None,
         book_feed: OrderBookFeed | None = None,
+        funding_feed: FundingFeed | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
         self._book_feed = book_feed
+        self._funding_feed = funding_feed
 
     def execute(self, request: BacktestRequest) -> PaperSessionReport:
         require_simulated_mode(request.mode)
@@ -108,6 +112,15 @@ class RunPaperSession:
             # join, so equal tails stay aligned and the spread never sees a stale leg.
             return self._engine.run_paper_spread(
                 request, {key: _tail(value, request.bar_count) for key, value in multi.items()}
+            )
+
+        if request.robot is RobotName.FUNDING:
+            multi = self._feed.load_multi(request)
+            funding = self._funding_feed.load(request) if self._funding_feed is not None else None
+            return self._engine.run_paper_spread(
+                request,
+                {key: _tail(value, request.bar_count) for key, value in multi.items()},
+                funding=funding,
             )
 
         # `bar_count` is a window length here, not a floor: a session runs the most

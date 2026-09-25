@@ -4,6 +4,7 @@ from nautilus_lab.application.dtos import (
     BacktestReport,
     BacktestRequest,
     BarFeed,
+    FundingFeed,
     OrderBookFeed,
     ResearchBacktestPort,
     TickFeed,
@@ -19,11 +20,13 @@ class RunResearchBacktest:
         feed: BarFeed,
         tick_feed: TickFeed | None = None,
         book_feed: OrderBookFeed | None = None,
+        funding_feed: FundingFeed | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
         self._book_feed = book_feed
+        self._funding_feed = funding_feed
 
     def execute(self, request: BacktestRequest) -> BacktestReport:
         require_simulated_mode(request.mode)
@@ -35,6 +38,13 @@ class RunResearchBacktest:
             if count < minimum:
                 raise ValueError(f"bar_count must be >= {minimum} so indicators can warm up")
             return self._engine.run_spread(request, bars_by_instrument)
+        if request.robot is RobotName.FUNDING:
+            bars_by_instrument = self._feed.load_multi(request)
+            count = min(len(series) for series in bars_by_instrument.values())
+            if count < minimum:
+                raise ValueError(f"bar_count must be >= {minimum} so indicators can warm up")
+            funding = self._funding_feed.load(request) if self._funding_feed is not None else None
+            return self._engine.run_spread(request, bars_by_instrument, funding=funding)
         bars = self._feed.load(request)
         if len(bars) < minimum:
             raise ValueError(f"bar_count must be >= {minimum} so indicators can warm up")

@@ -187,7 +187,7 @@ ingest, ML і зміна налаштувань тут вимкнені.
 Вкладка `paper` (у сайдбарі — «Trading Terminal») має два контури:
 
 - **Пакетний прогін** — `POST /api/paper/run` (лог: `GET /api/paper/log`, скасування: `POST /api/paper/cancel`): симуляція на потоці барів із виведенням списку гіпотетичних ордерів. Робот мусить бути з `PAPER_SUPPORTED_ROBOTS`, інакше `400` з переліком підтриманих.
-- **Живий paper-термінал** — `POST /api/paper/sessions`: сесія на закритих барах публічного Binance-WS із розігрівом з каталогу (`WARMUP_BARS = 300`), віртуальним капіталом, SL/TP і тими самими ризик-брейкерами та комісіями з `Settings`, що й дослідницькі прогони. Стан і бари приходять через **WebSocket `/api/paper/live-stream`** (`?session=<id або name>`, без параметра — головна сесія); команди — `POST /api/paper/sessions/{key}/stop|pause|resume|close-position|update-stops`, портфель — `GET /api/paper/portfolio`. Деталі контуру — `docs/24-paper-treydynh.md`.
+- **Живий paper-термінал** — `POST /api/paper/sessions`: сесія на закритих барах публічного Binance-WS із розігрівом з каталогу (`WARMUP_BARS = 300`), віртуальним капіталом, SL/TP і тими самими ризик-брейкерами та комісіями з `Settings`, що й дослідницькі прогони. Стан і бари приходять через **WebSocket `/api/paper/live-stream`** (`?session=<id або name>`, без параметра — головна сесія); команди — `POST /api/paper/sessions/{key}/stop|pause|resume|close-position|update-stops`, портфель — `GET /api/paper/portfolio`. Нижня шухляда терміналу має вкладку **Decision Logs** (`GET /api/paper/sessions/{key}/decision-log`): на кожному закритому барі робот лишає запис «що він бачив і що вирішив» — див. §4.6. Деталі контуру — `docs/24-paper-treydynh.md`.
 
 **Це симуляція, а не торгівля.** Біржових ключів проєкт не потребує (дані — з публічних ендпоінтів), адаптера виконання не існує, жоден ордер на біржу не надсилається. Поле `mode` сесії (`paper` / `live_guarded`, перемикач у терміналі) лише записується у стан сесії й нікуди не маршрутизується — рушій завжди філить у симульований венчур, а «Live Guarded» у UI — текст попередження.
 
@@ -285,6 +285,7 @@ ingest, ML і зміна налаштувань тут вимкнені.
 | `POST` | `/api/paper/sessions/{key}/resume` | Знімає паузу входів. |
 | `POST` | `/api/paper/sessions/{key}/close-position` | Ручне закриття позиції. |
 | `POST` | `/api/paper/sessions/{key}/update-stops` | Правка SL/TP (`stop_loss`, `take_profit`). |
+| `GET` | `/api/paper/sessions/{key}/decision-log` | Рішення сесії, записані на **закритті кожного бару** (`?lines=` типово 100, максимум 1000): `ts`, `session_id`, `robot`, `instrument`, `close`, `regime`, `signal`, `signal_reason`, `indicators`, `states`. Читається за **`session_id`** — тим самим ключем, яким `JsonlDecisionLogWriter` називає файл `data/paper/decisions/<session-id>_<YYYY-MM-DD>.jsonl` (retention `DECISION_LOG_RETENTION_DAYS`). Вимкнене логування (`DECISION_LOG_ENABLED=false`) або сесія без id → `status: "error"` з поясненням, а не порожній `ok`. |
 | `GET` | `/api/paper/live/state` | Стан **головної** сесії (або idle-стан, якщо сесій немає). |
 | `POST` | `/api/paper/live/start` | Старт сесії тим самим тілом, що `/api/paper/sessions`. |
 | `POST` | `/api/paper/live/stop` | Стоп головної сесії; якщо її немає → `400`. |

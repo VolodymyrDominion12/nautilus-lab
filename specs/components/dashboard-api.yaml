@@ -197,6 +197,27 @@ invariants_enforced:
       `OSError` і лише логує, щоб диск не зупиняв торговий цикл.
 
   - statement: >
+      Вкладка Decision Logs показує рішення саме тієї сесії, яку відкрито в UI:
+      роут `/api/paper/sessions/{key}/decision-log` читає журнал за ТИМ САМИМ
+      ключем, яким його записав writer — `session_id`. Сесія без id і вимкнене
+      логування відповідають помилкою, а не порожнім «ok».
+    enforced_by: src/nautilus_lab/api/routes/live.py
+    verified_by: tests/unit/test_api_decision_log_route.py::test_decision_log_route_returns_the_session_s_own_records
+    note: >
+      Це не гіпотетичний ризик: до 2026-09-25 роут читав за `config.name`
+      ("ema-eth"), а `JsonlDecisionLogWriter` ключував файл за роботом
+      ("ema_2026-09-25.jsonl"), тож на VPS вкладка показувала «No decision logs
+      found / Logs: 0», поки файли росли щогодини на закритті бару. Друга
+      половина — те, що дві сесії одного робота не змішуються (hold-btc і
+      hold-eth писали в один `hold_*.jsonl`):
+      tests/unit/test_api_decision_log_route.py::test_decision_log_route_does_not_show_another_session_s_decisions;
+      відсутній id і вимкнене логування —
+      ...::test_decision_log_route_reports_a_session_that_has_no_id_yet і
+      ...::test_decision_log_route_reports_logging_being_off. Ключування,
+      санітизація імені файлу і retention закриті
+      tests/unit/test_decision_log_writer.py.
+
+  - statement: >
       Слот джоба займається всередині запиту під блокуванням: другий запуск того
       самого джоба, поки перший ще не породив процес, отримує `status: error`, а
       опитування логу одразу після старту бачить `is_running: true`.

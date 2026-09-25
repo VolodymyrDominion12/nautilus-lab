@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import threading
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -11,6 +12,20 @@ from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.infrastructure.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+#: `<key>_YYYY-MM-DD.jsonl` — the trailing date drives the retention policy.
+_LOG_NAME_RE = re.compile(r"^(?P<key>.+)_(?P<date>\d{4}-\d{2}-\d{2})\.jsonl$")
+_UNSAFE_KEY_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_key(raw: str) -> str:
+    """A file-name-safe key that cannot escape the log directory.
+
+    Session ids are `f"{name}-{uuid}"` and the name comes from an API caller, so it is
+    untrusted text: separators, `..`, spaces and unicode all become `_`.
+    """
+    key = _UNSAFE_KEY_RE.sub("_", raw).strip("._-")
+    return key or "unknown"
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -25,7 +40,13 @@ class DecimalEncoder(json.JSONEncoder):
 class JsonlDecisionLogWriter(DecisionLogPort):
     """
     Writes DecisionRecords to JSONL files.
-    Files are segmented by robot name and date.
+
+    Files are segmented by **session** id and date (`<session-id>_YYYY-MM-DD.jsonl`), so one
+    session's decisions never mix with another session's — two sessions of the same robot on
+    different symbols (hold-btc and hold-eth) would otherwise share one file. Records written
+    without a session id (backtests, the CLI, tests) fall back to the robot name as the key,
+    which is how files written before the session keying keep being readable.
+
     Implements a basic retention policy.
     """
 
@@ -81,11 +102,9 @@ class JsonlDecisionLogWriter(DecisionLogPort):
                     )
                     self._enabled = False
 
-    def _get_log_file_path(self, robot_name: str, ts_utc: datetime) -> Path:
+    def _get_log_file_path(self, key: str, ts_utc: datetime) -> Path:
         date_str = ts_utc.strftime("%Y-%m-%d")
-        safe_robot_name = robot_name.replace("/", "_")
-        filename = f"{safe_robot_name}_{date_str}.jsonl"
-        return self._dir / filename
+        return self._dir / f"{_safe_key(key)}_{date_str}.jsonl"
 
     def _prune_old_logs(self) -> None:
         if self._retention_days <= 0:
@@ -97,27 +116,32 @@ class JsonlDecisionLogWriter(DecisionLogPort):
                 continue
 
             try:
-                # Name format: robot_name_YYYY-MM-DD.jsonl
-                stem = log_file.stem
-                parts = stem.split("_")
-                if len(parts) >= 2:
-                    date_str = parts[-1]
-                    file_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)
-                    age_days = (now - file_date).days
-                    if age_days > self._retention_days:
-                        log_file.unlink()
-                        logger.info(f"Pruned old decision log: {log_file.name}")
+                # Name format: <session-id>_YYYY-MM-DD.jsonl
+                match = _LOG_NAME_RE.match(log_file.name)
+                if match is None:
+                    continue
+                file_date = datetime.strptime(match.group("date"), "%Y-%m-%d").replace(tzinfo=UTC)
+                age_days = (now - file_date).days
+                if age_days > self._retention_days:
+                    log_file.unlink()
+                    logger.info(f"Pruned old decision log: {log_file.name}")
             except Exception as e:
                 logger.warning(f"Failed to check/prune log file {log_file.name}: {e}")
+
+    @staticmethod
+    def _record_key(record: DecisionRecord) -> str:
+        """Decision logs belong to a session; a record without one falls back to its robot."""
+        return record.session_id or record.robot
 
     def log(self, record: DecisionRecord) -> None:
         if not self._enabled:
             return
 
-        path = self._get_log_file_path(record.robot, record.bar_end_utc)
+        path = self._get_log_file_path(self._record_key(record), record.bar_end_utc)
 
         data = {
             "ts": record.bar_end_utc.isoformat(),
+            "session_id": record.session_id,
             "robot": record.robot,
             "instrument": record.instrument_id,
             "close": record.close_price,
@@ -135,13 +159,12 @@ class JsonlDecisionLogWriter(DecisionLogPort):
         except Exception as e:
             logger.error(f"Failed to write decision log to {path}: {e}")
 
-    def get_recent_logs(self, robot_name: str, lines: int = 100) -> list[dict[str, Any]]:
-        """Returns the most recent decision logs for a given robot."""
+    def get_recent_logs(self, session_id: str, lines: int = 100) -> list[dict[str, Any]]:
+        """Most recent decision logs of one session (or of a robot, for session-less records)."""
         if not self._enabled:
             return []
 
-        safe_robot_name = robot_name.replace("/", "_")
-        log_files = sorted(self._dir.glob(f"{safe_robot_name}_*.jsonl"))
+        log_files = sorted(self._dir.glob(f"{_safe_key(session_id)}_*.jsonl"))
         if not log_files:
             return []
 

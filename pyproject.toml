@@ -108,8 +108,11 @@ select = [
 # Tests: asserts are the point; fake tokens/passwords, /tmp paths, 0.0.0.0 and
 # subprocess calls on fixed argv are fixtures, not secrets or attack surface.
 "tests/**" = ["S101", "ANN", "S104", "S105", "S106", "S108", "S311", "S603"]
-# Files the decision-log work (2026-09-25) is editing right now: their BLE001/S101/C416
-# findings are left to that change instead of racing it. Remove this entry once it lands.
+# The decision-log path (paper_streamer, decision_log_writer, routes/live) writes and reads
+# logs on the trading loop's thread: a broken log file must never stop a session, so the broad
+# `except Exception` around those writes is deliberate, not an oversight. Its keying by
+# session id landed 2026-09-25 (docs/24 §2.1, §6 defect 9); the entries below stay for that
+# deliberate breadth, not because the work is unfinished.
 "src/nautilus_lab/api/paper_streamer.py" = ["BLE001", "S101"]
 "src/nautilus_lab/infrastructure/decision_log_writer.py" = ["BLE001"]
 "src/nautilus_lab/api/live_sessions.py" = ["C416"]

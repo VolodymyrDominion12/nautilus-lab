@@ -116,7 +116,7 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({ sessionId })
               {logs.map((log, idx) => (
                 <tr key={idx} className="hover:bg-gray-800/20">
                   <td className="py-2 pr-2 text-gray-400 whitespace-nowrap">
-                    {log.ts ? new Date(log.ts).toLocaleString() : '—'}
+                    {log.ts ? new Date(log.ts).toLocaleString('en-GB', { timeZone: 'UTC' }) : '—'}
                   </td>
                   <td className="py-2 pr-2 text-blue-400">
                     {log.close ? `$${parseFloat(log.close).toFixed(2)}` : '—'}
@@ -125,8 +125,10 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({ sessionId })
                     {log.regime || '—'}
                   </td>
                   <td className={`py-2 pr-2 font-bold ${
-                    log.signal === 'LONG' ? 'text-emerald-400' : 
-                    log.signal === 'SHORT' ? 'text-red-400' : 'text-gray-500'
+                    // The API writes SignalSide values ("buy"/"sell"), not LONG/SHORT:
+                    // testing for the latter left every signal grey.
+                    log.signal === 'buy' ? 'text-emerald-400' :
+                    log.signal === 'sell' ? 'text-red-400' : 'text-gray-500'
                   }`}>
                     {log.signal || 'NONE'}
                   </td>

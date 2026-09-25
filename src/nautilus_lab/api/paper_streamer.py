@@ -634,6 +634,9 @@ class LivePaperSessionManager:
             signal_reason=signal.reason if signal else None,
             indicators={k: str(v) for k, v in indicators.items() if v is not None},
             states={k: v for k, v in states.items() if v is not None},
+            # The session is the key the log is filed under, so the dashboard can ask for
+            # this session's decisions and get only those (routes/live.py).
+            session_id=self.session_id,
         )
         self.decision_log.log(record)
 

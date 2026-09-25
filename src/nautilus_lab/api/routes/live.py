@@ -127,6 +127,12 @@ async def stop_paper_session(ctx: Lab, key: str) -> dict[str, Any]:
 def get_paper_session_decision_log(
     ctx: Lab, key: str, lines: int = Query(100, ge=1, le=1000)
 ) -> dict[str, Any]:
+    """Decisions recorded for this session at bar closes.
+
+    The writer keys its files by **session id** (docs/20, `JsonlDecisionLogWriter`), so the
+    lookup must use the same key: reading by `config.name` found nothing and the dashboard
+    showed "No decision logs found" while the files were being written all along.
+    """
     manager = _session_or_404(ctx, key)
     writer = ctx.sessions.decision_log_writer
 
@@ -140,8 +146,16 @@ def get_paper_session_decision_log(
     if not hasattr(writer, "get_recent_logs"):
         return {"status": "error", "message": "Log writer does not support reading", "logs": []}
 
+    session_key = manager.session_id
+    if not session_key:
+        return {
+            "status": "error",
+            "message": "Session has no id yet: decision logs are keyed by session id",
+            "logs": [],
+        }
+
     try:
-        logs = writer.get_recent_logs(manager.config.name, lines=lines)
+        logs = writer.get_recent_logs(session_key, lines=lines)
         return {"status": "ok", "logs": logs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

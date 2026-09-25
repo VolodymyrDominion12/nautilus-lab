@@ -213,7 +213,7 @@ class StrategySpec(ApiModel):
     status: str = "candidate"
     summary: str = ""
     hypothesis: str | None = ""
-    invariants: list[Any] | None = None
+    invariants: dict[str, Any] | None = None
     params: list[StrategyParam] = []
 
 

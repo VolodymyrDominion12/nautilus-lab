@@ -157,19 +157,93 @@ def _max_drawdown(equity_curve: tuple[Decimal, ...], starting: Decimal) -> Decim
 def _sharpe_like(equity_curve: tuple[Decimal, ...]) -> Decimal | None:
     if len(equity_curve) < 3:
         return None
-    returns: list[Decimal] = []
-    previous = equity_curve[0]
-    for equity in equity_curve[1:]:
-        if previous > 0:
-            returns.append((equity - previous) / previous)
-        previous = equity
+    returns = return_series_from_equity(equity_curve)
     if len(returns) < 2:
         return None
     mean = sum(returns, Decimal("0")) / Decimal(len(returns))
-    variance = sum((item - mean) ** 2 for item in returns) / Decimal(len(returns) - 1)
-    if variance <= 0:
-        return None
-    std = Decimal(str(sqrt(float(variance))))
-    if std == 0:
+    std = sample_volatility(returns)
+    if std is None or std == 0:
         return None
     return mean / std
+
+
+def return_series_from_bars(bars: Sequence[OhlcvBar]) -> list[Decimal]:
+    """Close-to-close percentage returns of a bar sequence: (C_t - C_{t-1}) / C_{t-1}."""
+    if len(bars) < 2:
+        return []
+    returns: list[Decimal] = []
+    prev = bars[0].close
+    for bar in bars[1:]:
+        if prev > 0:
+            returns.append((bar.close - prev) / prev)
+        prev = bar.close
+    return returns
+
+
+def return_series_from_equity(equity_curve: tuple[Decimal, ...]) -> list[Decimal]:
+    """Period-to-period returns of an equity curve: (E_t - E_{t-1}) / E_{t-1}."""
+    if len(equity_curve) < 2:
+        return []
+    returns: list[Decimal] = []
+    prev = equity_curve[0]
+    for equity in equity_curve[1:]:
+        if prev > 0:
+            returns.append((equity - prev) / prev)
+        prev = equity
+    return returns
+
+
+def sample_volatility(returns: Sequence[Decimal]) -> Decimal | None:
+    """Sample standard deviation (ddof=1) of a return sequence. None if fewer than 2 points."""
+    if len(returns) < 2:
+        return None
+    mean = sum(returns, Decimal("0")) / Decimal(len(returns))
+    variance = sum((r - mean) ** 2 for r in returns) / Decimal(len(returns) - 1)
+    if variance <= 0:
+        return Decimal("0")
+    return Decimal(str(sqrt(float(variance))))
+
+
+def vol_matched_buy_and_hold_return(
+    *,
+    bars: Sequence[OhlcvBar],
+    equity_curve: tuple[Decimal, ...],
+    max_leverage: Decimal = Decimal("2.0"),
+) -> Decimal | None:
+    """Volatility-matched Buy & Hold benchmark return (docs/roadmap R-4).
+
+    Raw Buy & Hold represents 100% long delta exposure with full asset volatility
+    (often 60-90% annualized in crypto). A strategy taking conservative, selective
+    exposure (e.g. 15% realized vol) is unfairly penalised in a bull run and unfairly
+    flattered in a bear market if compared directly against unscaled B&H.
+
+    This benchmark scales the underlying asset's buy-and-hold return by the ratio of
+    realized strategy volatility to realized asset volatility:
+        k = min(sigma_strat / sigma_asset, max_leverage)
+        return_vol_matched = k * return_bnh
+
+    If strategy took 0 risk (constant equity), k = 0, returning 0.0 (cash return).
+    Returns None when the window is too short or asset volatility is non-positive.
+    """
+    bnh_return = buy_and_hold_return(bars)
+    if bnh_return is None:
+        return None
+
+    bar_returns = return_series_from_bars(bars)
+    asset_vol = sample_volatility(bar_returns)
+    if asset_vol is None or asset_vol <= 0:
+        return None
+
+    eq_returns = return_series_from_equity(equity_curve)
+    strat_vol = sample_volatility(eq_returns)
+    if strat_vol is None:
+        return None
+    if strat_vol <= 0:
+        return Decimal("0")
+
+    scaling = strat_vol / asset_vol
+    if max_leverage > 0 and scaling > max_leverage:
+        scaling = max_leverage
+
+    return scaling * bnh_return
+

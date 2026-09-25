@@ -182,7 +182,7 @@ export interface StrategySpec {
   status: string;
   summary: string;
   hypothesis: string | null;
-  invariants: Record<string, unknown>[] | null;
+  invariants: Record<string, unknown> | null;
   params: StrategyParam[];
 }
 

@@ -337,7 +337,7 @@ def test_writer_round_trip_and_outcome_filter(tmp_path: Path) -> None:
 
 
 def _rows_for_digest() -> list[dict[str, Any]]:
-    rows = []
+    rows: list[dict[str, Any]] = []
     closes = [100, 101, 102, 103, 104, 103, 102, 101]
     for i, close in enumerate(closes):
         outcome = "NO_SIGNAL"

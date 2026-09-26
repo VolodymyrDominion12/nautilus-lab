@@ -59,7 +59,7 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({ sessionId })
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('all');
   const [expanded, setExpanded] = useState<number | null>(null);
-  const [preset, setPreset] = useState(PRESETS[0].key);
+  const [preset, setPreset] = useState(PRESETS[0]?.key ?? 'why_no_trades');
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<{ text: string; note?: string } | null>(null);
 

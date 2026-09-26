@@ -16,6 +16,7 @@ from nautilus_lab.application.dtos import (
     apply_selected,
 )
 from nautilus_lab.application.journal import JournalEntry, record_run
+from nautilus_lab.application.preregistration import register, research_terms, verdict_for
 from nautilus_lab.application.promotion_gate import evaluate_gate
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
@@ -33,6 +34,7 @@ from nautilus_lab.domain.errors import (
     LiveTradingDisabledError,
     PaperTradingNotReadyError,
 )
+from nautilus_lab.domain.preregistration import PreregistrationVerdict
 from nautilus_lab.domain.provenance import RunManifest
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.trading_mode import TradingMode
@@ -57,6 +59,7 @@ from nautilus_lab.interfaces.composition import (
     paper_request,
     paper_use_case,
     param_selection_use_case,
+    preregistration_store,
     research_request,
     research_use_case,
     run_manifest,
@@ -234,6 +237,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--journal",
         action="store_true",
         help="Append a row for this run to the research journal (table + journal.jsonl)",
+    )
+    research.add_argument(
+        "--register",
+        metavar="HYPOTHESIS",
+        help=(
+            "Pre-register this catalog walk-forward (needs --folds >= 2): write its terms "
+            "and fold windows to research/preregistrations/ without running anything. "
+            "Only a later run with matching terms can be promoted"
+        ),
     )
 
     paper = sub.add_parser(
@@ -621,6 +633,9 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         raise ValueError(f"--folds must be >= 1, got {folds}")
     subject = f"{(robot or cfg.robot).value} {cfg.instrument_id}"
     journal_enabled = _journal_enabled(cfg, args)
+    started_at = datetime.now(UTC)
+    if getattr(args, "register", None) is not None:
+        return _run_register(cfg, args, robot, folds)
     manifest = _announce_manifest(cfg, synthetic=bool(args.synthetic))
 
     if getattr(args, "pbo", False):
@@ -742,7 +757,14 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         use_case = walk_forward_use_case(cfg)
         if folds > 1:
             multi = use_case.execute_multi(request)
-            _print_multi_window(multi)
+            registration = verdict_for(
+                request,
+                [fold.window for fold in multi.folds],
+                preregistration_store(cfg),
+                run_started_at=started_at,
+            )
+            manifest = replace(manifest, preregistration_sha256=registration.run_sha256)
+            _print_multi_window(multi, registration)
             if should_notify:
                 notifier(cfg).notify(
                     "Catalog multi-window walk-forward complete: "
@@ -754,7 +776,10 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                     manifest,
                     _journal_entry(
                         subject=subject,
-                        gates=f"walk-forward catalog folds={folds}",
+                        gates=(
+                            f"walk-forward catalog folds={folds} "
+                            f"preregistration={registration.status.value}"
+                        ),
                         oos_return=multi.mean_oos_return,
                         buy_and_hold=multi.mean_buy_and_hold_return,
                         fills=multi.total_oos_fills,
@@ -820,6 +845,46 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                 artifact=tearsheet,
             ),
         )
+    return 0
+
+
+def _run_register(
+    cfg: Settings, args: argparse.Namespace, robot: RobotName | None, folds: int
+) -> int:
+    """Write down a walk-forward's terms before it runs (docs/27 R-2).
+
+    The fold windows come from the same data and the same rolling split the run will use,
+    computed here without a single backtest, so nothing has been seen yet.
+    """
+    if args.synthetic:
+        raise ValueError("--register is for catalog data; synthetic bars are not a test")
+    if folds < 2:
+        raise ValueError("--register needs --folds >= 2 (the promotion gate reads folds)")
+    if getattr(args, "pbo", False):
+        raise ValueError("--register describes the walk-forward; run it without --pbo")
+    request = walk_forward_request(
+        cfg,
+        robot=robot,
+        window=None,
+        in_sample_fraction=args.is_fraction,
+        stress_slice=args.slice,
+        use_optuna=getattr(args, "optuna", False),
+        optuna_trials=getattr(args, "trials", 20),
+        folds=folds,
+    )
+    windows = walk_forward_use_case(cfg).plan_multi(request)
+    terms = research_terms(request, windows)
+    registration, where = register(
+        terms,
+        hypothesis=args.register,
+        registered_at=datetime.now(UTC),
+        store=preregistration_store(cfg),
+    )
+    print(f"registered {registration.terms_sha256} -> {where}")
+    print(f"robot={terms.robot} dataset={terms.dataset} grid={len(terms.grid)} folds={terms.folds}")
+    for index, (start, end) in enumerate(terms.oos_windows):
+        print(f"  fold {index} OOS=[{start}, {end})")
+    print("run the same command without --register; only matching terms can be promoted")
     return 0
 
 
@@ -1202,7 +1267,9 @@ def _optional_window(args: argparse.Namespace) -> WalkForwardWindow | None:
     )
 
 
-def _print_multi_window(report: MultiWindowReport) -> None:
+def _print_multi_window(
+    report: MultiWindowReport, registration: PreregistrationVerdict | None = None
+) -> None:
     print(report.notes)
     # Full ISO timestamps, not dates: on intraday bars an out-of-sample block can be
     # hours long, and a date-only label would print the same day for every fold.
@@ -1233,8 +1300,10 @@ def _print_multi_window(report: MultiWindowReport) -> None:
     if breaches is not None:
         print(breaches)
     print(report.summary_line())
+    if registration is not None:
+        print(registration.summary_line())
     # Half the evidence: PBO/DSR come from `--pbo`, so this is INCOMPLETE at best.
-    print(evaluate_gate(report, None).summary_line())
+    print(evaluate_gate(report, None, preregistration=registration).summary_line())
 
 
 def _breach_suffix(line: str | None) -> str:

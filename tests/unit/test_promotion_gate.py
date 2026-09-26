@@ -11,6 +11,7 @@ from nautilus_lab.application.dtos import (
 )
 from nautilus_lab.application.promotion_gate import CheckStatus, evaluate_gate
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
+from nautilus_lab.domain.preregistration import PreregistrationStatus, PreregistrationVerdict
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
@@ -81,14 +82,17 @@ def _audit(pbo: str, dsr: str | None) -> OverfitAuditReport:
     )
 
 
+MATCHED = PreregistrationVerdict(PreregistrationStatus.MATCHED, "a" * 64, "registered")
+
+
 def test_all_evidence_passing_promotes() -> None:
-    verdict = evaluate_gate(_multi(["0.05"] * 6), _audit("0.1", "0.97"))
+    verdict = evaluate_gate(_multi(["0.05"] * 6), _audit("0.1", "0.97"), preregistration=MATCHED)
     assert verdict.promoted
     assert verdict.label == "PROMOTE"
 
 
 def test_missing_audit_is_incomplete_never_a_pass() -> None:
-    verdict = evaluate_gate(_multi(["0.05"] * 6), None)
+    verdict = evaluate_gate(_multi(["0.05"] * 6), None, preregistration=MATCHED)
     assert not verdict.promoted
     assert verdict.label == "INCOMPLETE"
     assert {check.name for check in verdict.checks if check.status is CheckStatus.NOT_MEASURED} == {
@@ -151,6 +155,30 @@ def test_evidence_without_a_vol_matched_baseline_gets_no_such_check() -> None:
         def beats_buy_and_hold(self) -> bool | None:
             return True
 
-    verdict = evaluate_gate(BasketEvidence(), _audit("0.1", "0.97"))
+    verdict = evaluate_gate(BasketEvidence(), _audit("0.1", "0.97"), preregistration=MATCHED)
     assert "beats_vol_matched" not in {check.name for check in verdict.checks}
     assert verdict.promoted
+
+
+# ---- pre-registration (docs/27 R-2) ------------------------------------------------------
+
+
+def test_passing_evidence_without_a_registration_is_never_promoted() -> None:
+    verdict = evaluate_gate(_multi(["0.05"] * 6), _audit("0.1", "0.97"))
+    check = next(check for check in verdict.checks if check.name == "preregistered")
+    assert check.status is CheckStatus.NOT_MEASURED
+    assert verdict.label == "INCOMPLETE"
+
+
+def test_terms_that_differ_from_the_registration_reject() -> None:
+    moved = PreregistrationVerdict(PreregistrationStatus.MISMATCH, "b" * 64, "terms differ: grid")
+    verdict = evaluate_gate(_multi(["0.05"] * 6), _audit("0.1", "0.97"), preregistration=moved)
+    failed = [check.name for check in verdict.checks if check.status is CheckStatus.FAIL]
+    assert failed == ["preregistered"]
+    assert verdict.label == "REJECT"
+
+
+def test_a_registration_written_after_the_run_rejects() -> None:
+    late = PreregistrationVerdict(PreregistrationStatus.LATE, "a" * 64, "dated after the run")
+    verdict = evaluate_gate(_multi(["0.05"] * 6), _audit("0.1", "0.97"), preregistration=late)
+    assert verdict.label == "REJECT"

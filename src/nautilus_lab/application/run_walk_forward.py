@@ -213,6 +213,27 @@ class RunWalkForward:
             return self._execute_pairs_multi(request, embargo)
         return self._execute_single_multi(request, embargo)
 
+    def plan_multi(self, request: WalkForwardRequest) -> tuple[WalkForwardWindow, ...]:
+        """The fold windows `execute_multi` would use, without running any backtest.
+
+        Pre-registration (docs/27 R-2) writes these down before a single result exists.
+        Same data, same settings, same windows: `execute_multi` derives them identically.
+        """
+        require_backtest_support(request.backtest.robot)
+        if request.folds < 2:
+            raise ValueError("multi-window walk-forward needs folds >= 2")
+        embargo = request.embargo_bars or request.backtest.embargo_bars
+        if request.backtest.robot in (RobotName.PAIRS, RobotName.FUNDING):
+            reference = list(self._feed.load_multi(request.backtest)[_ref_leg(request.backtest)])
+        else:
+            reference = list(self._feed.load(request.backtest))
+        return rolling_windows(
+            reference,
+            folds=request.folds,
+            in_sample_fraction=request.in_sample_fraction,
+            embargo_bars=embargo,
+        )
+
     def _execute_single_multi(
         self,
         request: WalkForwardRequest,

@@ -170,6 +170,8 @@ class Settings(BaseSettings):
     # R-3). Always written for catalog searches: it is evidence, like the journal, and a
     # switch to turn it off would be a switch to launder a search.
     trials_ledger_path: str = "research/trials.jsonl"
+    # Registered test terms, one JSON file each (docs/27 R-2): `lab research --register`.
+    preregistrations_dir: str = "research/preregistrations"
 
     # Decision Log for Live Paper API (infrastructure/decision_log_writer.py)
     decision_log_enabled: bool = False

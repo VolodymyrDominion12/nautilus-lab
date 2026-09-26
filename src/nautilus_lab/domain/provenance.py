@@ -38,6 +38,9 @@ class RunManifest:
     settings_sha256: str | None = None
     catalog_fingerprint: str | None = None
     catalog_files: int | None = None
+    #: Hash of the run's walk-forward terms (docs/27 R-2); set after the fold windows
+    #: are known, compared with `research/preregistrations/`.
+    preregistration_sha256: str | None = None
 
     @property
     def reproducible(self) -> bool:
@@ -70,6 +73,8 @@ class RunManifest:
         ]
         if self.catalog_fingerprint is not None:
             parts.append(f"catalog={_short(self.catalog_fingerprint)}({self.catalog_files} files)")
+        if self.preregistration_sha256 is not None:
+            parts.append(f"terms={_short(self.preregistration_sha256)}")
         return " ".join(parts)
 
     def as_dict(self) -> dict[str, object]:
@@ -83,6 +88,7 @@ class RunManifest:
             "settings_sha256": self.settings_sha256,
             "catalog_fingerprint": self.catalog_fingerprint,
             "catalog_files": self.catalog_files,
+            "preregistration_sha256": self.preregistration_sha256,
         }
 
     @classmethod
@@ -104,6 +110,7 @@ class RunManifest:
             settings_sha256=_optional_str(payload, "settings_sha256"),
             catalog_fingerprint=_optional_str(payload, "catalog_fingerprint"),
             catalog_files=files,
+            preregistration_sha256=_optional_str(payload, "preregistration_sha256"),
         )
 
 

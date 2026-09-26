@@ -22,6 +22,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from nautilus_lab.application.dtos import OverfitAuditReport
+from nautilus_lab.domain.preregistration import PreregistrationVerdict
 
 
 class WalkForwardEvidence(Protocol):
@@ -95,9 +96,33 @@ def evaluate_gate(
     multi: WalkForwardEvidence | None,
     audit: OverfitAuditReport | None,
     criteria: GateCriteria | None = None,
+    *,
+    preregistration: PreregistrationVerdict | None = None,
 ) -> GateVerdict:
     rules = criteria or GateCriteria()
-    return GateVerdict(checks=(*_walk_forward_checks(multi, rules), *_audit_checks(audit, rules)))
+    return GateVerdict(
+        checks=(
+            _preregistration_check(preregistration),
+            *_walk_forward_checks(multi, rules),
+            *_audit_checks(audit, rules),
+        )
+    )
+
+
+def _preregistration_check(verdict: PreregistrationVerdict | None) -> GateCheck:
+    """PROMOTE needs a registration whose terms match this run (docs/27 R-2).
+
+    Without one the check is NOT MEASURED, so the verdict is INCOMPLETE at best: numbers
+    from a test whose terms were not written down first cannot be told apart from the
+    best of many silent retries.
+    """
+    if verdict is None:
+        return _check(
+            "preregistered",
+            None,
+            "no registration checked; `lab research --folds N --register ...` before the run",
+        )
+    return _check("preregistered", verdict.passed, verdict.summary_line())
 
 
 def _check(name: str, passed: bool | None, detail: str) -> GateCheck:

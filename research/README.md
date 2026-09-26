@@ -94,9 +94,14 @@ uv run lab propose --count 5 --journal
 2. Відкинути все, у чого немає економічного механізму або є `unknown_identifiers`
    (вигадана фіча — типова помилка моделі).
 3. Реалізувати прийняте в `domain/` за [docs/07](../docs/07-yak-stvoryty-strategiyu.md).
-4. Прогнати ворота: `pytest` → `ruff` → `mypy src tests` → purged K-fold →
-   `lab research --robot <robot> --folds N` (це і є OOS).
-5. Записати рядок у [journal.md](journal.md): що перевірили, яке число, рішення, причина.
+4. Прогнати ворота: `pytest` → `ruff` → `mypy src tests` → purged K-fold.
+5. **Зареєструвати тест до прогону** (docs/27 R-2, [ADR 0008](../docs/adr/0008-poperednia-reiestratsiia-testu.md)):
+   `lab research --robot <robot> --folds N --register "що має показати OOS і чому"`.
+   Команда рахує вікна фолдів, нічого не запускаючи, і пише умови з хешем у
+   `research/preregistrations/`. Закомітити файл.
+6. `lab research --robot <robot> --folds N` з тими самими параметрами (це і є OOS). Рядок
+   `preregistration=matched` означає, що умови збіглися; без цього гейт не дасть PROMOTE.
+7. Записати рядок у [journal.md](journal.md): що перевірили, яке число, рішення, причина.
 
 ## Чого не робити
 
@@ -108,3 +113,6 @@ uv run lab propose --count 5 --journal
 - **Не запускати згенерований код із реальними ключами.** `lab live` fail closed —
   і це не можна «тимчасово обійти».
 - **Не вірити переконливому поясненню.** Артефакт — це гіпотеза, а не результат.
+- **Не перереєстровувати тест після поганого результату.** Нова реєстрація з ширшою
+  сіткою чи іншою кількістю фолдів — це нова спроба; її рахує журнал спроб
+  (`research/trials.jsonl`), і DSR стає суворішим.

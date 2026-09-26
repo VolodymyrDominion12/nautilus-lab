@@ -203,6 +203,11 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
                 label="Trial ledger path (DSR counts every configuration tried)",
                 field_type="string",
             ),
+            SettingField(
+                key="PREREGISTRATIONS_DIR",
+                label="Pre-registered test terms (PROMOTE needs a match)",
+                field_type="string",
+            ),
         ],
     ),
     SettingGroup(

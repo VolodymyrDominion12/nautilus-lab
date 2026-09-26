@@ -53,6 +53,7 @@ from nautilus_lab.infrastructure.nautilus.instrument import (
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_funding_pair
 from nautilus_lab.infrastructure.orderbook_catalog import ParquetOrderBookCatalog
+from nautilus_lab.infrastructure.preregistration_store import JsonPreregistrationStore
 from nautilus_lab.infrastructure.provenance import collect_manifest
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
@@ -186,6 +187,11 @@ def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
         funding_feed,
         trial_ledger=trial_ledger(resolved),
     )
+
+
+def preregistration_store(cfg: Settings) -> JsonPreregistrationStore:
+    """research/preregistrations/: registered walk-forward terms (docs/27 R-2)."""
+    return JsonPreregistrationStore(Path(cfg.preregistrations_dir))
 
 
 def trial_ledger(cfg: Settings) -> JsonlTrialLedger:

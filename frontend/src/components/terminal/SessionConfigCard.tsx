@@ -1,4 +1,5 @@
 import React from 'react';
+import { InfoTooltip } from '../InfoTooltip';
 
 interface SessionConfigCardProps {
   sessionName: string;
@@ -45,11 +46,11 @@ export const SessionConfigCard: React.FC<SessionConfigCardProps> = ({
 }) => {
   return (
     <div className="bg-[#0d131f] border border-gray-800 p-4 rounded-2xl space-y-3">
-      <span className="text-xs font-semibold text-gray-300 block">Session Configuration</span>
+      <span className="text-xs font-semibold text-gray-300 block">Конфігурація сесії (Config)</span>
 
       <div className="space-y-2 text-xs">
         <div>
-          <label className="text-[10px] text-gray-400 block mb-1">Session name</label>
+          <label className="text-[10px] text-gray-400 block mb-1">Назва сесії</label>
           <input
             type="text"
             value={sessionName}
@@ -61,19 +62,19 @@ export const SessionConfigCard: React.FC<SessionConfigCardProps> = ({
         </div>
         <div>
           <label className="text-[10px] text-gray-400 block mb-1">
-            Hypothesis / stop criterion
+            Гіпотеза / критерій зупинки
           </label>
           <textarea
             value={sessionNotes}
             onChange={(e) => setSessionNotes(e.target.value)}
             disabled={isActive}
             rows={2}
-            placeholder="e.g. beats hold-eth after fees within 60 days, else rejected"
+            placeholder="напр. випереджає hold-eth з урахуванням комісій протягом 60 днів, інакше відхилити"
             className="w-full bg-gray-950 border border-gray-800 rounded-xl px-2.5 py-1.5 text-xs disabled:opacity-50 text-gray-200"
           />
         </div>
         <div>
-          <label className="text-[10px] text-gray-400 block mb-1">Trading Robot</label>
+          <label className="text-[10px] text-gray-400 block mb-1">Торговий робот</label>
           <select
             value={robot}
             onChange={(e) => setRobot(e.target.value)}
@@ -89,7 +90,7 @@ export const SessionConfigCard: React.FC<SessionConfigCardProps> = ({
         </div>
 
         <div>
-          <label className="text-[10px] text-gray-400 block mb-1">Starting Capital ($)</label>
+          <label className="text-[10px] text-gray-400 block mb-1">Початковий капітал ($)</label>
           <input
             type="number"
             value={startingEquity}
@@ -101,7 +102,10 @@ export const SessionConfigCard: React.FC<SessionConfigCardProps> = ({
 
         <div className="grid grid-cols-3 gap-2">
           <div>
-            <label className="text-[10px] text-gray-400 block mb-1">Risk (%)</label>
+            <div className="flex items-center gap-1 mb-1">
+              <label className="text-[10px] text-gray-400 block">Ризик (%)</label>
+              <InfoTooltip term="risk_per_trade" size="xs" />
+            </div>
             <input
               type="number"
               step="0.005"
@@ -112,7 +116,10 @@ export const SessionConfigCard: React.FC<SessionConfigCardProps> = ({
             />
           </div>
           <div>
-            <label className="text-[10px] text-gray-400 block mb-1">Stop Loss (%)</label>
+            <div className="flex items-center gap-1 mb-1">
+              <label className="text-[10px] text-gray-400 block">Stop Loss (%)</label>
+              <InfoTooltip term="stop_loss" size="xs" />
+            </div>
             <input
               type="number"
               step="0.005"
@@ -123,7 +130,10 @@ export const SessionConfigCard: React.FC<SessionConfigCardProps> = ({
             />
           </div>
           <div>
-            <label className="text-[10px] text-gray-400 block mb-1">TP Multiple</label>
+            <div className="flex items-center gap-1 mb-1">
+              <label className="text-[10px] text-gray-400 block">TP Multiple</label>
+              <InfoTooltip term="take_profit" size="xs" />
+            </div>
             <input
               type="number"
               step="0.5"
@@ -136,7 +146,7 @@ export const SessionConfigCard: React.FC<SessionConfigCardProps> = ({
         </div>
 
         <div className="flex items-center justify-between pt-2">
-          <span className="text-xs text-gray-400">Autonomous Execution</span>
+          <span className="text-xs text-gray-400">Автономне виконання</span>
           <input
             type="checkbox"
             checked={autoTrade}

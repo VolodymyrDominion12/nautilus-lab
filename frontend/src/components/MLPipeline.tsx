@@ -125,11 +125,7 @@ export const MLPipeline: React.FC<{ selectedCatalogPath?: string }> = ({ selecte
           <h3 className="font-semibold text-gray-100">Training config</h3>
           <div className="flex items-center gap-1.5">
             <label className="block text-xs text-gray-400">Model type</label>
-            <InfoTooltip
-              title="Тип ML-моделі"
-              content="Formulaic LGBM: регресія/класифікація на базі мікроструктурних та технічних ознак. Meta-label: вторинна модель для фільтрації сигналів базової стратегії методом потрійного бар'єру (Triple Barrier)."
-              size="xs"
-            />
+            <InfoTooltip term="ml_model_type" size="xs" />
           </div>
           <select
             value={modelType}
@@ -168,11 +164,7 @@ export const MLPipeline: React.FC<{ selectedCatalogPath?: string }> = ({ selecte
             <div>
               <div className="flex items-center gap-1">
                 <label className="text-xs text-gray-400">Horizon</label>
-                <InfoTooltip
-                  title="Prediction Horizon (Горизонт прогнозу)"
-                  content="Кількість барів уперед (наприклад, 5 барів), на яку модель оцінює ціновий рух для генерації таргета."
-                  size="xs"
-                />
+                <InfoTooltip term="ml_horizon" size="xs" />
               </div>
               <input
                 type="number"

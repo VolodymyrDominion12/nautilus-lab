@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Sparkles, Terminal } from 'lucide-react';
 import { runPropose } from '../services/api';
 import type { ProposeResponse } from '../services/api';
+import { InfoTooltip } from './InfoTooltip';
 
 export const ProposeAlpha: React.FC = () => {
   const [count, setCount] = useState(5);
@@ -38,15 +39,16 @@ export const ProposeAlpha: React.FC = () => {
         <h3 className="font-semibold text-gray-100 flex items-center gap-2">
           <Sparkles className="w-5 h-5 text-amber-400" />
           Alpha Proposer (offline LLM)
+          <InfoTooltip term="alpha_propose" size="xs" />
         </h3>
         <p className="text-xs text-gray-500 mt-1">
-          Calls the model once to draft hypotheses. Never runs on the backtest hot path.
+          Одноразовий виклик нейромережі для формування гіпотез. Ніколи не запускається на гарячому шляху бектесту чи виконання ордерів.
         </p>
       </div>
 
       <div className="flex flex-wrap gap-4 items-end">
         <div>
-          <label className="text-xs text-gray-400 block mb-1">Count</label>
+          <label className="text-xs text-gray-400 block mb-1">Кількість ідей</label>
           <input
             type="number"
             value={count}
@@ -56,18 +58,18 @@ export const ProposeAlpha: React.FC = () => {
         </div>
         <label className="flex items-center gap-2 text-sm text-gray-300">
           <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
-          Dry run (no API call)
+          Тестовий прогін (Dry run без API)
         </label>
         <label className="flex items-center gap-2 text-sm text-gray-300">
           <input type="checkbox" checked={journal} onChange={(e) => setJournal(e.target.checked)} />
-          Write journal entry
+          Записати в журнал експериментів
         </label>
         <button
           onClick={handleRun}
           disabled={running}
           className="px-4 py-2 bg-amber-700 hover:bg-amber-600 disabled:opacity-50 rounded-xl text-sm text-white"
         >
-          {running ? 'Running…' : dryRun ? 'Preview prompt' : 'Run propose'}
+          {running ? 'Генерація…' : dryRun ? 'Переглянути промпт' : 'Згенерувати альфи'}
         </button>
       </div>
 

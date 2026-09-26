@@ -33,7 +33,9 @@ export const BasicControls: React.FC<BasicControlsProps> = ({
           <label className="text-xs font-medium text-gray-300">Robot</label>
           <InfoTooltip
             title="Торговий робот (Стратегія)"
-            content="Алгоритмічна модель, що генерує торгові сигнали. Роботи з позначкою fail-closed блокуються, якщо вони не реалізовані для бектесту."
+            subtitle="Алгоритмічна модель генерації сигналів"
+            content="Оберіть стратегію для тестування. Позначка «✓» означає, що робот підключений до бектест-рушія NautilusTrader. Позначка «(fail-closed)» — свідомий архітектурний захист: робот ще не має адаптера виконання і його запуск блокується."
+            interpretation="Для старту початківцям рекомендується протестувати «regime» (режимний перемикач тренд/флет) або «ema» (базовий трендовий слідкувач)."
             size="xs"
           />
         </div>
@@ -44,7 +46,7 @@ export const BasicControls: React.FC<BasicControlsProps> = ({
           className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {strategies.length === 0 ? (
-            <option value="">Loading strategies...</option>
+            <option value="">Завантаження стратегій...</option>
           ) : (
             strategies.map((s) => (
               <option key={s.name} value={s.name}>
@@ -62,8 +64,10 @@ export const BasicControls: React.FC<BasicControlsProps> = ({
               Instrument {catalogInstruments.length > 1 && `(${catalogInstruments.length} in catalog)`}
             </label>
             <InfoTooltip
-              title="Торговий інструмент"
-              content="Історичні дані з локального Parquet-каталогу. Для додавання нових пар запустіть ingest у вкладці Parquet Catalog."
+              title="Торговий інструмент (Символ)"
+              subtitle="Історичні біржові котирування з локального каталогу"
+              content="Фінансова пара (наприклад, ETHUSDT або BTCUSDT) у бінарному форматі Parquet. Дані завантажуються безпосередньо з публічних серверів Binance без необхідності вводити API-ключі."
+              interpretation="Якщо потрібної монети немає в списку, перейдіть на вкладку «Parquet Catalog» і запустіть Ingest. Для надійного аналізу рекомендується мати не менше 3000-5000 свічок."
               size="xs"
             />
           </div>
@@ -73,9 +77,9 @@ export const BasicControls: React.FC<BasicControlsProps> = ({
             <div className="bg-amber-950/30 border border-amber-800/50 text-amber-300 text-xs rounded-xl p-2.5 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
-                This catalog has no instruments, so there is nothing to backtest. Open{' '}
-                <span className="font-mono">Parquet Catalog</span> and run an ingest
-                {catalogError ? ` (catalog error: ${catalogError})` : ''}.
+                У цьому каталозі немає завантажених даних. Відкрийте{' '}
+                <span className="font-mono">Parquet Catalog</span> і запустіть завантаження (ingest)
+                {catalogError ? ` (помилка каталогу: ${catalogError})` : ''}.
               </span>
             </div>
           ) : (
@@ -97,12 +101,7 @@ export const BasicControls: React.FC<BasicControlsProps> = ({
         <div className="flex flex-col gap-1.5 xl:col-span-2">
           <div className="flex items-center gap-1">
             <label className="text-xs font-medium text-gray-300">Synthetic bars</label>
-            <InfoTooltip
-              title="Синтетичні дані (Smoke test)"
-              content="Штучно згенеровані бари. Використовуються ВИКЛЮЧНО для швидкої перевірки коду на помилки (smoke test). Дохідність на синтетиці є фіктивною."
-              badge="Smoke Only"
-              size="xs"
-            />
+            <InfoTooltip term="synthetic_data" size="xs" />
           </div>
           <input
             type="number"
@@ -124,11 +123,11 @@ export const BasicControls: React.FC<BasicControlsProps> = ({
           className="bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 focus:border-blue-500 focus:outline-none font-mono"
         >
           <option value={1}>
-            {source === 'catalog' ? '1 (single split, no baseline)' : '1 (single backtest)'}
+            {source === 'catalog' ? '1 (одне вікно, без порівняння з ринком)' : '1 (один прогін)'}
           </option>
-          <option value={2}>2 (multi-window, recommended)</option>
-          <option value={4}>4 (quarterly windows)</option>
-          <option value={8}>8 (deep stress)</option>
+          <option value={2}>2 (мультивіконна валідація, рекомендовано)</option>
+          <option value={4}>4 (квартальні вікна ринку)</option>
+          <option value={8}>8 (глибокий стрес-тест стійкості)</option>
         </select>
       </div>
 

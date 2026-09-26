@@ -108,30 +108,23 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
         <div className="flex items-center gap-2">
           <Info className="w-4 h-4 text-blue-400" />
           <h3 className="text-sm font-bold text-gray-100">Verdict</h3>
-          <InfoTooltip
-            title="Аналіз достовірності бектесту (Verdict)"
-            subtitle="Чесна оцінка результатів без самообману"
-            content="Оцінює, чи був бектест проведений на Out-of-Sample (поза вибіркою), чи перевершив він базовий ринок (Buy & Hold), на скількох фолдах зберігся прибуток, та чи витримує стратегія реальні комісії біржі."
-            interpretation="Будь-який результат без OOS є лише внутрішньою підгонкою параметрів (низька достовірність)."
-            badge="Methodology"
-            size="sm"
-          />
+          <InfoTooltip term="verdict" size="sm" />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={handleCopyMarkdown}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-950 hover:bg-gray-800 border border-gray-800 text-gray-300 transition-colors"
-            title="Copy formatted Markdown report to clipboard"
+            title="Скопіювати форматований Markdown-звіт у буфер обміну"
           >
             {copiedMd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copiedMd ? 'Copied Markdown' : 'Copy Report'}</span>
+            <span>{copiedMd ? 'Звіт скопійовано' : 'Скопіювати звіт'}</span>
           </button>
           <button
             type="button"
             onClick={handleDownloadJson}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-950 hover:bg-gray-800 border border-gray-800 text-gray-300 transition-colors"
-            title="Download full JSON result artifact"
+            title="Завантажити повний артефакт результату у форматі JSON"
           >
             <Download className="w-3.5 h-3.5 text-blue-400" />
             <span>JSON</span>
@@ -142,8 +135,8 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
             subtitle={verdict.badge.label}
             interpretation={
               verdict.badge.label.includes('OOS')
-                ? 'Найвищий рівень доказовості: перевірено на незалежних часових вікнах.'
-                : 'Увага: цей прогін не підтверджує генералізацію на майбутнє.'
+                ? 'Найвищий рівень надійності: стратегія перевірена на незалежних часових вікнах без підглядання в майбутнє.'
+                : 'Увага для новачка: цей прогін не підтверджує перенесення результату на реальний ринок.'
             }
             position="bottom"
           >
@@ -189,7 +182,7 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
               label="OOS mean return"
               value={multi.mean_oos}
               tone={toNumber(multi.mean_oos_raw) != null && (toNumber(multi.mean_oos_raw) as number) > 0 ? 'positive' : 'negative'}
-              hint={`Spread across folds: ${multi.spread}`}
+              hint={`Спред між фолдами: ${multi.spread}`}
               tag={foldCount ? `${foldCount} folds` : undefined}
             />
             <MetricCard
@@ -197,16 +190,16 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
               value={multi.buy_and_hold_mean}
               hint={
                 multi.beats_buy_and_hold === true
-                  ? `Excess ${multi.mean_excess_return}`
+                  ? `Альфа ${multi.mean_excess_return} (випереджає ринок)`
                   : multi.beats_buy_and_hold === false
-                    ? `Excess ${multi.mean_excess_return} — behind the baseline`
-                    : 'Baseline not measurable for this run'
+                    ? `Відставання ${multi.mean_excess_return} від ринку`
+                    : 'Базова лінія не вимірювалась'
               }
             />
             <MetricCard
               label="Profitable folds"
               value={multi.profitable}
-              hint={`Worst ${multi.worst_oos} · best ${multi.best_oos} · median ${multi.median_oos}`}
+              hint={`Гірший ${multi.worst_oos} · кращий ${multi.best_oos} · медіана ${multi.median_oos}`}
               tone={multi.profitable.startsWith(multi.fold_count.toString()) ? 'positive' : 'neutral'}
             />
             <MetricCard
@@ -215,8 +208,8 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({ summary }) => {
               tone={multi.total_oos_fills === 0 ? 'negative' : 'neutral'}
               hint={
                 multi.total_oos_fills === 0
-                  ? 'No trades executed — no sample to score'
-                  : 'Executed out-of-sample trades'
+                  ? 'Угод не здійснено — вибірка порожня'
+                  : 'Виконано угод на незалежних вікнах'
               }
             />
           </>

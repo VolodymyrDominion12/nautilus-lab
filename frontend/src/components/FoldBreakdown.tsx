@@ -71,13 +71,7 @@ export const FoldBreakdown: React.FC<FoldBreakdownProps> = ({ folds, foldCount }
         <div className="flex items-center gap-2">
           <BarChart3 className="w-4 h-4 text-blue-400" />
           <h3 className="text-sm font-bold text-gray-100">Fold-by-fold out-of-sample</h3>
-          <InfoTooltip
-            title="Повіконний аналіз OOS (Fold-by-fold)"
-            subtitle="Перевірка стабільності проти одного випадкового вікна"
-            content="Окремі результати на кожному часовому інтервалі. Зелений стовпчик — дохідність робота на OOS, сірий — Buy&Hold пасивного ринку."
-            interpretation="Якщо середній прибуток досягнуто лише за рахунок 1 фолду, а решта мінусові — стратегія нестабільна. Справжня перевага має спостерігатись на більшості фолдів."
-            size="sm"
-          />
+          <InfoTooltip term="fold_breakdown" size="sm" />
           <span className="text-[11px] text-gray-500">
             {foldCount} forecast{foldCount === 1 ? '' : 's'}, each on its own unseen window
           </span>

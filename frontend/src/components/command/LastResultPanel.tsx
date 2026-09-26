@@ -19,11 +19,7 @@ export const LastResultPanel: React.FC<{ last: ResearchSummary | null }> = ({ la
       <div className="flex items-center gap-2 flex-wrap">
         <Gauge className="w-5 h-5 text-blue-400" />
         <h3 className="font-semibold text-gray-100">Last measured result</h3>
-        <InfoTooltip
-          title="Останній виміряний результат"
-          content="Зведення останнього завершеного бектесту. Для перегляду детального графіку кривої капіталу (Equity Curve) відкрийте вкладку Research & Backtest."
-          size="xs"
-        />
+        <InfoTooltip term="verdict" size="xs" />
         {last?.robot && (
           <span className="text-[11px] font-mono px-2 py-0.5 rounded-full border bg-gray-950 text-gray-300 border-gray-800">
             {last.robot} · {last.run_type}

@@ -3,6 +3,7 @@ import { ArrowDownUp, Check, Copy, GitCompare, RefreshCw } from 'lucide-react';
 import { fetchResearchHistory } from '../services/api';
 import type { HistoryEntry } from '../services/api';
 import { formatBps, formatDateTime, formatPct, toNumber } from '../lib/format';
+import { InfoTooltip } from './InfoTooltip';
 
 interface RunsCompareProps {
   /** Bump to force a reload after a run finishes. */
@@ -162,8 +163,9 @@ export const RunsCompare: React.FC<RunsCompareProps> = ({ refreshKey = 0 }) => {
         <div className="flex items-center gap-2">
           <GitCompare className="w-4 h-4 text-cyan-400" />
           <h3 className="text-sm font-bold text-gray-100">Compare runs</h3>
+          <InfoTooltip term="evidence_level" size="xs" />
           <span className="text-[11px] text-gray-500">
-            {entries.length} archived · pick up to 4 ({selected.length} selected)
+            {entries.length} в архіві · виберіть до 4 ({selected.length} обрано)
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -171,10 +173,10 @@ export const RunsCompare: React.FC<RunsCompareProps> = ({ refreshKey = 0 }) => {
             type="button"
             onClick={handleCopyMarkdown}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-950 hover:bg-gray-800 border border-gray-800 text-gray-300 transition-colors"
-            title="Copy comparison table as Markdown"
+            title="Скопіювати порівняльну таблицю як Markdown"
           >
             {copiedMd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copiedMd ? 'Copied Table' : 'Copy Table'}</span>
+            <span>{copiedMd ? 'Скопійовано' : 'Скопіювати'}</span>
           </button>
           <label className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer">
             <input
@@ -183,24 +185,25 @@ export const RunsCompare: React.FC<RunsCompareProps> = ({ refreshKey = 0 }) => {
               onChange={(e) => setOnlyOutOfSample(e.target.checked)}
               className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
             />
-            out-of-sample only
+            лише out-of-sample
           </label>
           <button
             type="button"
             onClick={() => setSortKey(sortKey === 'date' ? 'excess' : sortKey === 'excess' ? 'oos' : 'date')}
             className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 font-mono"
-            title="Cycle sort: date -> excess -> OOS"
+            title="Змінити сортування: дата -> excess -> OOS"
           >
             <ArrowDownUp className="w-3.5 h-3.5" />
-            sort: {sortKey}
+            сортування: {sortKey === 'date' ? 'дата' : sortKey === 'excess' ? 'перевага' : 'OOS'}
           </button>
           <button
             type="button"
             onClick={load}
             className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300"
+            title="Оновити список збережених бектестів"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            refresh
+            оновити
           </button>
         </div>
       </div>
@@ -214,8 +217,8 @@ export const RunsCompare: React.FC<RunsCompareProps> = ({ refreshKey = 0 }) => {
       {rows.length === 0 ? (
         <p className="text-xs text-gray-500">
           {onlyOutOfSample
-            ? 'No out-of-sample runs archived yet. Run a walk-forward with 2+ folds.'
-            : 'No archived runs yet. Finish a research job to populate history.'}
+            ? 'Немає збережених прогонів з OOS. Запустіть walk-forward з кількома вікнами (folds ≥ 2).'
+            : 'Архів порожній. Завершіть бектест у Research Lab для формування історії.'}
         </p>
       ) : (
         <>

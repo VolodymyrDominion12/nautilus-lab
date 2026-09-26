@@ -29,10 +29,16 @@ const detectGlossaryKey = (label: string): GlossaryKey | undefined => {
   if (normalized.includes('paid cost')) return 'paid_cost_rate';
   if (normalized.includes('cost headroom')) return 'cost_headroom';
   if (normalized === 'pbo' || normalized.includes('probability of backtest overfitting')) return 'pbo';
+  if (normalized.includes('ending balance') || normalized.includes('balance')) return 'ending_balance';
   if (normalized.includes('deflated sharpe')) return 'deflated_sharpe';
   if (normalized.includes('haircut sharpe')) return 'haircut_sharpe';
+  if (normalized.includes('sharpe')) return 'sharpe_like';
+  if (normalized.includes('configurations tried') || normalized.includes('configurations')) return 'configurations_tried';
+  if (normalized.includes('spread across folds') || normalized.includes('fold spread')) return 'fold_spread';
+  if (normalized.includes('cscv splits') || normalized.includes('cscv')) return 'cscv';
   if (normalized.includes('drawdown')) return 'max_drawdown';
   if (normalized.includes('total oos fills') || normalized.includes('total fills') || normalized.includes('fills')) return 'total_fills';
+  if (normalized.includes('data coverage')) return 'data_coverage';
   return undefined;
 };
 

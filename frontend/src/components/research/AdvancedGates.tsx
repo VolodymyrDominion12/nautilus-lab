@@ -129,135 +129,170 @@ export const AdvancedGates: React.FC<AdvancedGatesProps> = ({
               onChange={(e) => update({ embargoBars: Number(e.target.value) })}
               className="bg-gray-950 border border-gray-800 text-xs text-gray-200 rounded-lg p-1.5 font-mono"
             />
-            <span className="text-[10px] text-gray-600">
-              A gap between the legs so overlapping bars cannot leak forward.
+            <span className="text-[10px] text-gray-500">
+              Захисний розрив між вибірками, щоб дані не заглядали в майбутнє.
             </span>
           </div>
 
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-            <input
-              type="checkbox"
-              checked={barVpin}
-              onChange={(e) => {
-                update({ barVpin: e.target.checked });
-                if (e.target.checked) update({ tickVpin: false });
-              }}
-              className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-            />
-            Bar-level VPIN regime filter (volume proxy)
-          </label>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1.5">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={barVpin}
+                  onChange={(e) => {
+                    update({ barVpin: e.target.checked });
+                    if (e.target.checked) update({ tickVpin: false });
+                  }}
+                  className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+                />
+                Bar-level VPIN (фільтр за обʼємом барів)
+              </label>
+              <InfoTooltip term="bar_vpin" size="xs" />
+            </div>
+            <span className="text-[10px] text-gray-500 pl-5">
+              Оцінка токсичності за свічками — блокує вхід проти одностороннього напливу.
+            </span>
+          </div>
 
           <div className="flex flex-col gap-1">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-              <input
-                type="checkbox"
-                checked={tickVpin}
-                onChange={(e) => {
-                  update({ tickVpin: e.target.checked });
-                  if (e.target.checked) update({ barVpin: false });
-                }}
-                className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-              />
-              Tick-level VPIN regime filter
-            </label>
-            <span className="text-[10px] text-gray-600 pl-5">
-              Real aggressor split from aggregated trades
+            <div className="flex items-center gap-1.5">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={tickVpin}
+                  onChange={(e) => {
+                    update({ tickVpin: e.target.checked });
+                    if (e.target.checked) update({ barVpin: false });
+                  }}
+                  className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+                />
+                Tick-level VPIN (точний фільтр за тіками)
+              </label>
+              <InfoTooltip term="tick_vpin" size="xs" />
+            </div>
+            <span className="text-[10px] text-gray-500 pl-5">
+              Точний поділ агресора з угод (trades)
               {tickDataAvailable === false
-                ? ' — no tick series in this catalog'
+                ? ' — у каталозі відсутні тіки'
                 : tickDataAvailable === true
-                  ? ' — tick series present'
-                  : ' — coverage unknown'}
+                  ? ' — тікові дані наявні'
+                  : ' — статус невідомий'}
             </span>
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-              <input
-                type="checkbox"
-                checked={hawkes}
-                onChange={(e) => update({ hawkes: e.target.checked })}
-                className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
-              />
-              Hawkes intensity filter
-            </label>
-            <span className="text-[10px] text-gray-600 pl-5">
-              Clustered-flow gate built from the same tick series; runs only for{' '}
-              {hawkesRobots.join(', ') || 'the regime router'}.
+            <div className="flex items-center gap-1.5">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={hawkes}
+                  onChange={(e) => update({ hawkes: e.target.checked })}
+                  className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+                />
+                Hawkes intensity (фільтр спалахів активності)
+              </label>
+              <InfoTooltip term="hawkes" size="xs" />
+            </div>
+            <span className="text-[10px] text-gray-500 pl-5">
+              Захист від каскадних ліквідацій на тіках; активний лише для{' '}
+              {hawkesRobots.join(', ') || 'роутера regime'}.
             </span>
           </div>
 
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-            <input
-              type="checkbox"
-              checked={generateTearsheet}
-              onChange={(e) => update({ generateTearsheet: e.target.checked })}
-              disabled={usePbo}
-              className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0 disabled:opacity-50"
-            />
-            Generate HTML tearsheet {usePbo && '(not available for PBO)'}
-          </label>
+          <div className="flex items-center gap-1.5">
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+              <input
+                type="checkbox"
+                checked={generateTearsheet}
+                onChange={(e) => update({ generateTearsheet: e.target.checked })}
+                disabled={usePbo}
+                className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0 disabled:opacity-50"
+              />
+              Згенерувати HTML Tearsheet {usePbo && '(недоступно для PBO)'}
+            </label>
+            <InfoTooltip term="tearsheet" size="xs" />
+          </div>
 
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-            <input
-              type="checkbox"
-              checked={journal}
-              onChange={(e) => update({ journal: e.target.checked })}
-              className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+          <div className="flex items-center gap-1.5">
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+              <input
+                type="checkbox"
+                checked={journal}
+                onChange={(e) => update({ journal: e.target.checked })}
+                className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+              />
+              Додати запис у research/journal.md
+            </label>
+            <InfoTooltip
+              title="Запис у журнал досліджень"
+              content="Автоматично фіксує параметри запуску, отриманий OOS та рішення у файл research/journal.md і на Kanban-дошці."
+              interpretation="Корисно новачкам для відстеження власних експериментів та уникнення повторних прогонів збиткових налаштувань."
+              size="xs"
             />
-            Append a row to research/journal.md
-          </label>
+          </div>
 
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-            <input
-              type="checkbox"
-              checked={notify}
-              onChange={(e) => update({ notify: e.target.checked })}
-              className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+          <div className="flex items-center gap-1.5">
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+              <input
+                type="checkbox"
+                checked={notify}
+                onChange={(e) => update({ notify: e.target.checked })}
+                className="rounded bg-gray-950 border-gray-700 text-blue-600 focus:ring-0"
+              />
+              Сповістити про завершення (Telegram / Webhook)
+            </label>
+            <InfoTooltip
+              title="Сповіщення про результат"
+              content="Надсилає повідомлення у Telegram або системний вебхук після закінчення тривалого прогону бектесту."
+              size="xs"
             />
-            Notify on completion (Telegram / webhook)
-          </label>
+          </div>
 
           {source === 'catalog' && (
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-amber-300">
-              <input
-                type="checkbox"
-                checked={fullSample}
-                onChange={(e) => update({ fullSample: e.target.checked })}
-                className="rounded bg-gray-950 border-gray-700 text-amber-500 focus:ring-0"
-              />
-              Full-sample (in-sample only, no split)
-            </label>
+            <div className="flex items-center gap-1.5">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-amber-300">
+                <input
+                  type="checkbox"
+                  checked={fullSample}
+                  onChange={(e) => update({ fullSample: e.target.checked })}
+                  className="rounded bg-gray-950 border-gray-700 text-amber-500 focus:ring-0"
+                />
+                Full-sample (In-sample only, без перевірки OOS)
+              </label>
+              <InfoTooltip term="full_sample" size="xs" />
+            </div>
           )}
 
           <div className="flex flex-col gap-1">
-            <span className="text-[11px] text-gray-400">Stress slice</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-gray-400">Stress slice (Стрес-період)</span>
+              <InfoTooltip term="stress_slice" size="xs" />
+            </div>
             <select
               value={stressSlice}
               onChange={(e) => update({ stressSlice: e.target.value })}
               disabled={stressSlices.length === 0}
               className="bg-gray-950 border border-gray-800 text-xs text-gray-300 rounded-lg p-1.5 disabled:opacity-50"
             >
-              <option value="">Full range (no slice)</option>
-              {/* The list and its dates come from the backend (`domain/stress_slices.py`),
-                  so a slice renamed or moved in code cannot linger here as a stale label.
-                  A value restored from an archived run is kept visible but flagged. */}
+              <option value="">Повний діапазон (без стрес-зрізу)</option>
               {stressSlice && !stressSlices.some((slice) => slice.name === stressSlice) && (
-                <option value={stressSlice}>{stressSlice} (unknown to this backend)</option>
+                <option value={stressSlice}>{stressSlice} (невідомий бекенду)</option>
               )}
               {stressSlices.map((slice) => {
                 const covers = sliceOverlapsCatalog(slice, selectedInstrument);
                 return (
                   <option key={slice.name} value={slice.name}>
                     {slice.name} ({slice.start.slice(0, 10)} → {slice.end.slice(0, 10)})
-                    {covers ? '' : ' — outside this catalog'}
+                    {covers ? '' : ' — поза межами каталогу'}
                   </option>
                 );
               })}
             </select>
-            <span className="text-[10px] text-gray-600">
+            <span className="text-[10px] text-gray-500">
               {stressSlices.length === 0
-                ? 'The backend did not report any stress slices, so none can be selected.'
-                : 'A slice replaces the load window, so it must lie inside the catalog\u2019s own range; the dates above are the ones the backend will use.'}
+                ? 'Бекенд не передав конфігурацій стрес-зрізів.'
+                : 'Замінює вікно завантаження на період відомих криз для стрес-тесту.'}
             </span>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { CheckCircle, Database } from 'lucide-react';
 
+import { InfoTooltip } from '../InfoTooltip';
 import type { CommandCenterResponse } from '../../services/api';
 
 /** Which optional series (taker flow, ticks, depth, funding) sit beside the bars. */
@@ -11,6 +12,7 @@ export const DataCoverage: React.FC<{ data: CommandCenterResponse | null }> = ({
         <div className="flex items-center gap-2">
           <Database className="w-5 h-5 text-cyan-400" />
           <h3 className="font-semibold text-gray-100">Data coverage</h3>
+          <InfoTooltip term="data_coverage" size="sm" />
         </div>
         {data?.catalog_bar_interval && (
           <span className="text-[11px] font-mono px-2 py-0.5 rounded-full border bg-gray-950 text-gray-300 border-gray-800">

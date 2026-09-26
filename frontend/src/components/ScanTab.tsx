@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeftRight, Play, RefreshCw, TriangleAlert } from 'lucide-react';
 import { scanTriangular } from '../services/api';
+import { InfoTooltip } from './InfoTooltip';
 
 interface ScanResult {
   status: string;
@@ -42,19 +43,17 @@ export const ScanTab: React.FC = () => {
         <h2 className="text-xl font-bold text-gray-100 flex items-center gap-2">
           <ArrowLeftRight className="w-6 h-6 text-cyan-400" />
           Arbitrage Scanner
+          <InfoTooltip term="triangular_arb" size="sm" />
         </h2>
         <p className="text-sm text-gray-400 mt-1">
-          Scans a static rate table for triangular arbitrage paths.{' '}
+          Сканування таблиці курсів на наявність циклічного трикутного арбітражу.{' '}
           <span className="font-mono text-xs">lab scan --triangular</span>
         </p>
       </div>
 
       {/* Explanation banner */}
       <div className="p-4 bg-blue-950/30 border border-blue-800/40 rounded-2xl text-xs text-blue-300 leading-relaxed">
-        <span className="font-semibold">What this does:</span> Enumerates all 3-leg currency paths
-        through hardcoded rates and reports paths where round-trip return{' >'} 1. The current
-        implementation always returns 0 — this is intentional (a demonstration scaffold, not a live
-        feed). Connect a live quote stream and replace the rate table to get real signals.
+        <span className="font-semibold">Як це працює:</span> Перебирає всі трикутні маршрути обміну валют (наприклад, USDT → BTC → ETH → USDT). Якщо добуток курсів {'>'} 1 з урахуванням біржових комісій — виникає безризиковий прибуток. У тестовому стенді повертається 0 (демонстраційний каркас без підключення живого стакана).
       </div>
 
       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 flex flex-col gap-5">

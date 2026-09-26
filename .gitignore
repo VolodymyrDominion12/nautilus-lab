@@ -3,26 +3,35 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.dylib
+*.dll
+*.pyd
 
 # Virtual environments
 .venv/
 venv/
 ENV/
+env/
+.direnv/
 
 # Packaging / build
 build/
 dist/
 *.egg-info/
 *.egg
+*.whl
 
 # Testing & coverage
 .pytest_cache/
 .coverage
 .coverage.*
 coverage.xml
+coverage.json
+coverage.lcov
 htmlcov/
 .tox/
 .nox/
+.hypothesis/
 
 # Type checking & linting
 .mypy_cache/
@@ -30,40 +39,102 @@ htmlcov/
 dmypy.json
 .ruff_cache/
 
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# Node / Frontend
+node_modules/
+dist-ssr/
+dist-e2e/
+test-results/
+playwright-report/
+blob-report/
+.npm/
+
 # Environment & secrets
 .env
 .env.*
 !.env.example
+!**/.env.example
 *.pem
 *.key
+*.crt
+*.cer
+*.p12
+*.pfx
 credentials.json
 secrets/
+*.secret
 
-# Logs & local data
-/logs/
+# Logs & runtime data
+logs/
 *.log
-/catalog/
-/data/
-/reports/
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+data/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+
+# Market data & Nautilus catalogs (Parquet series)
+catalog/
+catalog_*/
+catalog-*/
+catalogs/
+*.parquet
+*.feather
+*.arrow
+*.h5
+*.hdf5
+
+# Machine Learning models & weights (keep reference/baseline models tracked)
+models/*
+!models/formulaic_lgbm.txt
+!models/meta_label.txt
+!models/README.md
+!models/.gitkeep
+*.pkl
+*.joblib
+*.onnx
+*.pt
+*.pth
+*.bin
+
+# Reports & visualization HTML
+reports/
 *.html
 # ...except the Vite entry point: without it `npm run build` has nothing to build
 # (and scripts/deploy_vps.sh ships only what git tracks).
 !frontend/index.html
-*.sqlite
-*.db
 
-# Assistant scratch output (drafts land here; the real doc goes to docs/)
+# Assistant & scratch outputs (drafts land here; the real doc goes to docs/)
 Claude outputs/
+.gemini/
+.claude/
 
-# IDE
+# IDE & editors
 .idea/
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.swp
+*.swo
+*~
+*.bak
 
 # OS
 .DS_Store
+.DS_Store?
+._*
 Thumbs.db
-
-# Hypothesis example database (docs/27 E-2.7)
-.hypothesis/
+ehthumbs.db
+[Dd]esktop.ini

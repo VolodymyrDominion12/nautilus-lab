@@ -177,6 +177,8 @@ export interface DeflatedSharpeSummary {
   threshold_sharpe: string | null;
   observations: number;
   trials: number;
+  /** Every configuration ever tried on this data (research/trials.jsonl); the threshold uses it. */
+  trials_total?: number;
   note: string;
 }
 

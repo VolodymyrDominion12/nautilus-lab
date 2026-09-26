@@ -57,6 +57,7 @@ from nautilus_lab.infrastructure.provenance import collect_manifest
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
+from nautilus_lab.infrastructure.trial_ledger import JsonlTrialLedger
 
 
 def settings() -> Settings:
@@ -160,7 +161,12 @@ def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
     book_feed = _BookFeedAdapter(book_catalog)
     funding_feed = _FundingFeedAdapter(funding_cat)
     return RunWalkForward(
-        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed, funding_feed
+        NautilusResearchBacktest(),
+        research_feed(resolved),
+        tick_feed,
+        book_feed,
+        funding_feed,
+        trial_ledger=trial_ledger(resolved),
     )
 
 
@@ -173,8 +179,18 @@ def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
     book_feed = _BookFeedAdapter(book_catalog)
     funding_feed = _FundingFeedAdapter(funding_cat)
     return RunOverfitAudit(
-        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed, funding_feed
+        NautilusResearchBacktest(),
+        research_feed(resolved),
+        tick_feed,
+        book_feed,
+        funding_feed,
+        trial_ledger=trial_ledger(resolved),
     )
+
+
+def trial_ledger(cfg: Settings) -> JsonlTrialLedger:
+    """research/trials.jsonl: every configuration tried per dataset, for DSR (R-3)."""
+    return JsonlTrialLedger(Path(cfg.trials_ledger_path))
 
 
 def llm_completer(

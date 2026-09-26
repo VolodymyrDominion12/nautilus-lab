@@ -47,6 +47,16 @@ class DeflatedSharpeResult:
     observations: int
     trials: int
     note: str
+    trials_total: int | None = None
+    """Every configuration ever tried on this dataset (research/trials.jsonl), this run's
+    included; None when no ledger was consulted. The deflation threshold uses it, because
+    a winner picked after 200 earlier attempts is judged against the best of 200 coin
+    flips, not the best of this run's 8 (docs/27 R-3)."""
+
+    @property
+    def n_trials_total(self) -> int:
+        """The trial count the threshold was computed for."""
+        return max(self.trials, self.trials_total or 0)
 
     @property
     def is_meaningful(self) -> bool:
@@ -57,7 +67,8 @@ class DeflatedSharpeResult:
             return f"DSR undefined: {self.note}"
         return (
             f"DSR={self.probability} (observations={self.observations} "
-            f"trials={self.trials} sharpe={self.sharpe} threshold={self.threshold_sharpe})"
+            f"trials={self.trials} n_trials_total={self.n_trials_total} "
+            f"sharpe={self.sharpe} threshold={self.threshold_sharpe})"
         )
 
 
@@ -208,6 +219,8 @@ def probabilistic_sharpe_ratio(
 def deflated_sharpe_ratio(
     returns: Sequence[Decimal],
     trial_sharpes: Sequence[Decimal],
+    *,
+    total_trials: int | None = None,
 ) -> DeflatedSharpeResult:
     """Deflate the observed Sharpe by the number of trials that produced it.
 
@@ -217,12 +230,19 @@ def deflated_sharpe_ratio(
     is the estimate of how much Sharpe a zero-skill search would have spread over the
     same trials.
 
+    `total_trials` is how many configurations were ever tried on the same data, this run's
+    included (docs/27 R-3). It sets N in the expected maximum; the spread of Sharpes still
+    comes from this run's trials, the only ones whose Sharpes are known. Re-running a
+    search then raises the bar instead of resetting it. A value below this run's own count
+    is ignored: the ledger can lag, it cannot make the search smaller than it was.
+
     Always returns a result object; when the inputs cannot support the formula the
     probability is None and `note` explains why. A number invented from eight noisy
     observations would be read as evidence, and there is none to read.
     """
     observations = len(returns)
     trials = len(trial_sharpes)
+    n_total = max(trials, total_trials or 0)
     sharpe = sharpe_ratio(returns)
     if observations < MIN_OBSERVATIONS:
         return _undefined(
@@ -230,18 +250,31 @@ def deflated_sharpe_ratio(
             trials,
             sharpe,
             f"{observations} observations (need >= {MIN_OBSERVATIONS} for skew/kurtosis)",
+            total_trials,
         )
     if trials < 2:
-        return _undefined(observations, trials, sharpe, "fewer than 2 trials: nothing to deflate")
+        return _undefined(
+            observations, trials, sharpe, "fewer than 2 trials: nothing to deflate", total_trials
+        )
     if sharpe is None:
-        return _undefined(observations, trials, sharpe, "return series has zero variance")
+        return _undefined(
+            observations, trials, sharpe, "return series has zero variance", total_trials
+        )
 
     variance = _variance(trial_sharpes)
     if variance is None:
-        return _undefined(observations, trials, sharpe, "trial Sharpes are not a usable sample")
-    threshold = expected_max_sharpe(trials=trials, sharpe_variance=variance)
+        return _undefined(
+            observations, trials, sharpe, "trial Sharpes are not a usable sample", total_trials
+        )
+    threshold = expected_max_sharpe(trials=n_total, sharpe_variance=variance)
     if threshold is None:
-        return _undefined(observations, trials, sharpe, "no expected-maximum-Sharpe for < 2 trials")
+        return _undefined(
+            observations,
+            trials,
+            sharpe,
+            "no expected-maximum-Sharpe for < 2 trials",
+            total_trials,
+        )
     probability = probabilistic_sharpe_ratio(returns, benchmark_sharpe=threshold)
     if probability is None:
         return _undefined(
@@ -249,6 +282,7 @@ def deflated_sharpe_ratio(
             trials,
             sharpe,
             "PSR denominator is not positive (extreme skew and Sharpe)",
+            total_trials,
         )
     return DeflatedSharpeResult(
         probability=probability,
@@ -258,8 +292,9 @@ def deflated_sharpe_ratio(
         trials=trials,
         note=(
             "PSR against the expected best Sharpe of "
-            f"{trials} zero-skill trials with variance {variance}"
+            f"{n_total} zero-skill trials ({trials} in this run) with variance {variance}"
         ),
+        trials_total=total_trials,
     )
 
 
@@ -268,6 +303,7 @@ def _undefined(
     trials: int,
     sharpe: Decimal | None,
     note: str,
+    trials_total: int | None = None,
 ) -> DeflatedSharpeResult:
     return DeflatedSharpeResult(
         probability=None,
@@ -276,6 +312,7 @@ def _undefined(
         observations=observations,
         trials=trials,
         note=note,
+        trials_total=trials_total,
     )
 
 

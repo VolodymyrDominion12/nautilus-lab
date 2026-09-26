@@ -19,6 +19,7 @@ from nautilus_lab.application.dtos import (
 from nautilus_lab.application.param_grid import iter_param_grid
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_research_backtest import minimum_bars
+from nautilus_lab.application.trial_ledger import TrialLedger, record_trials
 from nautilus_lab.domain.align import align_bars_inner_join
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.deflated_sharpe import (
@@ -50,12 +51,16 @@ class RunOverfitAudit:
         tick_feed: TickFeed | None = None,
         book_feed: OrderBookFeed | None = None,
         funding_feed: FundingFeed | None = None,
+        *,
+        trial_ledger: TrialLedger | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
         self._book_feed = book_feed
         self._funding_feed = funding_feed
+        # Every configuration ever tried on this dataset deflates the winner (R-3).
+        self._trial_ledger = trial_ledger
 
     def execute(self, request: OverfitAuditRequest) -> OverfitAuditReport:
         require_simulated_mode(request.backtest.mode)
@@ -140,7 +145,8 @@ class RunOverfitAudit:
                 report = run(resolved, block_index)
                 row.append(_return_fraction(report, request.backtest.starting_equity))
             matrix.append(tuple(row))
-        return _report(request, labels, tuple(matrix), block_count)
+        total = record_trials(self._trial_ledger, request.backtest, labels)
+        return audit_from_matrix(labels, tuple(matrix), block_count, total_trials=total)
 
 
 def _return_fraction(report: BacktestReport, starting_equity: Decimal) -> Decimal | None:
@@ -170,25 +176,22 @@ def _require_warmup(robot: RobotName, blocks: Sequence[Sequence[OhlcvBar]]) -> N
             )
 
 
-def _report(
-    request: OverfitAuditRequest,
-    labels: tuple[str, ...],
-    matrix: tuple[tuple[Decimal | None, ...], ...],
-    block_count: int,
-) -> OverfitAuditReport:
-    return audit_from_matrix(labels, matrix, block_count)
-
-
 def audit_from_matrix(
     labels: tuple[str, ...],
     matrix: tuple[tuple[Decimal | None, ...], ...],
     block_count: int,
+    *,
+    total_trials: int | None = None,
 ) -> OverfitAuditReport:
-    """PBO + DSR from a `blocks x configurations` return matrix, whoever produced it."""
+    """PBO + DSR from a `blocks x configurations` return matrix, whoever produced it.
+
+    `total_trials` is the ledger's count of every configuration ever tried on this data
+    (docs/27 R-3); None deflates by this run's grid alone, as before the ledger.
+    """
     numeric = _numeric_matrix(matrix)
     result = probability_of_backtest_overfitting(numeric)
     best = labels[index_of_best_configuration(matrix)]
-    deflated = deflated_sharpe_for_winner(numeric, matrix)
+    deflated = deflated_sharpe_for_winner(numeric, matrix, total_trials=total_trials)
     return OverfitAuditReport(
         pbo=result.pbo,
         split_count=result.split_count,
@@ -204,9 +207,10 @@ def audit_from_matrix(
             f"selection actively hurts. Best mean block score: {best}. Every block is "
             "simulated from a flat start, so each one loses its own warm-up bars. "
             f"{deflated.summary_line()} — DSR asks a different question than PBO: whether the "
-            f"winner's Sharpe is more than the best of {result.configuration_count} coin-flip "
-            f"trials, judged on {block_count} block returns (see --pbo-blocks for a wider "
-            "sample), and it never certifies profitability."
+            f"winner's Sharpe is more than the best of {deflated.n_trials_total} coin-flip "
+            f"trials ({result.configuration_count} in this run, the rest from earlier searches "
+            f"on the same data), judged on {block_count} block returns (see --pbo-blocks for a "
+            "wider sample), and it never certifies profitability."
         ),
     )
 
@@ -214,6 +218,8 @@ def audit_from_matrix(
 def deflated_sharpe_for_winner(
     numeric: tuple[tuple[Decimal, ...], ...],
     matrix: tuple[tuple[Decimal | None, ...], ...],
+    *,
+    total_trials: int | None = None,
 ) -> DeflatedSharpeResult:
     """Deflate the winning configuration's Sharpe on the PBO score matrix.
 
@@ -229,7 +235,7 @@ def deflated_sharpe_for_winner(
         value = sharpe_ratio(column)
         trial_sharpes.append(Decimal("0") if value is None else value)
     winner = index_of_best_configuration(matrix)
-    return deflated_sharpe_ratio(columns[winner], trial_sharpes)
+    return deflated_sharpe_ratio(columns[winner], trial_sharpes, total_trials=total_trials)
 
 
 def _numeric_matrix(

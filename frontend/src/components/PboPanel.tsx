@@ -78,7 +78,9 @@ export const PboPanel: React.FC<PboPanelProps> = ({ pbo }) => {
           label="Deflated Sharpe"
           value={dsr.probability ?? 'undefined'}
           tone={dsrProbability == null ? 'neutral' : dsrProbability > 0.95 ? 'positive' : 'negative'}
-          hint={`Observed ${dsr.sharpe ?? 'n/a'} vs best-of-${dsr.trials}-trials threshold ${dsr.threshold_sharpe ?? 'n/a'}`}
+          hint={`Observed ${dsr.sharpe ?? 'n/a'} vs best-of-${dsr.trials_total ?? dsr.trials}-trials threshold ${dsr.threshold_sharpe ?? 'n/a'}${
+            (dsr.trials_total ?? dsr.trials) > dsr.trials ? ` (${dsr.trials} in this run)` : ''
+          }`}
         />
         <MetricCard
           label="Sharpe over threshold?"

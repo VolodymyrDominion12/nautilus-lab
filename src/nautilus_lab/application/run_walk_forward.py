@@ -24,6 +24,7 @@ from nautilus_lab.application.param_grid import iter_param_grid
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_research_backtest import minimum_bars
 from nautilus_lab.application.score import in_sample_score
+from nautilus_lab.application.trial_ledger import TrialLedger, record_trials
 from nautilus_lab.domain.align import split_aligned_by_window
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import InvalidWindowError
@@ -51,12 +52,17 @@ class RunWalkForward:
         tick_feed: TickFeed | None = None,
         book_feed: OrderBookFeed | None = None,
         funding_feed: FundingFeed | None = None,
+        *,
+        trial_ledger: TrialLedger | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
         self._tick_feed = tick_feed
         self._book_feed = book_feed
         self._funding_feed = funding_feed
+        # A walk-forward search is a search on the same data: its configurations count
+        # toward the trials a later DSR is deflated by (docs/27 R-3).
+        self._trial_ledger = trial_ledger
 
     def execute(self, request: WalkForwardRequest) -> WalkForwardReport:
         require_simulated_mode(request.backtest.mode)
@@ -358,8 +364,16 @@ class RunWalkForward:
                 n_trials=request.optuna_trials,
                 seed=request.backtest.seed,
             )
-            return optimizer.optimize(request.backtest, run_is)
-        return self._grid_search_params(request, run_is)
+            selected = optimizer.optimize(request.backtest, run_is)
+            # Optuna's parameters are not kept per trial; a seeded study replays the same
+            # sequence, so "seed + trial number" names the same attempt across runs.
+            seed = request.backtest.seed
+            labels = [f"optuna seed={seed} trial={index}" for index in range(selected[2])]
+        else:
+            selected = self._grid_search_params(request, run_is)
+            labels = [params.label() for params in iter_param_grid(request.backtest)]
+        record_trials(self._trial_ledger, request.backtest, labels)
+        return selected
 
     def _grid_search_params(
         self,

@@ -151,11 +151,12 @@ def _audit_checks(audit: OverfitAuditReport | None, rules: GateCriteria) -> tupl
         return (_check("pbo", None, missing), _check("dsr", None, missing))
     pbo_passed = audit.pbo <= rules.max_pbo if audit.is_meaningful else None
     dsr = audit.deflated_sharpe.probability
+    trials = audit.deflated_sharpe.n_trials_total
     return (
         _check("pbo", pbo_passed, f"PBO={audit.pbo} (need <= {rules.max_pbo})"),
         _check(
             "dsr",
             None if dsr is None else dsr >= rules.min_dsr,
-            f"DSR={dsr} (need >= {rules.min_dsr})",
+            f"DSR={dsr} over n_trials_total={trials} (need >= {rules.min_dsr})",
         ),
     )

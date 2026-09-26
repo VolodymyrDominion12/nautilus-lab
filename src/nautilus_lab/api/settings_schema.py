@@ -198,6 +198,11 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
             SettingField(key="JOURNAL_ENABLED", label="Journal enabled", field_type="boolean"),
             SettingField(key="JOURNAL_PATH", label="Journal markdown path", field_type="string"),
             SettingField(key="JOURNAL_JSONL_PATH", label="Journal JSONL path", field_type="string"),
+            SettingField(
+                key="TRIALS_LEDGER_PATH",
+                label="Trial ledger path (DSR counts every configuration tried)",
+                field_type="string",
+            ),
         ],
     ),
     SettingGroup(

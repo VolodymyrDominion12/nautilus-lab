@@ -222,6 +222,7 @@ def serialize_deflated_sharpe(result: DeflatedSharpeResult) -> dict[str, Any]:
         "threshold_sharpe": decimal_str(result.threshold_sharpe),
         "observations": result.observations,
         "trials": result.trials,
+        "trials_total": result.n_trials_total,
         "note": result.note,
     }
 

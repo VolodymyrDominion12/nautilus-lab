@@ -124,6 +124,10 @@ export interface FoldSummary {
   excess_return_raw: string | null;
   /** null when either side is unmeasurable — never a guess. */
   beats_buy_and_hold: boolean | null;
+  /** Buy & hold scaled to the robot's realized OOS volatility (docs/27 R-4). */
+  vol_matched_buy_and_hold_return?: string;
+  vol_matched_buy_and_hold_return_raw?: string | null;
+  excess_vs_vol_matched_raw?: string | null;
   selected: string;
   candidates_tried: number;
   fills: number;
@@ -159,6 +163,9 @@ export interface MultiWindowSummary {
   buy_and_hold_mean_raw: string | null;
   mean_excess_return: string;
   mean_excess_return_raw: string | null;
+  vol_matched_buy_and_hold_mean?: string;
+  vol_matched_buy_and_hold_mean_raw?: string | null;
+  beats_vol_matched_buy_and_hold?: boolean | null;
   total_oos_fills: number;
   beats_buy_and_hold?: boolean | null;
   mean_breakeven_cost: number | null;

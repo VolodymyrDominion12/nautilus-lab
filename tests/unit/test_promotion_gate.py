@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -15,7 +16,9 @@ from nautilus_lab.domain.walk_forward import WalkForwardWindow
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _fold(index: int, oos_return: str, buy_hold: str, fills: int = 10) -> WalkForwardFold:
+def _fold(
+    index: int, oos_return: str, buy_hold: str, fills: int = 10, vol_matched: str | None = None
+) -> WalkForwardFold:
     start = T0 + timedelta(days=30 * index)
     window = WalkForwardWindow(
         in_sample_start=start,
@@ -41,12 +44,18 @@ def _fold(index: int, oos_return: str, buy_hold: str, fills: int = 10) -> WalkFo
         window=window,
         oos_return=Decimal(oos_return),
         buy_and_hold_return=Decimal(buy_hold),
+        # Default: a robot that carried a small share of the asset's risk.
+        vol_matched_buy_and_hold_return=Decimal(vol_matched if vol_matched is not None else "0"),
     )
 
 
-def _multi(returns: list[str], buy_hold: str = "0.01") -> MultiWindowReport:
+def _multi(
+    returns: list[str], buy_hold: str = "0.01", vol_matched: str | None = None
+) -> MultiWindowReport:
     return MultiWindowReport(
-        folds=tuple(_fold(i, value, buy_hold) for i, value in enumerate(returns)),
+        folds=tuple(
+            _fold(i, value, buy_hold, vol_matched=vol_matched) for i, value in enumerate(returns)
+        ),
         starting_equity=Decimal("100000"),
         notes="",
     )
@@ -106,3 +115,42 @@ def test_undefined_dsr_is_not_measured() -> None:
     dsr = next(check for check in verdict.checks if check.name == "dsr")
     assert dsr.status is CheckStatus.NOT_MEASURED
     assert verdict.label == "INCOMPLETE"
+
+
+# ---- volatility-matched buy & hold (docs/27 R-4) ------------------------------------------
+
+
+def test_beating_raw_buy_and_hold_by_leverage_alone_rejects() -> None:
+    """The robot beat the asset's move only by running twice its volatility."""
+    verdict = evaluate_gate(
+        _multi(["0.05"] * 6, buy_hold="0.03", vol_matched="0.06"), _audit("0.1", "0.97")
+    )
+    failed = [check.name for check in verdict.checks if check.status is CheckStatus.FAIL]
+    assert failed == ["beats_vol_matched"]
+    assert verdict.label == "REJECT"
+
+
+def test_an_unmeasured_vol_matched_baseline_is_not_a_pass() -> None:
+    folds = tuple(
+        replace(fold, vol_matched_buy_and_hold_return=None) for fold in _multi(["0.05"] * 6).folds
+    )
+    report = MultiWindowReport(folds=folds, starting_equity=Decimal("100000"), notes="")
+    verdict = evaluate_gate(report, _audit("0.1", "0.97"))
+    check = next(check for check in verdict.checks if check.name == "beats_vol_matched")
+    assert check.status is CheckStatus.NOT_MEASURED
+    assert verdict.label == "INCOMPLETE"
+
+
+def test_evidence_without_a_vol_matched_baseline_gets_no_such_check() -> None:
+    class BasketEvidence:
+        folds = (1, 2, 3, 4, 5, 6)
+        oos_returns = (Decimal("0.05"),) * 6
+        profitable_folds = 6
+        total_oos_fills = 60
+
+        def beats_buy_and_hold(self) -> bool | None:
+            return True
+
+    verdict = evaluate_gate(BasketEvidence(), _audit("0.1", "0.97"))
+    assert "beats_vol_matched" not in {check.name for check in verdict.checks}
+    assert verdict.promoted

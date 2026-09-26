@@ -12,6 +12,7 @@
 | [0004](0004-typy-frontendu-z-pydantic.md) | Типи фронтенду генеруються з Pydantic, без `openapi-typescript` | прийнято |
 | [0005](0005-stan-dzhobiv-u-sqlite.md) | Стан фонових джобів у SQLite з усиновленням після рестарту | прийнято |
 | [0006](0006-porih-pbo-0-3.md) | Поріг PBO лишається 0.3 (не 0.25) | прийнято |
+| [0007](0007-buy-hold-za-volatylnistiu-u-heiti.md) | Гейт порівнює і з buy & hold, вирівняним за волатильністю | прийнято |
 
 ## Шаблон
 

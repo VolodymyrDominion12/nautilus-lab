@@ -245,6 +245,9 @@ class WalkForwardFold:
     window: WalkForwardWindow
     oos_return: Decimal | None = None
     buy_and_hold_return: Decimal | None = None
+    # Buy & hold scaled to the robot's realized OOS volatility (docs/27 R-4): a robot that
+    # carries a third of the asset's risk is compared with a third of the asset's move.
+    vol_matched_buy_and_hold_return: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,6 +305,17 @@ class MultiWindowReport:
         return sum(values, Decimal("0")) / Decimal(len(values))
 
     @property
+    def mean_vol_matched_buy_and_hold_return(self) -> Decimal | None:
+        values = tuple(
+            fold.vol_matched_buy_and_hold_return
+            for fold in self.folds
+            if fold.vol_matched_buy_and_hold_return is not None
+        )
+        if not values:
+            return None
+        return sum(values, Decimal("0")) / Decimal(len(values))
+
+    @property
     def total_oos_fills(self) -> int:
         return sum(fold.out_of_sample.fills for fold in self.folds)
 
@@ -337,6 +351,20 @@ class MultiWindowReport:
             return None
         return robot > baseline
 
+    def beats_vol_matched_buy_and_hold(self) -> bool | None:
+        """True when the robot out-earned holding the instrument at the robot's own risk.
+
+        The raw comparison asks "was trading worth more than holding"; this one asks "was
+        it worth more than holding the same amount of volatility". A robot that beats raw
+        buy & hold only by carrying twice the asset's risk fails here. None when either
+        side is unmeasurable.
+        """
+        robot = self.mean_oos_return
+        baseline = self.mean_vol_matched_buy_and_hold_return
+        if robot is None or baseline is None:
+            return None
+        return robot > baseline
+
     def summary_line(self) -> str:
         """One-line out-of-sample verdict, safe to paste into a notification."""
 
@@ -353,6 +381,7 @@ class MultiWindowReport:
             f"median_oos={percent(self.median_oos_return)} "
             f"worst={percent(self.worst_oos_return)} best={percent(self.best_oos_return)} "
             f"mean_buy_hold={percent(self.mean_buy_and_hold_return)} ({comparison}) "
+            f"mean_vol_matched_buy_hold={percent(self.mean_vol_matched_buy_and_hold_return)} "
             f"oos_fills={self.total_oos_fills}"
         )
 

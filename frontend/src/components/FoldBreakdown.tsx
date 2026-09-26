@@ -157,6 +157,12 @@ export const FoldBreakdown: React.FC<FoldBreakdownProps> = ({ folds, foldCount }
                 <th className="text-left p-2">OOS window</th>
                 <th className="text-right p-2">OOS</th>
                 <th className="text-right p-2">Buy&hold</th>
+                <th
+                  className="text-right p-2"
+                  title="Buy & hold scaled to this fold's realized OOS volatility (capped at 2x): holding the same risk the robot carried"
+                >
+                  Vol-matched
+                </th>
                 <th className="text-right p-2">Excess</th>
                 <th className="text-right p-2">Fills</th>
                 <th className="text-right p-2">Sharpe</th>
@@ -174,6 +180,9 @@ export const FoldBreakdown: React.FC<FoldBreakdownProps> = ({ folds, foldCount }
                   </td>
                   <td className="p-2 text-right">{row.fold.oos_return}</td>
                   <td className="p-2 text-right">{row.fold.buy_and_hold_return}</td>
+                  <td className="p-2 text-right text-gray-400">
+                    {row.fold.vol_matched_buy_and_hold_return ?? 'n/a'}
+                  </td>
                   <td
                     className={`p-2 text-right ${
                       row.excess == null ? '' : row.excess > 0 ? 'text-emerald-400' : 'text-red-400'

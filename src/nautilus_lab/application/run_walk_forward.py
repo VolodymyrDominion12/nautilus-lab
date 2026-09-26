@@ -29,7 +29,7 @@ from nautilus_lab.domain.align import split_aligned_by_window
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.errors import InvalidWindowError
 from nautilus_lab.domain.funding import FundingSnapshot
-from nautilus_lab.domain.metrics import buy_and_hold_return
+from nautilus_lab.domain.metrics import buy_and_hold_return, vol_matched_from_volatility
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.regime import RobotName, require_backtest_support
 from nautilus_lab.domain.ticks import AggTrade
@@ -326,6 +326,10 @@ class RunWalkForward:
             window=window,
             oos_return=window_return(oos, request.backtest.starting_equity),
             buy_and_hold_return=buy_and_hold_return(oos_reference),
+            vol_matched_buy_and_hold_return=vol_matched_from_volatility(
+                bars=oos_reference,
+                strategy_volatility=None if oos.metrics is None else oos.metrics.return_volatility,
+            ),
         )
 
     def _select_and_evaluate(

@@ -115,6 +115,7 @@ def _walk_forward_checks(
             _check("folds", None, missing),
             _check("profitable_folds", None, missing),
             _check("beats_buy_hold", None, missing),
+            _check("beats_vol_matched", None, missing),
             _check("oos_fills", None, missing),
         )
     fold_count = len(multi.folds)
@@ -137,10 +138,33 @@ def _walk_forward_checks(
             multi.beats_buy_and_hold(),
             "mean out-of-sample return vs mean buy&hold over the same folds",
         ),
+        *_vol_matched_check(multi),
         _check(
             "oos_fills",
             multi.total_oos_fills >= rules.min_oos_fills,
             f"{multi.total_oos_fills} fills (need >= {rules.min_oos_fills})",
+        ),
+    )
+
+
+def _vol_matched_check(multi: WalkForwardEvidence) -> tuple[GateCheck, ...]:
+    """Beat buy & hold scaled to the robot's own OOS volatility (docs/27 R-4, ADR 0007).
+
+    Raw buy & hold asks whether trading was worth more than holding; this asks whether
+    it was worth more than holding the same risk. A robot that beats raw buy & hold only
+    by running twice the asset's volatility fails here. Evidence that cannot state a
+    volatility-matched baseline (the basket rotation compares against its own
+    equal-weight basket) gets no such check rather than a permanent NOT MEASURED.
+    """
+    measure = getattr(multi, "beats_vol_matched_buy_and_hold", None)
+    if not callable(measure):
+        return ()
+    verdict = measure()
+    return (
+        _check(
+            "beats_vol_matched",
+            verdict if isinstance(verdict, bool) or verdict is None else None,
+            "mean out-of-sample return vs mean volatility-matched buy&hold (same folds)",
         ),
     )
 

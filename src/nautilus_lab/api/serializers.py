@@ -142,6 +142,7 @@ def serialize_walk_forward(
 def serialize_fold(fold: WalkForwardFold) -> dict[str, Any]:
     window = fold.window
     excess = _excess_return(fold.oos_return, fold.buy_and_hold_return)
+    vol_excess = _excess_return(fold.oos_return, fold.vol_matched_buy_and_hold_return)
     return {
         "index": fold.index,
         "oos_return": pct(fold.oos_return),
@@ -151,6 +152,9 @@ def serialize_fold(fold: WalkForwardFold) -> dict[str, Any]:
         "excess_return": pct(excess),
         "excess_return_raw": decimal_str(excess),
         "beats_buy_and_hold": None if excess is None else excess > 0,
+        "vol_matched_buy_and_hold_return": pct(fold.vol_matched_buy_and_hold_return),
+        "vol_matched_buy_and_hold_return_raw": decimal_str(fold.vol_matched_buy_and_hold_return),
+        "excess_vs_vol_matched_raw": decimal_str(vol_excess),
         "selected": fold.selected.label(),
         "candidates_tried": fold.candidates_tried,
         "fills": fold.out_of_sample.fills,
@@ -200,6 +204,11 @@ def serialize_multi_window(report: MultiWindowReport) -> dict[str, Any]:
         "buy_and_hold_mean_raw": decimal_str(report.mean_buy_and_hold_return),
         "mean_excess_return": pct(mean_excess),
         "mean_excess_return_raw": decimal_str(mean_excess),
+        "vol_matched_buy_and_hold_mean": pct(report.mean_vol_matched_buy_and_hold_return),
+        "vol_matched_buy_and_hold_mean_raw": decimal_str(
+            report.mean_vol_matched_buy_and_hold_return
+        ),
+        "beats_vol_matched_buy_and_hold": report.beats_vol_matched_buy_and_hold(),
         "total_oos_fills": report.total_oos_fills,
         "beats_buy_and_hold": beats,
         "mean_breakeven_cost": _optional_float(mean_breakeven),

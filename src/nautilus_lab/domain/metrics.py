@@ -43,6 +43,10 @@ class BacktestMetrics:
     # across timeframes (a 1m and a 1h run differ by sqrt(60) for the same edge); this
     # one can. None when the bar interval is unknown or the curve is not bar-sampled.
     sharpe_annualized: Decimal | None = None
+    # Sample standard deviation of the per-bar equity returns: the strategy's realized
+    # risk, which the volatility-matched buy & hold is scaled to (docs/27 R-4). None when
+    # the curve is too short to measure.
+    return_volatility: Decimal | None = None
 
     @property
     def paid_cost_rate(self) -> Decimal | None:
@@ -101,6 +105,7 @@ def compute_metrics(
             traded_notional=traded_notional,
         ),
         sharpe_annualized=annualized,
+        return_volatility=sample_volatility(return_series_from_equity(equity_curve)),
     )
 
 
@@ -225,23 +230,37 @@ def vol_matched_buy_and_hold_return(
     If strategy took 0 risk (constant equity), k = 0, returning 0.0 (cash return).
     Returns None when the window is too short or asset volatility is non-positive.
     """
+    strat_vol = sample_volatility(return_series_from_equity(equity_curve))
+    return vol_matched_from_volatility(
+        bars=bars, strategy_volatility=strat_vol, max_leverage=max_leverage
+    )
+
+
+def vol_matched_from_volatility(
+    *,
+    bars: Sequence[OhlcvBar],
+    strategy_volatility: Decimal | None,
+    max_leverage: Decimal = Decimal("2.0"),
+) -> Decimal | None:
+    """`vol_matched_buy_and_hold_return` for a caller that kept only the strategy's
+    realized volatility (`BacktestMetrics.return_volatility`), not its whole curve.
+
+    Both volatilities must be per bar of the same interval: the equity curve is sampled
+    on every bar, and so are the closes.
+    """
     bnh_return = buy_and_hold_return(bars)
     if bnh_return is None:
         return None
 
-    bar_returns = return_series_from_bars(bars)
-    asset_vol = sample_volatility(bar_returns)
+    asset_vol = sample_volatility(return_series_from_bars(bars))
     if asset_vol is None or asset_vol <= 0:
         return None
-
-    eq_returns = return_series_from_equity(equity_curve)
-    strat_vol = sample_volatility(eq_returns)
-    if strat_vol is None:
+    if strategy_volatility is None:
         return None
-    if strat_vol <= 0:
+    if strategy_volatility <= 0:
         return Decimal("0")
 
-    scaling = strat_vol / asset_vol
+    scaling = strategy_volatility / asset_vol
     if max_leverage > 0 and scaling > max_leverage:
         scaling = max_leverage
 

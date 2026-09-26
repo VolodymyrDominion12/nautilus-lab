@@ -27,6 +27,7 @@ from nautilus_lab.application.trial_ledger import (
 )
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.deflated_sharpe import deflated_sharpe_ratio
+from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.risk import RiskLimits
@@ -85,7 +86,10 @@ class _Engine:
         return BacktestReport(fills=3, positions=1, ending_balance=balance, notes="fake")
 
     def run_spread(
-        self, request: BacktestRequest, bars_by_instrument: dict[str, list[OhlcvBar]]
+        self,
+        request: BacktestRequest,
+        bars_by_instrument: dict[str, list[OhlcvBar]],
+        funding: list[FundingSnapshot] | None = None,
     ) -> BacktestReport:
         raise AssertionError("no pairs here")
 

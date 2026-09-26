@@ -1,9 +1,10 @@
 """The protective stop turns `risk_per_trade` from a sizing assumption into a loss cap.
 
-Fixture: a book that is permanently bid-heavy (the heuristic ml_obi classifier says
-BUY on every update) while the price falls 1% per bar for 20 bars. A strategy that
-never exits on its own is exactly the case the stop exists for: without it the first
-long rides the whole ~18% decline; with it every position is cut near its stop.
+Fixture: a tiny LightGBM booster trained to say "up" on every book update (ml_obi
+fails closed without a model since audit A3) while the price falls 1% per bar for 20
+bars. A strategy that never exits on its own is exactly the case the stop exists for:
+without it the first long rides the whole ~18% decline; with it every position is cut
+near its stop.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -77,7 +79,25 @@ def _bid_heavy_books(bars: list[OhlcvBar], per_bar: int = 20) -> list[OrderBookS
     ]
 
 
-def _request(*, protective_stop: bool) -> BacktestRequest:
+def _always_up_model(tmp_path: Path) -> str:
+    """A 5-feature, 3-class booster whose training labels are all "up" (class 2)."""
+    lgb = pytest.importorskip("lightgbm")
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(7)
+    features = rng.normal(size=(300, 5))
+    labels = np.full(300, 2, dtype=np.int32)
+    labels[:3] = (0, 1, 0)  # every class present, "up" overwhelming
+    booster = lgb.train(
+        {"objective": "multiclass", "num_class": 3, "verbosity": -1},
+        lgb.Dataset(features, label=labels),
+        num_boost_round=20,
+    )
+    path = tmp_path / "always_up.txt"
+    booster.save_model(str(path))
+    return str(path)
+
+
+def _request(*, protective_stop: bool, model_path: str) -> BacktestRequest:
     return BacktestRequest(
         mode=TradingMode.PAPER,
         instrument_id="ETH/USDT.SIM",
@@ -86,13 +106,17 @@ def _request(*, protective_stop: bool) -> BacktestRequest:
         risk=_limits(),
         risk_overlay=replace(RiskOverlay(), use_protective_stop=protective_stop),
         robot=RobotName.ML_OBI,
+        ml_obi_model_path=model_path,
         seed=7,
         source=BarOrigin.SYNTHETIC,
     )
 
 
 @pytest.mark.integration
-def test_protective_stop_caps_the_loss_of_a_position_the_strategy_never_exits() -> None:
+def test_protective_stop_caps_the_loss_of_a_position_the_strategy_never_exits(
+    tmp_path: Path,
+) -> None:
+    model_path = _always_up_model(tmp_path)
     bars = _falling_bars()
     books = _bid_heavy_books(bars)
     risk_cash = STARTING_EQUITY * _limits().risk_per_trade
@@ -102,16 +126,16 @@ def test_protective_stop_caps_the_loss_of_a_position_the_strategy_never_exits() 
     cap = -3 * risk_cash
 
     stopped = NautilusResearchBacktest().run_paper(
-        _request(protective_stop=True), bars, None, books
+        _request(protective_stop=True, model_path=model_path), bars, None, books
     )
-    assert stopped.fills, "the bid-heavy book must make ml_obi trade"
+    assert stopped.fills, "the always-up model must make ml_obi trade"
     for position in stopped.positions:
         if not position.is_open:
             assert position.realized_pnl >= cap, position
     assert stopped.unrealized_pnl >= cap
 
     unprotected = NautilusResearchBacktest().run_paper(
-        _request(protective_stop=False), bars, None, books
+        _request(protective_stop=False, model_path=model_path), bars, None, books
     )
     # The control: without the stop the same fixture loses far more than one risk unit.
     worst_closed = min(

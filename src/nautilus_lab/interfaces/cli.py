@@ -231,7 +231,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--pbo-blocks",
         type=int,
         default=8,
-        help="Contiguous history blocks for --pbo (default: 8)",
+        help="Contiguous history blocks for --pbo, even (default: 8)",
     )
     research.add_argument(
         "--journal",
@@ -892,8 +892,8 @@ def _run_pbo(
     cfg: Settings, args: argparse.Namespace, robot: RobotName | None, manifest: RunManifest
 ) -> int:
     blocks = getattr(args, "pbo_blocks", 8)
-    if blocks < 2:
-        raise ValueError(f"--pbo-blocks must be >= 2, got {blocks}")
+    if blocks < 2 or blocks % 2:
+        raise ValueError(f"--pbo-blocks must be an even number >= 2 (CSCV), got {blocks}")
     if getattr(args, "optuna", False):
         # PBO/CSCV already iterates over all grid configurations on every block;
         # adding Optuna on top would fit a separate HPO search inside each block,
@@ -1165,7 +1165,7 @@ def _run_xsmom(cfg: Settings, args: argparse.Namespace) -> int:
     from nautilus_lab.domain.xsmom import Weighting
     from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
     from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
-    from nautilus_lab.interfaces.composition import research_feed
+    from nautilus_lab.interfaces.composition import research_feed, trial_ledger
 
     require_simulated_mode(cfg.trading_mode)
     interval = args.interval or cfg.bar_interval
@@ -1233,7 +1233,16 @@ def _run_xsmom(cfg: Settings, args: argparse.Namespace) -> int:
             f"selected={fold.selected.label()}"
         )
     print(report.summary_line())
-    audit = run_xsmom_audit(bars, request) if args.pbo else None
+    audit = (
+        run_xsmom_audit(
+            bars,
+            request,
+            trial_ledger=trial_ledger(cfg),
+            dataset=",".join(sorted(nautilus_bar_type(item, interval) for item in instrument_ids)),
+        )
+        if args.pbo
+        else None
+    )
     if audit is not None:
         print(audit.summary_line())
         print(audit.deflated_sharpe.summary_line())

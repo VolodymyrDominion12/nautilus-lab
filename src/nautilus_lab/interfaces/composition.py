@@ -44,6 +44,7 @@ from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
 from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
 from nautilus_lab.infrastructure.live_bar_feed import LiveBarCollector, SeededLiveBarFeed
 from nautilus_lab.infrastructure.llm_client import OpenAICompatibleChatClient
+from nautilus_lab.infrastructure.model_card_store import JsonModelCardSource
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
 from nautilus_lab.infrastructure.nautilus.bar_feed import ResearchBarFeed
 from nautilus_lab.infrastructure.nautilus.instrument import (
@@ -168,6 +169,7 @@ def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
         book_feed,
         funding_feed,
         trial_ledger=trial_ledger(resolved),
+        model_cards=JsonModelCardSource(),
     )
 
 
@@ -186,6 +188,7 @@ def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
         book_feed,
         funding_feed,
         trial_ledger=trial_ledger(resolved),
+        model_cards=JsonModelCardSource(),
     )
 
 

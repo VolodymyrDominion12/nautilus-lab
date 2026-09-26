@@ -14,7 +14,7 @@ from nautilus_lab.application.risk import (
     TradeStats,
     evaluate_entry,
     resolve_risk_fraction,
-    size_position,
+    size_spread,
     stop_distance,
 )
 from nautilus_lab.domain.atr import AverageTrueRange
@@ -194,23 +194,27 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         )
         if self._last_spot is None or self._last_perp is None:
             return
+        # Cash-and-carry is delta-neutral only in quantity: same size on both legs times
+        # the signal's weight, never each leg sized off its own stop (audit B1).
+        qty_spot, qty_perp = size_spread(
+            equity=equity,
+            price_a=self._last_spot.close,
+            price_b=self._last_perp.close,
+            stop_distance_a=stop_distance(
+                self._last_spot.close, self._limits, atr=self._atr_spot.value
+            ),
+            risk_fraction=risk_fraction,
+            hedge_ratio=signal.leg_b.qty_weight,
+            qty_step_a=self.config.qty_step_spot,
+            qty_step_b=self.config.qty_step_perp,
+        )
+        if qty_spot <= 0 or qty_perp <= 0:
+            return
         self._submit_leg(
-            self.config.leg_spot_id,
-            signal.leg_a.side,
-            self._last_spot.close,
-            self.config.qty_step_spot,
-            equity,
-            risk_fraction,
-            self._atr_spot.value,
+            self.config.leg_spot_id, signal.leg_a.side, self._last_spot.close, qty_spot
         )
         self._submit_leg(
-            self.config.leg_perp_id,
-            signal.leg_b.side,
-            self._last_perp.close,
-            self.config.qty_step_perp,
-            equity,
-            risk_fraction * signal.leg_b.qty_weight,
-            self._atr_perp.value,
+            self.config.leg_perp_id, signal.leg_b.side, self._last_perp.close, qty_perp
         )
         self._entry_equity = equity
 
@@ -282,23 +286,10 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         instrument_id: InstrumentId,
         side: SignalSide,
         price: Decimal,
-        qty_step: Decimal,
-        equity: Decimal,
-        risk_fraction: Decimal,
-        atr: Decimal | None,
+        qty: Decimal,
     ) -> None:
         instrument = self.cache.instrument(instrument_id)
         if instrument is None:
-            return
-        distance = stop_distance(price, self._limits, atr=atr)
-        qty = size_position(
-            equity=equity,
-            price=price,
-            stop_distance=distance,
-            risk_fraction=risk_fraction,
-            qty_step=qty_step,
-        )
-        if qty <= 0:
             return
         order_side = OrderSide.BUY if side is SignalSide.BUY else OrderSide.SELL
         order = self.order_factory.market(instrument_id, order_side, instrument.make_qty(qty))

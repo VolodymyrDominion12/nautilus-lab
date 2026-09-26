@@ -145,7 +145,9 @@ def test_an_unmeasured_vol_matched_baseline_is_not_a_pass() -> None:
     assert verdict.label == "INCOMPLETE"
 
 
-def test_evidence_without_a_vol_matched_baseline_gets_no_such_check() -> None:
+def test_evidence_without_a_vol_matched_baseline_is_not_measured() -> None:
+    """Audit B4: the check used to vanish, so it could never hold the verdict back."""
+
     class BasketEvidence:
         folds = (1, 2, 3, 4, 5, 6)
         oos_returns = (Decimal("0.05"),) * 6
@@ -156,8 +158,31 @@ def test_evidence_without_a_vol_matched_baseline_gets_no_such_check() -> None:
             return True
 
     verdict = evaluate_gate(BasketEvidence(), _audit("0.1", "0.97"), preregistration=MATCHED)
-    assert "beats_vol_matched" not in {check.name for check in verdict.checks}
-    assert verdict.promoted
+    check = next(check for check in verdict.checks if check.name == "beats_vol_matched")
+    assert check.status is CheckStatus.NOT_MEASURED
+    assert not verdict.promoted
+    assert verdict.label == "INCOMPLETE"
+
+
+def test_folds_check_counts_measured_folds_not_requested_ones() -> None:
+    """Audit B4: 6 folds requested but only 3 measured is not 6 folds of evidence."""
+
+    class HalfMeasured:
+        folds = (1, 2, 3, 4, 5, 6)
+        oos_returns = (Decimal("0.05"),) * 3
+        profitable_folds = 3
+        total_oos_fills = 60
+
+        def beats_buy_and_hold(self) -> bool | None:
+            return True
+
+        def beats_vol_matched_buy_and_hold(self) -> bool | None:
+            return True
+
+    verdict = evaluate_gate(HalfMeasured(), _audit("0.1", "0.97"), preregistration=MATCHED)
+    check = next(check for check in verdict.checks if check.name == "folds")
+    assert check.status is CheckStatus.FAIL
+    assert "3/6" in check.detail
 
 
 # ---- pre-registration (docs/27 R-2) ------------------------------------------------------

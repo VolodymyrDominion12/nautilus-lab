@@ -99,6 +99,11 @@ def probability_of_backtest_overfitting(scores: tuple[tuple[Decimal, ...], ...])
             logits=(),
         )
 
+    if blocks % 2:
+        # With an odd count `combinations(range(blocks), blocks // 2)` never lets the
+        # larger half play in-sample: the splits are not symmetric and the number is
+        # not the CSCV PBO it would be reported as (audit B6).
+        raise ValueError(f"CSCV needs an even number of blocks, got {blocks}")
     half = blocks // 2
     logits: list[Decimal] = []
     overfit = 0

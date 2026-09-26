@@ -14,7 +14,7 @@ from nautilus_lab.application.risk import (
     TradeStats,
     evaluate_entry,
     resolve_risk_fraction,
-    size_position,
+    size_spread,
     stop_distance,
 )
 from nautilus_lab.domain.atr import AverageTrueRange
@@ -160,24 +160,20 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             self._overlay,
             stats=self._trade_stats,
         )
-        self._submit_leg(
-            self.config.leg_a_id,
-            signal.leg_a.side,
-            self._last_a.close,
-            self.config.qty_step_a,
-            equity,
-            risk_fraction,
-            self._atr_a.value,
+        qty_a, qty_b = size_spread(
+            equity=equity,
+            price_a=self._last_a.close,
+            price_b=self._last_b.close,
+            stop_distance_a=stop_distance(self._last_a.close, self._limits, atr=self._atr_a.value),
+            risk_fraction=risk_fraction,
+            hedge_ratio=signal.leg_b.qty_weight,
+            qty_step_a=self.config.qty_step_a,
+            qty_step_b=self.config.qty_step_b,
         )
-        self._submit_leg(
-            self.config.leg_b_id,
-            signal.leg_b.side,
-            self._last_b.close,
-            self.config.qty_step_b,
-            equity,
-            risk_fraction * signal.leg_b.qty_weight,
-            self._atr_b.value,
-        )
+        if qty_a <= 0 or qty_b <= 0:
+            return  # an unhedged half of a spread is a directional bet, not the robot
+        self._submit_leg(self.config.leg_a_id, signal.leg_a.side, self._last_a.close, qty_a)
+        self._submit_leg(self.config.leg_b_id, signal.leg_b.side, self._last_b.close, qty_b)
         self._entry_equity = equity
 
     def on_stop(self) -> None:
@@ -236,23 +232,10 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         instrument_id: InstrumentId,
         side: SignalSide,
         price: Decimal,
-        qty_step: Decimal,
-        equity: Decimal,
-        risk_fraction: Decimal,
-        atr: Decimal | None,
+        qty: Decimal,
     ) -> None:
         instrument = self.cache.instrument(instrument_id)
         if instrument is None:
-            return
-        distance = stop_distance(price, self._limits, atr=atr)
-        qty = size_position(
-            equity=equity,
-            price=price,
-            stop_distance=distance,
-            risk_fraction=risk_fraction,
-            qty_step=qty_step,
-        )
-        if qty <= 0:
             return
         order_side = OrderSide.BUY if side is SignalSide.BUY else OrderSide.SELL
         order = self.order_factory.market(instrument_id, order_side, instrument.make_qty(qty))

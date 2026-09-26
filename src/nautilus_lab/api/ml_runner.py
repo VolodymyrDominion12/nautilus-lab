@@ -4,6 +4,7 @@ import io
 import sys
 import traceback
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TextIO, cast
@@ -23,7 +24,9 @@ from nautilus_lab.application.train_meta_label import (
     train_meta_label_lightgbm,
 )
 from nautilus_lab.domain.fees import FeeSchedule
+from nautilus_lab.domain.model_card import ModelCard
 from nautilus_lab.domain.triple_barrier import TripleBarrierConfig
+from nautilus_lab.infrastructure.model_card_store import file_sha256, write_model_card
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
 from nautilus_lab.interfaces.composition import settings
@@ -69,6 +72,34 @@ def _flag(value: bool | None) -> str:
     return "n/a" if value is None else str(value).lower()
 
 
+def _write_card(
+    model_path: str,
+    *,
+    robot: str,
+    instrument_id: str,
+    bar_type: str | None,
+    first_ts: datetime,
+    last_ts: datetime,
+    horizon: int,
+    rows: int,
+) -> str:
+    """Record what the booster saw, so research runs can refuse a leaking model (A1/A2)."""
+    sha = file_sha256(model_path)
+    if sha is None:
+        raise FileNotFoundError(f"trained model was not written: {model_path}")
+    card = ModelCard(
+        robot=robot,
+        instrument_id=instrument_id,
+        bar_type=bar_type,
+        train_first_ts=first_ts,
+        train_last_ts=last_ts,
+        horizon=horizon,
+        rows=rows,
+        model_sha256=sha,
+    )
+    return str(write_model_card(model_path, card))
+
+
 def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
     buffer = io.StringIO()
     original = cast(TextIO, sys.stdout)
@@ -85,6 +116,8 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
         require_exclusive_window(start, end)
         window = describe_train_window(start=start, end=end)
         bars = store.load(bar_type=bar_type, start=start, end=end)
+        if job.model_type != "obi" and not bars:
+            raise ValueError(f"no bars in catalog for {bar_type} in the requested window")
 
         if job.model_type == "formulaic":
             output = Path(job.output_path or "models/formulaic_lgbm.txt")
@@ -96,11 +129,21 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
                 embargo=job.embargo,
                 train_window=window,
             )
+            card = _write_card(
+                report.model_path,
+                robot="formulaic_lgbm",
+                instrument_id=instrument,
+                bar_type=bar_type,
+                first_ts=bars[0].ts_utc,
+                last_ts=bars[-1].ts_utc,
+                horizon=job.horizon,
+                rows=report.rows,
+            )
             accuracy = _pct(report.accuracy)
             majority = _pct(report.majority_rate)
             beats = _flag(report.beats_majority)
             print(
-                f"saved={report.model_path} rows={report.rows} folds={report.folds} "
+                f"saved={report.model_path} card={card} rows={report.rows} folds={report.folds} "
                 f"purged_cv_accuracy={accuracy} majority_rate={majority} "
                 f"beats_majority={beats} train_window={report.train_window}"
             )
@@ -140,6 +183,17 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
                 threshold=Decimal(job.threshold),
                 train_window=window,
             )
+            card = _write_card(
+                meta_report.model_path,
+                robot="meta_label",
+                instrument_id=instrument,
+                bar_type=bar_type,
+                first_ts=bars[0].ts_utc,
+                last_ts=bars[-1].ts_utc,
+                horizon=job.horizon,
+                rows=meta_report.rows,
+            )
+            print(f"card={card}")
             accuracy = _pct(meta_report.accuracy)
             tp_rate = _pct(meta_report.take_profit_rate)
             precision = _pct(meta_report.oof_precision)
@@ -170,6 +224,7 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
         if job.model_type == "obi":
             from nautilus_lab.application.train_obi import (
                 build_obi_dataset,
+                obi_book_symbol,
                 train_obi_lightgbm,
             )
             from nautilus_lab.interfaces.composition import orderbook_catalog
@@ -177,9 +232,7 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
             output = Path(job.output_path or "models/obi_lgbm.txt")
             store_books = orderbook_catalog(cfg, path=str(catalog_path))
 
-            symbol = instrument.split(".")[0] if "." in instrument else instrument
-            if "-" in symbol:
-                symbol = symbol.replace("-", "")
+            symbol = obi_book_symbol(instrument)
 
             books = store_books.load(symbol=symbol, start=start, end=end)
 
@@ -196,6 +249,17 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
                 embargo=job.embargo,
                 train_window=window,
             )
+            card = _write_card(
+                obi_report.model_path,
+                robot="ml_obi",
+                instrument_id=instrument,
+                bar_type=None,
+                first_ts=min(book.ts_utc for book in books),
+                last_ts=max(book.ts_utc for book in books),
+                horizon=job.horizon,
+                rows=obi_report.rows,
+            )
+            print(f"card={card}")
             accuracy = _pct(obi_report.accuracy)
             majority = _pct(obi_report.majority_rate)
             beats = _flag(obi_report.beats_majority)

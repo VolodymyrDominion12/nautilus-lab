@@ -103,3 +103,41 @@ def test_funding_paper_session_synthetic() -> None:
     summary = report.summary_line()
     assert "paper funding ETH/USDT.SIM mode=paper" in summary
     assert "(no exchange submission)" in summary
+
+
+@pytest.mark.integration
+def test_funding_settlements_after_the_window_never_reach_the_balance() -> None:
+    """Audit A4: settlements dated after the last bar used to be accrued anyway."""
+    from dataclasses import replace
+    from datetime import timedelta
+
+    from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_funding_pair
+
+    bars, snapshots = synthetic_funding_pair(count=200, seed=42)
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=200,
+        starting_equity=Decimal("100000"),
+        risk=_limits(),
+        robot=RobotName.FUNDING,
+        source=BarOrigin.CATALOG,
+        bar_type="ETH/USDT.SIM-1-HOUR-LAST-EXTERNAL",
+        funding=FundingParams(
+            min_net_apy=Decimal("0.10"),
+            holding_periods=30,
+            basis_max=Decimal("0.005"),
+            close_on_negative=True,
+        ),
+        funding_spot_id="ETH/USDT.SIM",
+        funding_perp_id="ETHUSDT-PERP.SIM",
+    )
+    last = snapshots[-1]
+    future = [
+        replace(last, ts_utc=last.ts_utc + timedelta(hours=8 * step), funding_rate=Decimal("0.01"))
+        for step in range(1, 50)
+    ]
+    engine = NautilusResearchBacktest()
+    clean = engine.run_spread(request, bars, funding=snapshots)
+    polluted = engine.run_spread(request, bars, funding=[*snapshots, *future])
+    assert clean.ending_balance == polluted.ending_balance

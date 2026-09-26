@@ -196,3 +196,14 @@ def train_obi_lightgbm(
         beats_majority=beats,
         train_window=train_window or describe_train_window(start=None, end=None),
     )
+
+
+def obi_book_symbol(instrument_id: str) -> str:
+    """Order-book series key for an instrument: `ETH/USDT.SIM` -> `ETHUSDT` (B7).
+
+    The book catalog stores series under the exchange symbol. The old mapping kept the
+    slash (`ETH/USDT`), so `lab ml train --model-type obi` never found the books that
+    `lab ingest-orderbook` had written for any standard `.SIM` instrument.
+    """
+    symbol = instrument_id.split(".")[0] if "." in instrument_id else instrument_id
+    return symbol.replace("/", "").replace("-", "")

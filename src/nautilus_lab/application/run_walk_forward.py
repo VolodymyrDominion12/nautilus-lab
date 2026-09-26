@@ -20,6 +20,7 @@ from nautilus_lab.application.dtos import (
     apply_selected,
     selected_from_request,
 )
+from nautilus_lab.application.model_guard import ModelCardSource, require_clean_model
 from nautilus_lab.application.param_grid import iter_param_grid
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_research_backtest import minimum_bars
@@ -54,6 +55,7 @@ class RunWalkForward:
         funding_feed: FundingFeed | None = None,
         *,
         trial_ledger: TrialLedger | None = None,
+        model_cards: ModelCardSource | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
@@ -63,6 +65,8 @@ class RunWalkForward:
         # A walk-forward search is a search on the same data: its configurations count
         # toward the trials a later DSR is deflated by (docs/27 R-3).
         self._trial_ledger = trial_ledger
+        # An ML robot's booster must not have seen the out-of-sample bars (A1/A2).
+        self._model_cards = model_cards
 
     def execute(self, request: WalkForwardRequest) -> WalkForwardReport:
         require_simulated_mode(request.backtest.mode)
@@ -78,6 +82,11 @@ class RunWalkForward:
             bars,
             in_sample_fraction=request.in_sample_fraction,
             embargo_bars=embargo,
+        )
+        require_clean_model(
+            request.backtest,
+            first_clean_ts=window.out_of_sample_start,
+            source=self._model_cards,
         )
         folds = split_by_window(bars, window)
         _require_warmup(request.backtest.robot, len(folds.in_sample), "in-sample")
@@ -246,6 +255,13 @@ class RunWalkForward:
             in_sample_fraction=request.in_sample_fraction,
             embargo_bars=embargo,
         )
+        if windows:
+            # The earliest fold decides: a model clean for it is clean for all later ones.
+            require_clean_model(
+                request.backtest,
+                first_clean_ts=min(window.out_of_sample_start for window in windows),
+                source=self._model_cards,
+            )
         ticks, books = self._load_events(request.backtest)
         folds = [
             self._evaluate_single_fold(request, index, bars, window, ticks, books)

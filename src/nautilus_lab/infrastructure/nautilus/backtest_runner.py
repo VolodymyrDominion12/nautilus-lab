@@ -723,6 +723,12 @@ def _funding_run(
             seed=request.seed,
         )
 
+    if funding_snapshots:
+        # Same rule as ticks and books (audit A4): a run only sees settlements inside
+        # its own bar span. Uncut, every fold accrued the whole series' payments, so an
+        # in-sample window ending 2025-11-22 banked ~900 settlements dated after it.
+        funding_snapshots = within_bars(funding_snapshots, bars_perp)
+
     funding_data: list[FundingRateUpdate] = []
     if funding_snapshots:
         for snap in funding_snapshots:

@@ -45,7 +45,6 @@ from nautilus_lab.domain.volatility import VolModel
 from nautilus_lab.domain.vpin import BarVpin, VpinModel
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
 from nautilus_lab.infrastructure.lightgbm_classifier import (
-    HeuristicDirectionClassifier,
     LightGBMDirectionClassifier,
     LightGBMSuccessClassifier,
     require_model_path,
@@ -593,7 +592,7 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             atr_multiple=config.vpin_momentum_atr_multiple,
         )
     if robot is RobotName.FORMULAIC_LGBM:
-        classifier = _build_classifier(config.formulaic_model_path)
+        classifier = _build_classifier(config.formulaic_model_path, robot="formulaic_lgbm")
         return FormulaicLgbmStrategy(
             instrument_id=instrument_id,
             classifier=classifier,
@@ -623,7 +622,7 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             threshold=config.meta_label_threshold,
         )
     if robot is RobotName.ML_OBI:
-        classifier = _build_classifier(config.ml_obi_model_path)
+        classifier = _build_classifier(config.ml_obi_model_path, robot="ml_obi")
         return MlObiStrategy(
             instrument_id=instrument_id,
             classifier=classifier,
@@ -675,12 +674,14 @@ def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRout
     )
 
 
-def _build_classifier(
-    model_path: str | None,
-) -> HeuristicDirectionClassifier | LightGBMDirectionClassifier:
-    if model_path:
-        return LightGBMDirectionClassifier(model_path=model_path)
-    return HeuristicDirectionClassifier()
+def _build_classifier(model_path: str | None, *, robot: str) -> LightGBMDirectionClassifier:
+    """Fail closed without a booster (audit A3).
+
+    The old fallback to `HeuristicDirectionClassifier` let `formulaic_lgbm`/`ml_obi`
+    trade a hand-written OBI rule under the ML robot's name: 80 fills on 1h bars with
+    no model at all, reported as that robot's result. `meta_label` already refused.
+    """
+    return LightGBMDirectionClassifier(model_path=require_model_path(model_path, robot=robot))
 
 
 def _to_domain_bar(bar: Bar, instrument_id: str) -> OhlcvBar:

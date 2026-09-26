@@ -147,10 +147,13 @@ def _walk_forward_checks(
     measured = len(multi.oos_returns)
     share = Decimal(multi.profitable_folds) / Decimal(measured) if measured else None
     return (
+        # Measured folds, not requested ones (audit B4): a fold that produced no
+        # out-of-sample return is not evidence, and `profitable_folds` already divides
+        # by the measured count — both checks must count the same thing.
         _check(
             "folds",
-            fold_count >= rules.min_folds,
-            f"{fold_count} folds (need >= {rules.min_folds})",
+            measured >= rules.min_folds,
+            f"{measured}/{fold_count} folds measured (need >= {rules.min_folds})",
         ),
         _check(
             "profitable_folds",
@@ -178,12 +181,19 @@ def _vol_matched_check(multi: WalkForwardEvidence) -> tuple[GateCheck, ...]:
     Raw buy & hold asks whether trading was worth more than holding; this asks whether
     it was worth more than holding the same risk. A robot that beats raw buy & hold only
     by running twice the asset's volatility fails here. Evidence that cannot state a
-    volatility-matched baseline (the basket rotation compares against its own
-    equal-weight basket) gets no such check rather than a permanent NOT MEASURED.
+    volatility-matched baseline (today: the basket rotation) reports NOT MEASURED, so
+    its verdict stays INCOMPLETE until it can (audit B4) — a check that silently
+    disappears can never hold a verdict back.
     """
     measure = getattr(multi, "beats_vol_matched_buy_and_hold", None)
     if not callable(measure):
-        return ()
+        return (
+            _check(
+                "beats_vol_matched",
+                None,
+                "this evidence has no volatility-matched buy&hold baseline yet",
+            ),
+        )
     verdict = measure()
     return (
         _check(

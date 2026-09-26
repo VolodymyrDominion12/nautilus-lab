@@ -16,6 +16,7 @@ from nautilus_lab.application.dtos import (
     apply_selected,
     index_of_best_configuration,
 )
+from nautilus_lab.application.model_guard import ModelCardSource, require_clean_model
 from nautilus_lab.application.param_grid import iter_param_grid
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_research_backtest import minimum_bars
@@ -53,6 +54,7 @@ class RunOverfitAudit:
         funding_feed: FundingFeed | None = None,
         *,
         trial_ledger: TrialLedger | None = None,
+        model_cards: ModelCardSource | None = None,
     ) -> None:
         self._engine = engine
         self._feed = feed
@@ -61,6 +63,8 @@ class RunOverfitAudit:
         self._funding_feed = funding_feed
         # Every configuration ever tried on this dataset deflates the winner (R-3).
         self._trial_ledger = trial_ledger
+        # Every block is scored, so the model must predate the first bar (A1/A2).
+        self._model_cards = model_cards
 
     def execute(self, request: OverfitAuditRequest) -> OverfitAuditReport:
         require_simulated_mode(request.backtest.mode)
@@ -71,6 +75,10 @@ class RunOverfitAudit:
 
     def _execute_single(self, request: OverfitAuditRequest) -> OverfitAuditReport:
         bars = self._feed.load(request.backtest)
+        if bars:
+            require_clean_model(
+                request.backtest, first_clean_ts=bars[0].ts_utc, source=self._model_cards
+            )
         ranges = _block_ranges(len(bars), request.blocks)
         blocks: tuple[tuple[OhlcvBar, ...], ...] = tuple(
             tuple(bars[start:end]) for start, end in ranges

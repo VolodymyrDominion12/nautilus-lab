@@ -190,6 +190,13 @@ class WalkForwardRequest:
     oos_warmup_bars: int | None = None
 
 
+_LABEL_EXTRAS_DEFAULTS: tuple[tuple[str, object], ...] = (
+    ("z_exit", Decimal("0.5")),
+    ("vpin_ema_period", 50),
+    ("vpin_atr_multiple", Decimal("2")),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class SelectedParams:
     fast_ema: int
@@ -211,6 +218,21 @@ class SelectedParams:
     funding_holding_periods: int = 30
 
     def label(self) -> str:
+        """Trial identity: every field a grid can vary must change it (audit B5).
+
+        The three `vpin_momentum` grid points used to share one label, so the trial
+        ledger counted 1 trial instead of 3 and DSR under-deflated. Fields added later
+        are appended only when they differ from their default, so labels of trials
+        already recorded in `research/trials.jsonl` stay the same.
+        """
+        extras = "".join(
+            f" {name}={getattr(self, name)}"
+            for name, default in _LABEL_EXTRAS_DEFAULTS
+            if getattr(self, name) != default
+        )
+        return self._base_label() + extras
+
+    def _base_label(self) -> str:
         return (
             f"fast_ema={self.fast_ema} slow_ema={self.slow_ema} "
             f"donchian={self.donchian_period} bb_k={self.bb_k} "
@@ -411,8 +433,8 @@ class OverfitAuditRequest:
     blocks: int = 8
 
     def __post_init__(self) -> None:
-        if self.blocks < 2:
-            raise ValueError("blocks must be >= 2 for a symmetric split")
+        if self.blocks < 2 or self.blocks % 2:
+            raise ValueError(f"blocks must be an even number >= 2 for CSCV, got {self.blocks}")
 
 
 def index_of_best_configuration(matrix: tuple[tuple[Decimal | None, ...], ...]) -> int:

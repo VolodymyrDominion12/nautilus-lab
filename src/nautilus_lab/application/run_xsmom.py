@@ -24,6 +24,7 @@ from itertools import product
 from nautilus_lab.application.dtos import OverfitAuditReport
 from nautilus_lab.application.run_overfitting_audit import audit_from_matrix
 from nautilus_lab.application.score import in_sample_score
+from nautilus_lab.application.trial_ledger import TrialLedger
 from nautilus_lab.application.xsmom_backtest import (
     DEFAULT_SLIPPAGE,
     XsMomRun,
@@ -238,9 +239,18 @@ def run_xsmom_walk_forward(
 
 
 def run_xsmom_audit(
-    bars_by_symbol: Mapping[str, Sequence[OhlcvBar]], request: XsMomRequest
+    bars_by_symbol: Mapping[str, Sequence[OhlcvBar]],
+    request: XsMomRequest,
+    *,
+    trial_ledger: TrialLedger | None = None,
+    dataset: str | None = None,
 ) -> OverfitAuditReport:
-    """PBO/CSCV + DSR over contiguous blocks, each block warmed on the bars before it."""
+    """PBO/CSCV + DSR over contiguous blocks, each block warmed on the bars before it.
+
+    With a ledger, DSR is deflated by every basket configuration ever tried on this
+    dataset (audit B5), like the single-instrument audit; `dataset` names the basket
+    (its bar series). Without one it deflates by this grid alone.
+    """
     symbols = require_aligned(bars_by_symbol)
     reference = list(bars_by_symbol[symbols[0]])
     candidates = request.grid.candidates()
@@ -262,4 +272,9 @@ def run_xsmom_audit(
         )
         matrix.append(row)
     labels = tuple(params.label() for params in candidates)
-    return audit_from_matrix(labels, tuple(matrix), blocks)
+    total_trials = None
+    if trial_ledger is not None:
+        if not dataset:
+            raise ValueError("a trial ledger needs the basket's dataset key")
+        total_trials = trial_ledger.record(dataset, (f"xsmom|{label}" for label in labels))
+    return audit_from_matrix(labels, tuple(matrix), blocks, total_trials=total_trials)

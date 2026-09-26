@@ -72,3 +72,19 @@ def test_adaptive_ema_grid_contains_the_fixed_alpha_control() -> None:
     }
     # Without this zero column the grid could not falsify "selectivity adds nothing".
     assert any(selectivity == Decimal("0") for _, selectivity in pairs)
+
+
+def test_every_grid_point_has_its_own_trial_label() -> None:
+    """Audit B5: the three vpin_momentum points shared one label (1 trial, not 3)."""
+    for robot in RobotName:
+        grid = list(iter_param_grid(_request(robot)))
+        labels = [item.label() for item in grid]
+        assert len(set(labels)) == len(labels), robot
+
+
+def test_default_extras_keep_recorded_labels_unchanged() -> None:
+    """Labels already in research/trials.jsonl must still match their configurations."""
+    grid = list(iter_param_grid(_request(RobotName.VPIN_MOMENTUM)))
+    default = next(item for item in grid if item.vpin_ema_period == 50)
+    assert "vpin_ema_period" not in default.label()
+    assert "vpin_ema_period=30" in next(i for i in grid if i.vpin_ema_period == 30).label()

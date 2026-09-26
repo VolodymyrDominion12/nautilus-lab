@@ -46,6 +46,49 @@ def size_position(
     return steps * qty_step
 
 
+def size_spread(
+    *,
+    equity: Decimal,
+    price_a: Decimal,
+    price_b: Decimal,
+    stop_distance_a: Decimal,
+    risk_fraction: Decimal,
+    hedge_ratio: Decimal,
+    qty_step_a: Decimal,
+    qty_step_b: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """Quantities for a hedged spread: leg A is risk-sized, leg B = |hedge_ratio| x qty_A.
+
+    Audit B1: the hedge ratio is a *quantity* ratio (spread = A - beta*B), but it used to
+    be applied as a risk multiplier, and each leg was then divided by its own stop
+    distance. The realised hedge became beta*stop_A/stop_B -- about 1/17 of beta on
+    ETH/BTC -- so "pairs" was ~90% a directional ETH position. Each leg stays under 1x
+    notional; if leg B would breach it both legs shrink together, keeping the ratio.
+    """
+    hedge = abs(hedge_ratio)
+    if hedge <= 0:
+        raise InvalidRiskError("hedge_ratio must be non-zero")
+    if price_b <= 0:
+        raise InvalidRiskError("price must be > 0")
+    if qty_step_b <= 0:
+        raise InvalidRiskError("qty_step must be > 0")
+    qty_a = size_position(
+        equity=equity,
+        price=price_a,
+        stop_distance=stop_distance_a,
+        risk_fraction=risk_fraction,
+        qty_step=qty_step_a,
+    )
+    notional_b = qty_a * hedge * price_b
+    if notional_b > equity:
+        scaled = qty_a * equity / notional_b
+        qty_a = (scaled / qty_step_a).to_integral_value(rounding=ROUND_DOWN) * qty_step_a
+    qty_b = (qty_a * hedge / qty_step_b).to_integral_value(rounding=ROUND_DOWN) * qty_step_b
+    if qty_a <= 0 or qty_b <= 0:
+        return Decimal("0"), Decimal("0")
+    return qty_a, qty_b
+
+
 @dataclass
 class RiskBreachTally:
     """How often each circuit breaker refused an entry, in first-trip order.

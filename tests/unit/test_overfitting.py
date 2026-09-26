@@ -99,3 +99,10 @@ def test_best_configuration_keeps_the_first_index_on_a_tie() -> None:
         (Decimal("0.01"), Decimal("0.01")),
     )
     assert index_of_best_configuration(matrix) == 0
+
+
+def test_odd_block_count_is_not_cscv() -> None:
+    """Audit B6: 7 blocks gave 35 train=3/test=4 splits, reported as symmetric CSCV."""
+    rows = tuple((Decimal(index), Decimal(-index)) for index in range(7))
+    with pytest.raises(ValueError, match="even number of blocks"):
+        probability_of_backtest_overfitting(rows)

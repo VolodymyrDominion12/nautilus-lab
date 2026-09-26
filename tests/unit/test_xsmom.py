@@ -185,3 +185,17 @@ def test_audit_scores_every_configuration_on_every_block() -> None:
     assert audit.configuration_count == 4
     assert audit.blocks == 4
     assert len(audit.block_returns) == 4
+
+
+def test_xsmom_audit_deflates_by_every_trial_in_the_ledger() -> None:
+    """Audit B5: the basket DSR used to count only the current grid."""
+    from nautilus_lab.application.trial_ledger import InMemoryTrialLedger
+
+    basket = _basket()
+    grid = XsMomGrid(lookback_bars=(10, 20), top_n=(1, 2), rebalance_every=(5,))
+    ledger = InMemoryTrialLedger()
+    ledger.record("basket", (f"earlier|{index}" for index in range(40)))
+    audit = run_xsmom_audit(
+        basket, XsMomRequest(grid=grid, pbo_blocks=4), trial_ledger=ledger, dataset="basket"
+    )
+    assert audit.deflated_sharpe.n_trials_total == 44

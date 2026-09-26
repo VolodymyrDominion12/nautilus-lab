@@ -117,6 +117,13 @@ select = [
 "src/nautilus_lab/infrastructure/decision_log_writer.py" = ["BLE001"]
 "src/nautilus_lab/api/live_sessions.py" = ["C416"]
 "src/nautilus_lab/api/routes/live.py" = ["BLE001", "S110"]
+# Decision narrative, digest and LLM prompt are Ukrainian prose by design (the analyst reads
+# them, and an LLM answers in the prompt's language): RUF001-003 fire on every Cyrillic
+# letter there. Code and identifiers in these files stay English.
+"src/nautilus_lab/application/decision_narrative.py" = ["RUF001", "RUF002", "RUF003"]
+"src/nautilus_lab/application/decision_digest.py" = ["RUF001", "RUF002", "RUF003"]
+"src/nautilus_lab/application/decision_analysis.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/unit/test_decision_trace.py" = ["RUF001", "RUF002", "RUF003"]
 # specs/_validator.py — інструмент, який перевіряє УКРАЇНСЬКІ специфікації, тож
 # його повідомлення й коментарі навмисно тією ж мовою, що й specs/*.yaml: людина
 # читає звіт поруч зі спекою. RUF001-003 шукають «неоднозначні» символи Unicode

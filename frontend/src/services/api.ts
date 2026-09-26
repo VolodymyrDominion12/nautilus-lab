@@ -844,10 +844,29 @@ export async function updateLiveStops(
   );
 }
 
-export async function fetchDecisionLogs(sessionId: string, lines: number = 100): Promise<any> {
+export async function fetchDecisionLogs(
+  sessionId: string,
+  lines: number = 100,
+  outcomes?: string[],
+): Promise<any> {
+  const filter = outcomes && outcomes.length ? `&outcome=${encodeURIComponent(outcomes.join(','))}` : '';
   return parseJson(
-    await fetch(sessionPath(sessionId, `decision-log?lines=${lines}`), { method: 'GET' })
+    await fetch(sessionPath(sessionId, `decision-log?lines=${lines}${filter}`), { method: 'GET' })
   );
+}
+
+/** Digest of the session's whole log on the server (counts + key narratives). */
+export async function analyzeSessionDecisions(
+  sessionId: string,
+  options: { question?: string; preset?: string } = {},
+): Promise<any> {
+  const res = await fetch(apiUrl('/api/decisions/analyze'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: sessionId, ...options }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
 export async function analyzeDecisions(records: any[], question: string): Promise<any> {

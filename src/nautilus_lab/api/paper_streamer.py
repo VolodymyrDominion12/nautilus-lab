@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
 import json
 import logging
 import uuid
@@ -34,6 +35,12 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket
 
+from nautilus_lab.application.decision_narrative import render_narrative
+from nautilus_lab.application.decision_trace_codec import (
+    legacy_indicators,
+    legacy_states,
+    record_to_dict,
+)
 from nautilus_lab.application.risk import (
     evaluate_entry,
     size_position,
@@ -42,6 +49,16 @@ from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRoute
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.buy_and_hold import HOLD_ROBOT, BuyAndHold
 from nautilus_lab.domain.decision_log import DecisionRecord
+from nautilus_lab.domain.decision_trace import (
+    Outcome,
+    RecordKind,
+    Stage,
+    TraceStep,
+    TraceValue,
+    Verdict,
+    is_warmup,
+    step,
+)
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.errors import InvalidBarError
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
@@ -49,7 +66,7 @@ from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.position_plan import Holding, plan_for_signal
 from nautilus_lab.domain.regime import RegimeParams
 from nautilus_lab.domain.regime_router import RegimeRouter
-from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
+from nautilus_lab.domain.risk import AccountSnapshot, RiskDecision, RiskLimits
 from nautilus_lab.domain.signals import Signal, SignalSide
 from nautilus_lab.domain.vpin import BarVpin
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
@@ -246,6 +263,17 @@ class LiveEquityPoint:
     unrealized_pnl: float
 
 
+@dataclass
+class ExecutionResult:
+    """What one closed-bar signal turned into: steps for the trace, events for the UI."""
+
+    steps: list[TraceStep] = field(default_factory=list)
+    outcome: Outcome = Outcome.NO_SIGNAL
+    blocked_by: str | None = None
+    fill_ids: list[str] = field(default_factory=list)
+    events: list[str] = field(default_factory=list)
+
+
 class LivePaperSessionManager:
     """Manages an active real-time paper trading session."""
 
@@ -302,6 +330,9 @@ class LivePaperSessionManager:
         self._robot_instance: Any = None
         self._last_mark_price: Decimal | None = None
         self.status_message = "Idle"
+        #: Closed bars this session has decided on (warm-up excluded): lets a reader of
+        #: the decision log see a gap (a missed bar) as a jump in `bar_seq`.
+        self._bar_seq = 0
         self._init_robot()
 
     def _init_robot(self) -> None:
@@ -569,10 +600,16 @@ class LivePaperSessionManager:
             # indicators stay in step with the market while auto-trade is off.
             if self._accept_closed_bar(bar_obj):
                 self._roll_equity_marks(bar_obj.ts_utc)
+                self._bar_seq += 1
+                # The account as the gates see it, before this bar's execution changes it.
+                account = self._account_snapshot()
                 signal = self._robot_instance.on_bar(bar_obj)
-                self._record_decision_log(bar_obj, signal)
-                if signal is not None and self.is_active and self.config.auto_trade:
-                    events.extend(self._apply_signal(signal, close_price))
+                trace = self._robot_trace()
+                execution = self._decide(signal, close_price, trace)
+                events.extend(execution.events)
+                self._record_decision_log(
+                    bar_obj, signal, trace=trace, execution=execution, account=account
+                )
 
         if self.is_active and (is_closed or events):
             self._journal_snapshot(
@@ -580,65 +617,222 @@ class LivePaperSessionManager:
             )
         return events
 
-    def _record_decision_log(self, bar: OhlcvBar, signal: Signal | None) -> None:
+    # ------------------------------------------------------------ decision trace
+    def _robot_trace(self) -> tuple[TraceStep, ...]:
+        """The robot's explanation of the bar it just processed (every paper robot has one)."""
+        trace = getattr(self._robot_instance, "last_trace", ())
+        return tuple(trace) if isinstance(trace, tuple | list) else ()
+
+    def _config_hash(self) -> str:
+        """Short, stable id of the parameters the robot ran with (same config -> same hash)."""
+        payload = json.dumps(config_to_dict(self.config), sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+    def _account_snapshot(self) -> dict[str, TraceValue]:
+        equity = self.current_equity
+        day_loss = (
+            (self._day_start_equity - equity) / self._day_start_equity * Decimal("100")
+            if self._day_start_equity > 0
+            else None
+        )
+        peak = max(self._peak_equity, equity)
+        drawdown = (peak - equity) / peak * Decimal("100") if peak > 0 else None
+        snapshot: dict[str, TraceValue] = {
+            "position": self._pos_side or "FLAT",
+            "equity": equity,
+            "balance": self.balance,
+            "day_loss_pct": day_loss,
+            "drawdown_pct": drawdown,
+            "paused": self.paused,
+            "auto_trade": self.config.auto_trade,
+            "active": self.is_active,
+        }
+        if self.position is not None:
+            snapshot.update(
+                {
+                    "qty": self._pos_qty,
+                    "entry_price": self._pos_entry_price,
+                    "stop_loss": self._pos_sl,
+                    "take_profit": self._pos_tp,
+                    "unrealized_pnl": self.unrealized_pnl,
+                }
+            )
+        return {k: v for k, v in snapshot.items() if v is not None}
+
+    def _decide(
+        self, signal: Signal | None, price: Decimal, trace: tuple[TraceStep, ...]
+    ) -> ExecutionResult:
+        """Turn the robot's signal into an outcome: gates first, then execution."""
+        if signal is None:
+            return ExecutionResult(
+                outcome=Outcome.WARMUP if is_warmup(trace) else Outcome.NO_SIGNAL
+            )
+        held = self._holding()
+        plan = plan_for_signal(held, signal.side)
+        plan_step = self._plan_step(held, plan.exit_position, plan.wants_entry)
+        if plan.is_noop:
+            return ExecutionResult(steps=[plan_step], outcome=Outcome.HOLD_NOOP)
+        if not self.is_active:
+            return ExecutionResult(
+                steps=[plan_step, step(Stage.GATE, "session_active", Verdict.BLOCK)],
+                outcome=Outcome.SESSION_INACTIVE,
+                blocked_by="session_active",
+            )
+        if not self.config.auto_trade:
+            return ExecutionResult(
+                steps=[plan_step, step(Stage.GATE, "auto_trade", Verdict.BLOCK)],
+                outcome=Outcome.AUTO_TRADE_OFF,
+                blocked_by="auto_trade",
+            )
+        return self._execute_signal(signal, price)
+
+    @staticmethod
+    def _plan_step(held: Holding, exit_position: bool, wants_entry: bool) -> TraceStep:
+        if exit_position and wants_entry:
+            result = "exit_and_enter"
+        elif exit_position:
+            result = "exit"
+        elif wants_entry:
+            result = "enter"
+        else:
+            result = "noop"
+        return step(
+            Stage.PLAN,
+            "position_plan",
+            Verdict.PASS,
+            result=result,
+            values={"holding": held.value, "exit": exit_position, "entry": wants_entry},
+        )
+
+    def _record_decision_log(
+        self,
+        bar: OhlcvBar,
+        signal: Signal | None,
+        *,
+        trace: tuple[TraceStep, ...] | None = None,
+        execution: ExecutionResult | None = None,
+        account: dict[str, TraceValue] | None = None,
+    ) -> None:
+        """One `bar_decision` record: what the robot saw, why, and what it turned into.
+
+        Never raises: the decision log is diagnostics, and a failure to write it must not
+        stop a paper session from trading.
+        """
         if self.decision_log is None:
             return
+        try:
+            steps = self._robot_trace() if trace is None else trace
+            if execution is None:
+                execution = ExecutionResult(
+                    outcome=(
+                        Outcome.NO_SIGNAL
+                        if signal is not None or not is_warmup(steps)
+                        else Outcome.WARMUP
+                    )
+                )
+            all_steps = (*steps, *execution.steps)
+            regime = self._record_regime(signal, steps)
+            record = DecisionRecord(
+                bar_end_utc=bar.ts_utc,
+                robot=self.config.robot.lower(),
+                instrument_id=bar.instrument_id,
+                close_price=bar.close,
+                regime=regime,
+                signal=signal.side.value if signal else None,
+                signal_reason=signal.reason if signal else None,
+                indicators=legacy_indicators(all_steps),
+                states=legacy_states(all_steps),
+                # The session is the key the log is filed under, so the dashboard can ask
+                # for this session's decisions and get only those (routes/live.py).
+                session_id=self.session_id,
+                kind=RecordKind.BAR_DECISION,
+                bar_seq=self._bar_seq,
+                bar={
+                    "o": bar.open,
+                    "h": bar.high,
+                    "l": bar.low,
+                    "c": bar.close,
+                    "v": bar.volume,
+                },
+                account=account if account is not None else self._account_snapshot(),
+                steps=all_steps,
+                outcome=execution.outcome.value,
+                blocked_by=execution.blocked_by,
+                fill_ids=tuple(execution.fill_ids),
+                config_hash=self._config_hash(),
+            )
+            self.decision_log.log(self._with_narrative(record))
+        except Exception:
+            logger.exception("Decision log record failed for %s", bar.ts_utc)
 
-        robot_name = self.config.robot.lower()
-        indicators: dict[str, Any] = {}
-        states: dict[str, Any] = {}
+    @staticmethod
+    def _record_regime(signal: Signal | None, steps: tuple[TraceStep, ...]) -> str:
+        if signal is not None and signal.regime is not None:
+            return signal.regime.value
+        for item in steps:
+            if item.stage is Stage.REGIME and item.result:
+                return item.result
+        if steps and all(item.stage is Stage.WARMUP for item in steps):
+            return "WARMUP"
+        return "UNKNOWN"
 
-        if robot_name == "ema":
-            indicators["fast"] = self._robot_instance.fast_value
-            indicators["slow"] = self._robot_instance.slow_value
-        elif robot_name == "vpin_momentum":
-            indicators["ema"] = self._robot_instance.last_ema_value
-            indicators["atr"] = self._robot_instance.last_atr
-            vpin_state = self._robot_instance.last_vpin_state
-            if vpin_state:
-                states["vpin"] = str(vpin_state.value)
-                states["vpin_toxic"] = str(vpin_state.toxic)
-        elif hasattr(self._robot_instance, "last_snapshot"):
-            snap = self._robot_instance.last_snapshot
-            if snap is not None:
-                if hasattr(snap, "fast_ema"):
-                    indicators["fast"] = snap.fast_ema
-                if hasattr(snap, "slow_ema"):
-                    indicators["slow"] = snap.slow_ema
-                if hasattr(snap, "hawkes"):
-                    states["hawkes"] = snap.hawkes
-                if hasattr(snap, "vpin"):
-                    states["vpin"] = snap.vpin
+    @staticmethod
+    def _with_narrative(record: DecisionRecord) -> DecisionRecord:
+        return dataclasses.replace(record, narrative=render_narrative(record_to_dict(record)))
 
-        # Handle RegimeRouter properties
-        last_reg = getattr(self._robot_instance, "last_effective_regime", None)
-        if hasattr(self._robot_instance, "last_effective_regime"):
-            # RegimeRouter specifics
-            states["effective_regime"] = last_reg.value if last_reg else None
-            if self._robot_instance.last_vpin_state:
-                states["vpin_filter"] = str(self._robot_instance.last_vpin_state.value)
-                states["vpin_toxic"] = str(self._robot_instance.last_vpin_state.toxic)
-            if self._robot_instance.last_hawkes_state:
-                states["hawkes_filter"] = str(self._robot_instance.last_hawkes_state.value)
-                states["hawkes_toxic"] = str(self._robot_instance.last_hawkes_state.toxic)
+    def _record_intrabar(
+        self,
+        outcome: Outcome,
+        component: str,
+        *,
+        price: Decimal,
+        values: dict[str, TraceValue] | None = None,
+        fill_ids: tuple[str, ...] = (),
+        ts: datetime | None = None,
+        account: dict[str, TraceValue] | None = None,
+    ) -> None:
+        """An event between bar closes (stop, target, manual action) in the same log."""
+        if self.decision_log is None:
+            return
+        try:
+            record = DecisionRecord(
+                bar_end_utc=ts or datetime.now(UTC),
+                robot=self.config.robot.lower(),
+                instrument_id=self.config.symbol,
+                close_price=price,
+                regime="",
+                signal=None,
+                signal_reason=None,
+                indicators={},
+                states={},
+                session_id=self.session_id,
+                kind=RecordKind.INTRABAR,
+                bar_seq=self._bar_seq,
+                account=account if account is not None else self._account_snapshot(),
+                steps=(
+                    step(
+                        Stage.INTRABAR,
+                        component,
+                        Verdict.EMIT if fill_ids else Verdict.INFO,
+                        result=outcome.value.lower(),
+                        values=values,
+                    ),
+                ),
+                outcome=outcome.value,
+                fill_ids=fill_ids,
+                config_hash=self._config_hash(),
+            )
+            self.decision_log.log(self._with_narrative(record))
+        except Exception:
+            logger.exception("Decision log intrabar record failed (%s)", component)
 
-        eff_reg = last_reg.value if last_reg else "UNKNOWN"
-
-        record = DecisionRecord(
-            bar_end_utc=bar.ts_utc,
-            robot=robot_name,
-            instrument_id=bar.instrument_id,
-            close_price=bar.close,
-            regime=signal.regime.value if signal and signal.regime else eff_reg,
-            signal=signal.side.value if signal else None,
-            signal_reason=signal.reason if signal else None,
-            indicators={k: str(v) for k, v in indicators.items() if v is not None},
-            states={k: v for k, v in states.items() if v is not None},
-            # The session is the key the log is filed under, so the dashboard can ask for
-            # this session's decisions and get only those (routes/live.py).
-            session_id=self.session_id,
+    def record_pause_change(self, paused: bool) -> None:
+        """Pause/resume is a decision too: entries stop (or restart) from this point."""
+        self._record_intrabar(
+            Outcome.PAUSED if paused else Outcome.RESUMED,
+            "pause" if paused else "resume",
+            price=self._last_mark_price or Decimal("0"),
         )
-        self.decision_log.log(record)
 
     def _check_stops(
         self, high_price: Decimal, low_price: Decimal, *, ts: datetime | None = None
@@ -646,17 +840,41 @@ class LivePaperSessionManager:
         """Close the position if this bar's range touched its stop or target."""
         if self.position is None:
             return []
+        hit: tuple[Decimal, str] | None = None
         if self._pos_side == "LONG":
             if self._pos_sl is not None and low_price <= self._pos_sl:
-                return [self._close_position_internal(self._pos_sl, "stop_loss", ts=ts)]
-            if self._pos_tp is not None and high_price >= self._pos_tp:
-                return [self._close_position_internal(self._pos_tp, "take_profit", ts=ts)]
+                hit = (self._pos_sl, "stop_loss")
+            elif self._pos_tp is not None and high_price >= self._pos_tp:
+                hit = (self._pos_tp, "take_profit")
         elif self._pos_side == "SHORT":
             if self._pos_sl is not None and high_price >= self._pos_sl:
-                return [self._close_position_internal(self._pos_sl, "stop_loss", ts=ts)]
-            if self._pos_tp is not None and low_price <= self._pos_tp:
-                return [self._close_position_internal(self._pos_tp, "take_profit", ts=ts)]
-        return []
+                hit = (self._pos_sl, "stop_loss")
+            elif self._pos_tp is not None and low_price <= self._pos_tp:
+                hit = (self._pos_tp, "take_profit")
+        if hit is None:
+            return []
+        level, reason = hit
+        account = self._account_snapshot()
+        side, qty, fills_before = self._pos_side, self._pos_qty, len(self.fills)
+        message = self._close_position_internal(level, reason, ts=ts)
+        new_fill = self.fills[-1] if len(self.fills) > fills_before else None
+        self._record_intrabar(
+            Outcome.STOP_LOSS if reason == "stop_loss" else Outcome.TAKE_PROFIT,
+            reason,
+            price=level,
+            values={
+                "level": level,
+                "high": high_price,
+                "low": low_price,
+                "side": side,
+                "qty": qty,
+                "realized_pnl": None if new_fill is None else Decimal(new_fill.realized_pnl),
+            },
+            fill_ids=() if new_fill is None else (new_fill.id,),
+            ts=ts,
+            account=account,
+        )
+        return [message]
 
     def _holding(self) -> Holding:
         if self.position is None:
@@ -665,25 +883,123 @@ class LivePaperSessionManager:
 
     def _apply_signal(self, signal: Signal, price: Decimal) -> list[str]:
         """Exit first (never gated), then enter only if the risk gate allows it."""
-        events = [f"Robot signal: {signal.side.value}"]
-        plan = plan_for_signal(self._holding(), signal.side)
+        return self._execute_signal(signal, price).events
+
+    def _execute_signal(self, signal: Signal, price: Decimal) -> ExecutionResult:
+        """Exit first (never gated), then enter only if pause and risk gate allow it."""
+        result = ExecutionResult(events=[f"Robot signal: {signal.side.value}"])
+        held = self._holding()
+        plan = plan_for_signal(held, signal.side)
+        result.steps.append(self._plan_step(held, plan.exit_position, plan.wants_entry))
+        if plan.is_noop:
+            result.outcome = Outcome.HOLD_NOOP
+            return result
+        exited = False
         if plan.exit_position:
-            events.append(self._close_position_internal(price, "signal_exit"))
-        if plan.wants_entry and self.paused:
+            side, qty, fills_before = self._pos_side, self._pos_qty, len(self.fills)
+            result.events.append(self._close_position_internal(price, "signal_exit"))
+            if len(self.fills) > fills_before:
+                fill = self.fills[-1]
+                exited = True
+                result.fill_ids.append(fill.id)
+                result.steps.append(
+                    step(
+                        Stage.EXECUTION,
+                        "paper_broker",
+                        Verdict.EMIT,
+                        result="exit",
+                        values={
+                            "side": side,
+                            "qty": qty,
+                            "price": price,
+                            "realized_pnl": Decimal(fill.realized_pnl),
+                        },
+                    )
+                )
+            regime_change = signal.reason.startswith("regime change")
+            result.outcome = Outcome.FLATTEN_REGIME_CHANGE if regime_change else Outcome.EXIT
+        if not plan.wants_entry:
+            return result
+        if self.paused:
             msg = "Paused: entry skipped"
             self.status_message = msg
-            events.append(msg)
-        elif plan.wants_entry:
-            refusal = self._entry_refusal()
-            if refusal is not None:
-                self.risk_refusals[refusal] = self.risk_refusals.get(refusal, 0) + 1
-                msg = f"Risk blocked entry: {refusal}"
-                self.status_message = msg
-                events.append(msg)
-            else:
-                side = "LONG" if signal.side is SignalSide.BUY else "SHORT"
-                events.append(self._open_position_internal(side, price))
-        return events
+            result.events.append(msg)
+            result.steps.append(step(Stage.GATE, "paused", Verdict.BLOCK))
+            result.outcome = Outcome.ENTRY_SKIPPED_PAUSED
+            result.blocked_by = "paused"
+            return result
+        decision = self._entry_decision()
+        if not decision.allowed:
+            refusal = decision.reason
+            self.risk_refusals[refusal] = self.risk_refusals.get(refusal, 0) + 1
+            msg = f"Risk blocked entry: {refusal}"
+            self.status_message = msg
+            result.events.append(msg)
+            result.steps.append(
+                step(
+                    Stage.GATE,
+                    f"risk.{decision.code or 'unknown'}",
+                    Verdict.BLOCK,
+                    result=refusal,
+                    values={"value": decision.value},
+                    thresholds={"limit": decision.limit},
+                )
+            )
+            result.outcome = Outcome.ENTRY_BLOCKED_RISK
+            result.blocked_by = f"risk.{decision.code or 'unknown'}"
+            return result
+        account = self._account_snapshot()
+        result.steps.append(
+            step(
+                Stage.GATE,
+                "risk",
+                Verdict.PASS,
+                values={
+                    "day_loss_pct": account.get("day_loss_pct"),
+                    "drawdown_pct": account.get("drawdown_pct"),
+                },
+                thresholds={
+                    "max_daily_loss": self.config.max_daily_loss,
+                    "max_drawdown": self.config.max_drawdown,
+                },
+            )
+        )
+        side = "LONG" if signal.side is SignalSide.BUY else "SHORT"
+        fills_before = len(self.fills)
+        message = self._open_position_internal(side, price)
+        result.events.append(message)
+        if len(self.fills) > fills_before:
+            fill = self.fills[-1]
+            result.fill_ids.append(fill.id)
+            result.steps.append(
+                step(
+                    Stage.EXECUTION,
+                    "paper_broker",
+                    Verdict.EMIT,
+                    result="entry",
+                    values={
+                        "side": side,
+                        "qty": self._pos_qty,
+                        "price": price,
+                        "stop_loss": self._pos_sl,
+                        "take_profit": self._pos_tp,
+                    },
+                )
+            )
+            result.outcome = Outcome.REVERSE if exited else Outcome.ENTRY_OPENED
+        else:
+            result.steps.append(
+                step(
+                    Stage.EXECUTION,
+                    "paper_broker",
+                    Verdict.SKIP,
+                    result="skipped",
+                    note=message,
+                )
+            )
+            result.outcome = Outcome.ENTRY_SKIPPED_SIZE
+            result.blocked_by = "sizing"
+        return result
 
     def _limits(self) -> RiskLimits:
         return RiskLimits(
@@ -702,8 +1018,12 @@ class LivePaperSessionManager:
         self._peak_equity = max(self._peak_equity, equity)
 
     def _entry_refusal(self) -> str | None:
+        decision = self._entry_decision()
+        return None if decision.allowed else decision.reason
+
+    def _entry_decision(self) -> RiskDecision:
         equity = self.current_equity
-        decision = evaluate_entry(
+        return evaluate_entry(
             AccountSnapshot(
                 equity=equity,
                 peak_equity=max(self._peak_equity, equity),
@@ -712,7 +1032,6 @@ class LivePaperSessionManager:
             ),
             self._limits(),
         )
-        return None if decision.allowed else decision.reason
 
     def _open_position_internal(self, side: str, price: Decimal) -> str:
         """Open a virtual position."""
@@ -855,7 +1174,22 @@ class LivePaperSessionManager:
         if not self.position:
             return "No active position"
         mark = self._last_mark_price or self._pos_entry_price
+        account = self._account_snapshot()
+        side, qty, fills_before = self._pos_side, self._pos_qty, len(self.fills)
         msg = self._close_position_internal(mark, "manual_close")
+        new_fill = self.fills[-1] if len(self.fills) > fills_before else None
+        self._record_intrabar(
+            Outcome.MANUAL_CLOSE,
+            "manual_close",
+            price=mark,
+            values={
+                "side": side,
+                "qty": qty,
+                "realized_pnl": None if new_fill is None else Decimal(new_fill.realized_pnl),
+            },
+            fill_ids=() if new_fill is None else (new_fill.id,),
+            account=account,
+        )
         self._journal_snapshot()
         return msg
 
@@ -869,6 +1203,12 @@ class LivePaperSessionManager:
         self.position.take_profit = str(take_profit) if take_profit else None
         msg = f"Updated stops: SL={stop_loss}, TP={take_profit}"
         self.status_message = msg
+        self._record_intrabar(
+            Outcome.STOPS_UPDATED,
+            "update_stops",
+            price=self._last_mark_price or self._pos_entry_price,
+            values={"stop_loss": stop_loss, "take_profit": take_profit},
+        )
         self._journal_snapshot()
         return msg
 
@@ -898,6 +1238,7 @@ class LivePaperSessionManager:
         self.recent_bars.clear()
         self._last_mark_price = None
         self._stop_event.clear()
+        self._bar_seq = 0
         self.session_id = session_id or uuid.uuid4().hex[:12]
         self.started_at = datetime.now(UTC).isoformat()
         self.resumed_at = None
@@ -947,6 +1288,8 @@ class LivePaperSessionManager:
         self._day = date.fromisoformat(raw_day) if isinstance(raw_day, str) and raw_day else None
         self.risk_refusals = {str(k): int(v) for k, v in (snap.get("risk_refusals") or {}).items()}
         self.paused = bool(snap.get("paused", False))
+        raw_seq = snap.get("bar_seq")
+        self._bar_seq = int(raw_seq) if isinstance(raw_seq, int) else 0
         self._last_mark_price = _decimal_or_none(snap.get("last_mark_price"))
         raw_last = snap.get("last_closed_ts")
         self._resume_after_ts = (
@@ -1080,6 +1423,7 @@ class LivePaperSessionManager:
                 "day": self._day.isoformat() if isinstance(self._day, date) else None,
                 "risk_refusals": dict(self.risk_refusals),
                 "paused": self.paused,
+                "bar_seq": self._bar_seq,
                 "last_closed_ts": (
                     None if self._last_closed_ts is None else self._last_closed_ts.isoformat()
                 ),

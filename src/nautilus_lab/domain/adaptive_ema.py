@@ -21,10 +21,16 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.decision_trace import TraceStep, warmup_step
 from nautilus_lab.domain.donchian import DowntrendBreakout, UptrendBreakout
 from nautilus_lab.domain.errors import InvalidRiskError
 from nautilus_lab.domain.mean_reversion import RangeMeanReversion
 from nautilus_lab.domain.regime import MarketRegime
+from nautilus_lab.domain.regime_router import (
+    regime_change_step,
+    regime_step,
+    regime_warmup_bars,
+)
 from nautilus_lab.domain.signals import Signal, SignalSide
 from nautilus_lab.domain.windows import RollingWindow
 
@@ -219,6 +225,19 @@ class AdaptiveEmaRouter:
         )
         self._last_regime: MarketRegime | None = None
         self._last_snapshot: AdaptiveEmaSnapshot | None = None
+        self._params = params
+        self._seen = 0
+        self._trace: tuple[TraceStep, ...] = ()
+
+    @property
+    def last_trace(self) -> tuple[TraceStep, ...]:
+        """Why the last bar produced (or did not produce) a signal."""
+        return self._trace
+
+    @property
+    def last_effective_regime(self) -> MarketRegime | None:
+        """No flow filter here: the effective regime is the classified one."""
+        return None if self._last_snapshot is None else self._last_snapshot.regime
 
     @property
     def last_snapshot(self) -> AdaptiveEmaSnapshot | None:
@@ -241,13 +260,43 @@ class AdaptiveEmaRouter:
         return self._classifier
 
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
+        self._seen += 1
+        previous = self._classifier.regime or MarketRegime.RANGE
         self._last_snapshot = self._classifier.update(bar.close)
         if self._last_snapshot is None:
             self._warm_up(bar)
+            self._trace = (
+                warmup_step(
+                    "AdaptiveEma",
+                    seen=self._seen,
+                    required=regime_warmup_bars(
+                        er_period=self._params.er_period,
+                        ema_period=self._params.base_period,
+                        slope_lookback=self._params.slope_lookback,
+                    ),
+                ),
+            )
             return None
+        regime = regime_step(
+            "AdaptiveEma",
+            regime=self._last_snapshot.regime,
+            previous=previous,
+            efficiency_ratio=self._last_snapshot.efficiency_ratio,
+            slope=self._last_snapshot.slope,
+            enter_trend_er=self._params.enter_trend_er,
+            exit_trend_er=self._params.exit_trend_er,
+            extra={"alpha": self._last_snapshot.alpha},
+        )
         if self._last_regime is not None and self._last_snapshot.regime is not self._last_regime:
+            changed_from = self._last_regime
             self._last_regime = self._last_snapshot.regime
             self._warm_up(bar)
+            self._trace = (
+                regime,
+                regime_change_step(
+                    "AdaptiveEmaRouter", old=changed_from, new=self._last_snapshot.regime
+                ),
+            )
             return Signal(
                 instrument_id=self._instrument_id,
                 side=SignalSide.FLAT,
@@ -257,10 +306,14 @@ class AdaptiveEmaRouter:
             )
         self._last_regime = self._last_snapshot.regime
         if self._last_snapshot.regime is MarketRegime.UPTREND:
-            return self._uptrend.on_bar(bar)
-        if self._last_snapshot.regime is MarketRegime.DOWNTREND:
-            return self._downtrend.on_bar(bar)
-        return self._range.on_bar(bar)
+            leg: UptrendBreakout | DowntrendBreakout | RangeMeanReversion = self._uptrend
+        elif self._last_snapshot.regime is MarketRegime.DOWNTREND:
+            leg = self._downtrend
+        else:
+            leg = self._range
+        signal = leg.on_bar(bar)
+        self._trace = (regime, *leg.last_trace)
+        return signal
 
     def _warm_up(self, bar: OhlcvBar) -> None:
         """Feed every leg while the filter is not ready, so their windows stay aligned."""

@@ -6,6 +6,7 @@ Only the paper venue exists; nothing here can reach an exchange order endpoint.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -125,7 +126,13 @@ async def stop_paper_session(ctx: Lab, key: str) -> dict[str, Any]:
 
 @router.get("/api/paper/sessions/{key}/decision-log")
 def get_paper_session_decision_log(
-    ctx: Lab, key: str, lines: int = Query(100, ge=1, le=1000)
+    ctx: Lab,
+    key: str,
+    lines: int = Query(100, ge=1, le=1000),
+    outcome: str | None = Query(None, description="Comma-separated outcome codes"),
+    kind: str | None = Query(None, pattern="^(bar_decision|intrabar)$"),
+    since: datetime | None = None,
+    until: datetime | None = None,
 ) -> dict[str, Any]:
     """Decisions recorded for this session at bar closes.
 
@@ -155,7 +162,12 @@ def get_paper_session_decision_log(
         }
 
     try:
-        logs = writer.get_recent_logs(session_key, lines=lines)
+        outcomes = (
+            [item.strip() for item in outcome.split(",") if item.strip()] if outcome else None
+        )
+        logs = writer.get_recent_logs(
+            session_key, lines=lines, outcomes=outcomes, kind=kind, since=since, until=until
+        )
         return {"status": "ok", "logs": logs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

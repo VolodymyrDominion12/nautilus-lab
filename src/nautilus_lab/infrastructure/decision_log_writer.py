@@ -2,11 +2,13 @@ import json
 import logging
 import re
 import threading
+from collections.abc import Collection, Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from nautilus_lab.application.decision_trace_codec import record_to_dict, upgrade_row
 from nautilus_lab.domain.decision_log import DecisionRecord
 from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.infrastructure.settings import Settings
@@ -26,6 +28,17 @@ def _safe_key(raw: str) -> str:
     """
     key = _UNSAFE_KEY_RE.sub("_", raw).strip("._-")
     return key or "unknown"
+
+
+def _row_ts(row: dict[str, Any]) -> datetime | None:
+    raw = row.get("ts")
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -138,61 +151,85 @@ class JsonlDecisionLogWriter(DecisionLogPort):
             return
 
         path = self._get_log_file_path(self._record_key(record), record.bar_end_utc)
-
-        data = {
-            "ts": record.bar_end_utc.isoformat(),
-            "session_id": record.session_id,
-            "robot": record.robot,
-            "instrument": record.instrument_id,
-            "close": record.close_price,
-            "regime": record.regime,
-            "signal": record.signal,
-            "signal_reason": record.signal_reason,
-            "indicators": record.indicators,
-            "states": record.states,
-        }
+        data = record_to_dict(record)
 
         try:
             with self._lock, path.open("a", encoding="utf-8") as f:
-                line = json.dumps(data, cls=DecimalEncoder)
+                line = json.dumps(data, cls=DecimalEncoder, ensure_ascii=False)
                 f.write(line + "\n")
         except Exception as e:
             logger.error(f"Failed to write decision log to {path}: {e}")
 
-    def get_recent_logs(self, session_id: str, lines: int = 100) -> list[dict[str, Any]]:
-        """Most recent decision logs of one session (or of a robot, for session-less records)."""
+    def get_recent_logs(
+        self,
+        session_id: str,
+        lines: int = 100,
+        *,
+        outcomes: Collection[str] | None = None,
+        kind: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Most recent records of one session (or robot), oldest first, optionally filtered.
+
+        Rows written before `decision_trace/1` are upgraded on read (`outcome` =
+        `UNKNOWN_V0`), so one reader serves old and new files.
+        """
         if not self._enabled:
             return []
-
-        log_files = sorted(self._dir.glob(f"{_safe_key(session_id)}_*.jsonl"))
-        if not log_files:
-            return []
-
-        results = []
-        for log_file in reversed(log_files):
-            try:
-                # Read backwards if possible, but simplest is reading all lines of recent files
-                # For small logs (1 file per day), this is OK
-                file_lines = log_file.read_text(encoding="utf-8").splitlines()
-                # Parse JSON
-                for line in reversed(file_lines):
-                    if not line.strip():
-                        continue
-                    try:
-                        results.append(json.loads(line))
-                        if len(results) >= lines:
-                            break
-                    except json.JSONDecodeError:
-                        continue
-
-                if len(results) >= lines:
-                    break
-            except Exception as e:
-                logger.warning(f"Failed to read decision log {log_file}: {e}")
-
-        # Return chronologically (oldest to newest among the requested slice)
+        wanted = {item.upper() for item in outcomes} if outcomes else None
+        results: list[dict[str, Any]] = []
+        for row in self._iter_newest_first(session_id, since=since):
+            if wanted is not None and str(row.get("outcome", "")).upper() not in wanted:
+                continue
+            if kind is not None and row.get("kind") != kind:
+                continue
+            ts = _row_ts(row)
+            if since is not None and (ts is None or ts < since):
+                continue
+            if until is not None and (ts is None or ts > until):
+                continue
+            results.append(row)
+            if len(results) >= lines:
+                break
         results.reverse()
         return results
+
+    def read_range(
+        self,
+        session_id: str,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 20000,
+    ) -> list[dict[str, Any]]:
+        """Every record of a session in [since, until], oldest first (for digests)."""
+        return self.get_recent_logs(session_id, lines=limit, since=since, until=until)
+
+    def _iter_newest_first(
+        self, session_id: str, *, since: datetime | None = None
+    ) -> Iterator[dict[str, Any]]:
+        log_files = sorted(self._dir.glob(f"{_safe_key(session_id)}_*.jsonl"), reverse=True)
+        for log_file in log_files:
+            match = _LOG_NAME_RE.match(log_file.name)
+            if since is not None and match is not None:
+                file_day = datetime.strptime(match.group("date"), "%Y-%m-%d").replace(tzinfo=UTC)
+                if file_day.date() < since.astimezone(UTC).date():
+                    return
+            try:
+                file_lines = log_file.read_text(encoding="utf-8").splitlines()
+            except OSError as e:
+                logger.warning(f"Failed to read decision log {log_file}: {e}")
+                continue
+            for line in reversed(file_lines):
+                if not line.strip():
+                    continue
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(raw, dict):
+                    yield upgrade_row(raw)
 
     def append(self, record: DecisionRecord) -> None:
         self.log(record)

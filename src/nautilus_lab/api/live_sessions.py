@@ -181,7 +181,10 @@ class SessionRegistry:
         manager = self._require(key)
         if not manager.is_active:
             raise ValueError(f"session {key!r} is not running")
+        changed = manager.paused != paused
         manager.paused = paused
+        if changed:
+            manager.record_pause_change(paused)
         manager.status_message = (
             "Paused: no new entries (exits and stops still run)" if paused else "Resumed entries"
         )

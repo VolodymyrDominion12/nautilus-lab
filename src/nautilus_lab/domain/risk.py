@@ -47,5 +47,15 @@ class AccountSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class RiskDecision:
+    """Verdict of the entry gate.
+
+    `reason` is the human text the tallies and reports have always used. `code`, `value`
+    and `limit` say *which* breaker fired and by how much, so a decision log can record
+    "daily loss 3.1% >= 3.0%" instead of just the sentence.
+    """
+
     allowed: bool
     reason: str
+    code: str = ""
+    value: Decimal | None = None
+    limit: Decimal | None = None

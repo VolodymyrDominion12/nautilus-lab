@@ -4,6 +4,15 @@ from decimal import Decimal
 
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.decision_trace import (
+    Stage,
+    TraceStep,
+    TraceValue,
+    Verdict,
+    pct_distance,
+    step,
+    warmup_step,
+)
 from nautilus_lab.domain.ema import ExponentialMovingAverage
 from nautilus_lab.domain.signals import Signal, SignalSide
 from nautilus_lab.domain.vpin import VpinModel, VpinState
@@ -42,6 +51,14 @@ class VpinMomentum:
         self._last_vpin_state: VpinState | None = None
         self._last_atr: Decimal | None = None
         self._last_ema_value: Decimal | None = None
+        self._ema_period = ema_period
+        self._atr_period = atr_period
+        self._seen = 0
+        self._trace: tuple[TraceStep, ...] = ()
+
+    @property
+    def last_trace(self) -> tuple[TraceStep, ...]:
+        return self._trace
 
     @property
     def last_vpin_state(self) -> VpinState | None:
@@ -60,6 +77,7 @@ class VpinMomentum:
             self._vpin.update_from_trade(is_buy=is_buy, volume=volume)
 
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
+        self._seen += 1
         self._last_vpin_state = self._vpin.update(bar)
         self._ema.update(bar.close)
         self._atr.update(bar)
@@ -68,7 +86,15 @@ class VpinMomentum:
         self._last_ema_value = ema
         self._last_atr = atr
         if ema is None or atr is None:
+            self._trace = (
+                warmup_step(
+                    "VpinMomentum",
+                    seen=self._seen,
+                    required=max(self._ema_period, self._atr_period + 1),
+                ),
+            )
             return None
+        vpin = self._vpin_step()
 
         if self._direction != 0:
             self._bars_in_position += 1
@@ -83,26 +109,131 @@ class VpinMomentum:
             hit_stop = bar.close <= stop if self._direction > 0 else bar.close >= stop
             lost_momentum = bar.close < ema if self._direction > 0 else bar.close > ema
             can_exit = self._bars_in_position >= self._min_hold_bars
+            values = {
+                "close": bar.close,
+                "ema": ema,
+                "atr": atr,
+                "trail_stop": stop,
+                "extreme": self._extreme,
+                "direction": "long" if self._direction > 0 else "short",
+                "bars_in_position": self._bars_in_position,
+                "dist_to_stop_pct": pct_distance(bar.close, stop),
+            }
+            thresholds: dict[str, TraceValue] = {
+                "atr_multiple": self._atr_multiple,
+                "min_hold_bars": self._min_hold_bars,
+            }
             if can_exit and (hit_stop or lost_momentum):
+                self._trace = (
+                    vpin,
+                    step(
+                        Stage.STRATEGY,
+                        "VpinMomentum",
+                        Verdict.EMIT,
+                        result="flat",
+                        values=values,
+                        thresholds=thresholds,
+                        note=(
+                            "close crossed the EMA: momentum lost"
+                            if lost_momentum
+                            else "close hit the ATR trailing stop"
+                        ),
+                    ),
+                )
                 self._reset()
                 return self._signal(
                     bar,
                     SignalSide.FLAT,
                     "vpin momentum exit" if lost_momentum else "vpin atr stop",
                 )
+            self._trace = (
+                vpin,
+                step(
+                    Stage.STRATEGY,
+                    "VpinMomentum",
+                    Verdict.INFO,
+                    values=values,
+                    thresholds=thresholds,
+                    note=(
+                        "exit condition met but minimum hold not reached"
+                        if (hit_stop or lost_momentum)
+                        else "trend intact: hold"
+                    ),
+                ),
+            )
             return None
 
+        entry_values = {
+            "close": bar.close,
+            "ema": ema,
+            "atr": atr,
+            "dist_to_ema_pct": pct_distance(bar.close, ema),
+        }
         if self._last_vpin_state is None or not self._last_vpin_state.toxic:
+            self._trace = (
+                vpin,
+                step(
+                    Stage.STRATEGY,
+                    "VpinMomentum",
+                    Verdict.INFO,
+                    values=entry_values,
+                    note="flow is not toxic: no informed-flow entry",
+                ),
+            )
             return None
         if bar.close > ema:
+            self._trace = (
+                vpin,
+                step(
+                    Stage.STRATEGY,
+                    "VpinMomentum",
+                    Verdict.EMIT,
+                    result="buy",
+                    values=entry_values,
+                    note="toxic flow with close above EMA",
+                ),
+            )
             self._enter(direction=1, bar=bar)
             reason = f"toxic flow up vpin={self._last_vpin_state.value}"
             return self._signal(bar, SignalSide.BUY, reason)
         if bar.close < ema:
+            self._trace = (
+                vpin,
+                step(
+                    Stage.STRATEGY,
+                    "VpinMomentum",
+                    Verdict.EMIT,
+                    result="sell",
+                    values=entry_values,
+                    note="toxic flow with close below EMA",
+                ),
+            )
             self._enter(direction=-1, bar=bar)
             reason = f"toxic flow down vpin={self._last_vpin_state.value}"
             return self._signal(bar, SignalSide.SELL, reason)
+        self._trace = (
+            vpin,
+            step(
+                Stage.STRATEGY,
+                "VpinMomentum",
+                Verdict.INFO,
+                values=entry_values,
+                note="toxic flow but close equals EMA: no direction",
+            ),
+        )
         return None
+
+    def _vpin_step(self) -> TraceStep:
+        state = self._last_vpin_state
+        if state is None:
+            return step(Stage.FILTER, "vpin", Verdict.SKIP, note="bucket not filled yet")
+        return step(
+            Stage.FILTER,
+            "vpin",
+            Verdict.PASS if state.toxic else Verdict.INFO,
+            result="toxic" if state.toxic else "normal",
+            values={"vpin": state.value, "bucket_filled": state.bucket_filled},
+        )
 
     @property
     def regimes_ready(self) -> bool:

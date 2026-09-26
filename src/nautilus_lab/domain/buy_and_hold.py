@@ -10,6 +10,7 @@ instead of a risk fraction, with no stop and no target.
 from __future__ import annotations
 
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.decision_trace import Stage, TraceStep, Verdict, step
 from nautilus_lab.domain.signals import Signal, SignalSide
 
 HOLD_ROBOT = "hold"
@@ -18,8 +19,23 @@ HOLD_ROBOT = "hold"
 class BuyAndHold:
     def __init__(self, *, instrument_id: str) -> None:
         self.instrument_id = instrument_id
+        self._trace: tuple[TraceStep, ...] = ()
+
+    @property
+    def last_trace(self) -> tuple[TraceStep, ...]:
+        return self._trace
 
     def on_bar(self, bar: OhlcvBar) -> Signal:
+        self._trace = (
+            step(
+                Stage.STRATEGY,
+                "BuyAndHold",
+                Verdict.EMIT,
+                result="buy",
+                values={"close": bar.close},
+                note="benchmark: always target long",
+            ),
+        )
         return Signal(
             instrument_id=self.instrument_id,
             side=SignalSide.BUY,

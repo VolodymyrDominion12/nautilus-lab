@@ -176,33 +176,53 @@ def evaluate_entry(
     """Circuit breaker before a new entry. Flattening is the caller's job."""
     resolved_overlay = overlay or RiskOverlay()
     if snapshot.equity <= 0:
-        return RiskDecision(False, "non-positive equity")
+        return RiskDecision(False, "non-positive equity", "equity", snapshot.equity, Decimal("0"))
     if snapshot.day_start_equity <= 0:
-        return RiskDecision(False, "non-positive day-start equity")
+        return RiskDecision(
+            False, "non-positive day-start equity", "day_start_equity", snapshot.day_start_equity
+        )
     if snapshot.peak_equity <= 0:
-        return RiskDecision(False, "non-positive peak equity")
+        return RiskDecision(False, "non-positive peak equity", "peak_equity", snapshot.peak_equity)
 
     daily_loss = (snapshot.day_start_equity - snapshot.equity) / snapshot.day_start_equity
     if daily_loss >= limits.max_daily_loss:
-        return RiskDecision(False, "daily loss circuit breaker")
+        return RiskDecision(
+            False, "daily loss circuit breaker", "max_daily_loss", daily_loss, limits.max_daily_loss
+        )
 
     drawdown = (snapshot.peak_equity - snapshot.equity) / snapshot.peak_equity
     if drawdown >= limits.max_drawdown:
-        return RiskDecision(False, "max drawdown circuit breaker")
+        return RiskDecision(
+            False, "max drawdown circuit breaker", "max_drawdown", drawdown, limits.max_drawdown
+        )
 
     if snapshot.open_positions > limits.max_open_positions:
-        return RiskDecision(False, "max open positions exceeded")
+        return RiskDecision(
+            False,
+            "max open positions exceeded",
+            "max_open_positions",
+            Decimal(snapshot.open_positions),
+            Decimal(limits.max_open_positions),
+        )
 
     if snapshot.recent_returns:
         var_99 = historical_var(snapshot.recent_returns, confidence=Decimal("0.99"))
         if var_99 is not None and var_99 >= limits.max_var_99:
-            return RiskDecision(False, "portfolio VaR 99% circuit breaker")
+            return RiskDecision(
+                False, "portfolio VaR 99% circuit breaker", "max_var_99", var_99, limits.max_var_99
+            )
         if resolved_overlay.use_cvar_breaker:
             cvar_99 = historical_cvar(snapshot.recent_returns, confidence=Decimal("0.99"))
             if cvar_99 is not None and cvar_99 >= resolved_overlay.max_cvar_99:
-                return RiskDecision(False, "portfolio CVaR 99% circuit breaker")
+                return RiskDecision(
+                    False,
+                    "portfolio CVaR 99% circuit breaker",
+                    "max_cvar_99",
+                    cvar_99,
+                    resolved_overlay.max_cvar_99,
+                )
 
-    return RiskDecision(True, "ok")
+    return RiskDecision(True, "ok", "ok")
 
 
 def require_simulated_mode(mode: TradingMode) -> None:

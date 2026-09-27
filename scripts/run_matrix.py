@@ -45,16 +45,16 @@ class MatrixRun:
 
 MATRIX: tuple[MatrixRun, ...] = (
     # Phase 4.2 - Regime router 6-fold validation on major pairs
-    MatrixRun("4_2", "regime", "BTCUSDT", "4h", ("--folds", "6")),
-    MatrixRun("4_2", "regime", "ETHUSDT", "4h", ("--folds", "6")),
-    MatrixRun("4_2", "regime", "SOLUSDT", "4h", ("--folds", "6")),
-    MatrixRun("4_2", "regime", "BNBUSDT", "4h", ("--folds", "6")),
+    MatrixRun("4_2", "regime", "BTCUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
+    MatrixRun("4_2", "regime", "ETHUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
+    MatrixRun("4_2", "regime", "SOLUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
+    MatrixRun("4_2", "regime", "BNBUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
     
     # Phase 4.2 PBO audits for the same pairs
-    MatrixRun("4_2_PBO", "regime", "BTCUSDT", "4h", ("--folds", "6", "--pbo")),
-    MatrixRun("4_2_PBO", "regime", "ETHUSDT", "4h", ("--folds", "6", "--pbo")),
-    MatrixRun("4_2_PBO", "regime", "SOLUSDT", "4h", ("--folds", "6", "--pbo")),
-    MatrixRun("4_2_PBO", "regime", "BNBUSDT", "4h", ("--folds", "6", "--pbo")),
+    MatrixRun("4_2_PBO", "regime", "BTCUSDT", "4h", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h")),
+    MatrixRun("4_2_PBO", "regime", "ETHUSDT", "4h", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h")),
+    MatrixRun("4_2_PBO", "regime", "SOLUSDT", "4h", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h")),
+    MatrixRun("4_2_PBO", "regime", "BNBUSDT", "4h", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h")),
 )
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -86,10 +87,6 @@ def _build_command(run: MatrixRun, lab: str) -> list[str]:
         "research",
         "--robot",
         run.robot,
-        "--symbol",
-        run.symbol,
-        "--interval",
-        run.interval,
     ]
     cmd.extend(run.extra_args)
     return cmd
@@ -121,12 +118,18 @@ def _run_all(
             print(f"(dry-run) {' '.join(cmd)}")
             continue
         try:
+            env = dict(os.environ)
+            env["INSTRUMENT_ID"] = run.symbol
+            env["BAR_INTERVAL"] = run.interval
+
             with log_path.open("w") as log_fh:
                 log_fh.write(f"# revision={revision} started={started_at}\n")
+                log_fh.write(f"# env: INSTRUMENT_ID={run.symbol} BAR_INTERVAL={run.interval}\n")
                 log_fh.write(f"# cmd={' '.join(cmd)}\n\n")
                 proc = subprocess.run(
                     cmd,
                     cwd=repo_root,
+                    env=env,
                     stdout=log_fh,
                     stderr=subprocess.STDOUT,
                     timeout=3600,

@@ -74,11 +74,11 @@ MATRIX: tuple[MatrixRun, ...] = (
     MatrixRun("4_2_PBO", "regime", "BNBUSDT", "4h", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h")),
 
     # Phase 4.3 - Funding carry 4h
-    MatrixRun("4_3", "funding", "BTCUSDT", "4h", ("--folds", "4", "--catalog", "catalog_2019_4h"), (
+    MatrixRun("4_3", "funding", "BTCUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h"), (
         ("FUNDING_SPOT_ID", "BTC/USDT.SIM"),
         ("FUNDING_PERP_ID", "BTCUSDT-PERP.SIM"),
     )),
-    MatrixRun("4_3", "funding", "ETHUSDT", "4h", ("--folds", "4", "--catalog", "catalog_2019_4h"), (
+    MatrixRun("4_3", "funding", "ETHUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h"), (
         ("FUNDING_SPOT_ID", "ETH/USDT.SIM"),
         ("FUNDING_PERP_ID", "ETHUSDT-PERP.SIM"),
     )),

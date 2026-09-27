@@ -12,7 +12,6 @@
 
 | Робот | Статус spec | Бектест | Адаптер | Tick VPIN | Hawkes | Paper (батч) | Live paper | Вимір | Причина / суть |
 |---|---|---|---|---|---|---|---|---|---|
-| [`ema`](../specs/strategies/ema.yaml) | candidate | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | EMA crossover: always-in-market baseline на двох експоненційних середніх |
 | [`formulaic_lgbm`](../specs/strategies/formulaic_lgbm.yaml) | candidate | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Formulaic LGBM: напрямок бару з 12 формульних ознак OHLCV + пороговий класифікатор |
 | [`funding`](../specs/strategies/funding.yaml) | candidate | так | `funding_strategy` | — | — | так | — | не виміряно | Funding cash-and-carry: спот лонг + перпетуал шорт, вхід за нетто-APY |
 | [`meta_label`](../specs/strategies/meta_label.yaml) | candidate | так | `signal_strategy` | так | так | так | — | не виміряно | Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни |
@@ -23,6 +22,7 @@
 | [`tri_scan`](../specs/strategies/tri_scan.yaml) | blocked | — | `none` | — | — | — | — | не виміряно | (1) Класу-робота не існує. |
 | [`vpin_momentum`](../specs/strategies/vpin_momentum.yaml) | blocked | так | `signal_strategy` | так | — | так | так | виміряно: не обганяє buy&hold | Поріг VPIN_TOXIC_THRESHOLD=0.7 при p99 bar-VPIN ≈ 0.36 на 1h-барах дає 0 угод: стратегія незмірювана. |
 | [`adaptive_ema`](../specs/strategies/adaptive_ema.yaml) | rejected | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Контрольний A/B на каталозі 1h (23 697 барів на інструмент, 4 rolling-фолди, embargo 10, конфігурації зафіксовані всередині фолду і НЕ віді… |
+| [`ema`](../specs/strategies/ema.yaml) | rejected | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | EMA crossover: always-in-market baseline на двох експоненційних середніх |
 
 Лише в live paper (еталони, не стратегії): `hold`.
 

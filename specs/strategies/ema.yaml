@@ -4,7 +4,10 @@
 kind: strategy
 name: ema
 version: "1.0"
-status: candidate
+status: rejected
+rejected_reason: >
+  Failed PBO audit (Probability of Backtest Overfitting) in Gate v2 on 1d timeframe (e.g. SOLUSDT, MATICUSDT).
+  Despite beating baseline and having good out-of-sample metrics, the strategy suffers from severe overfitting.
 title: "EMA crossover: always-in-market baseline на двох експоненційних середніх"
 
 hypothesis: >

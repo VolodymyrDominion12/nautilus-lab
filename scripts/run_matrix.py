@@ -119,12 +119,26 @@ def _run_all(
             continue
         try:
             env = dict(os.environ)
-            env["INSTRUMENT_ID"] = run.symbol
+            # Map BTCUSDT -> BTC/USDT.SIM
+            base = run.symbol.replace("USDT", "")
+            instrument_id = f"{base}/USDT.SIM"
+            env["INSTRUMENT_ID"] = instrument_id
             env["BAR_INTERVAL"] = run.interval
+            
+            # Map interval 4h -> 4-HOUR, 1h -> 1-HOUR, 1d -> 1-DAY
+            interval_str = run.interval.upper()
+            if interval_str == "4H":
+                interval_str = "4-HOUR"
+            elif interval_str == "1H":
+                interval_str = "1-HOUR"
+            elif interval_str == "1D":
+                interval_str = "1-DAY"
+                
+            env["BAR_TYPE"] = f"{instrument_id}-{interval_str}-LAST-EXTERNAL"
 
             with log_path.open("w") as log_fh:
                 log_fh.write(f"# revision={revision} started={started_at}\n")
-                log_fh.write(f"# env: INSTRUMENT_ID={run.symbol} BAR_INTERVAL={run.interval}\n")
+                log_fh.write(f"# env: INSTRUMENT_ID={env['INSTRUMENT_ID']} BAR_INTERVAL={env['BAR_INTERVAL']} BAR_TYPE={env['BAR_TYPE']}\n")
                 log_fh.write(f"# cmd={' '.join(cmd)}\n\n")
                 proc = subprocess.run(
                     cmd,

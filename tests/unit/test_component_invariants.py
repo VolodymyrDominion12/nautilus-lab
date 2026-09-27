@@ -47,8 +47,8 @@ def test_backtest_engine_fee_schedule_agreement() -> None:
 
     assert cat._fees == req.fee_schedule == cfg.fee_schedule()
     inst = resolve_instrument(req.instrument_id, fees=cat._fees)
-    assert Decimal(str(inst.maker_fee)) == req.fee_schedule.maker
-    assert Decimal(str(inst.taker_fee)) == req.fee_schedule.taker
+    assert Decimal(str(inst.spot_maker_fee)) == req.fee_schedule.maker
+    assert Decimal(str(inst.spot_taker_fee)) == req.fee_schedule.taker
 
 
 # --- data-catalog ---

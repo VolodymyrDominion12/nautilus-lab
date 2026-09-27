@@ -200,7 +200,9 @@ class NautilusResearchBacktest:
             ending = None if realized is None else realized + open_pnl
             fees_paid = _fees_paid(fills_report)
             equity_curve = tuple(getattr(strategy, "equity_curve", ()))
+            daily_returns = tuple(getattr(strategy, "daily_returns", ()))
             turnover = getattr(strategy, "turnover", Decimal("0"))
+            exposure_pct = getattr(strategy, "exposure_pct", None)
             risk_breaches = tuple(getattr(strategy, "risk_breaches", ()))
             traded_notional = _traded_notional(fills_report)
             metrics = compute_metrics(
@@ -209,6 +211,7 @@ class NautilusResearchBacktest:
                 fees_paid=fees_paid,
                 turnover=turnover,
                 traded_notional=traded_notional,
+                exposure_pct=exposure_pct,
                 ending_equity=ending,
                 periods_per_year=_periods_per_year(request),
             )
@@ -230,6 +233,7 @@ class NautilusResearchBacktest:
                 risk_breaches=risk_breaches,
                 realized_balance=realized,
                 unrealized_pnl=open_pnl,
+                daily_returns=daily_returns,
             )
             ledger = _Ledger(
                 fills_report=fills_report,

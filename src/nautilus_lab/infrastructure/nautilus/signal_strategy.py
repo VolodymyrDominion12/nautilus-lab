@@ -155,10 +155,12 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._peak_state: PeakState | None = None
         self._last_equity_ts: datetime | None = None
         self._day: date | None = None
+        self._daily_returns: list[Decimal] = []
         self._equity_curve: list[Decimal] = []
         self._turnover: Decimal = Decimal("0")
         self._returns: list[Decimal] = []
         self._previous_equity: Decimal | None = None
+        self._exposure_bars: int = 0
         # Last price the strategy saw (bar close, or book mid). Open positions are
         # marked against it, so equity includes what they are worth right now.
         self._last_mark: Decimal | None = None
@@ -329,6 +331,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             if self._previous_equity is not None and self._previous_equity > 0:
                 self._returns.append((equity - self._previous_equity) / self._previous_equity)
             self._previous_equity = equity
+            if not self._is_flat():
+                self._exposure_bars += 1
 
     def _process_signal(self, signal: Signal | None, current_price: Decimal) -> None:
         """Exit first (never gated by risk), then — only if allowed — enter.
@@ -431,6 +435,13 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     @property
     def turnover(self) -> Decimal:
         return self._turnover
+
+    @property
+    def exposure_pct(self) -> Decimal | None:
+        bars = len(self._equity_curve)
+        if bars == 0:
+            return None
+        return Decimal(self._exposure_bars) / Decimal(bars)
 
     @property
     def risk_breaches(self) -> tuple[tuple[str, int], ...]:
@@ -544,6 +555,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     def _update_equity_path(self, ts_utc: datetime, equity: Decimal) -> None:
         day = ts_utc.date()
         if self._day != day:
+            if self._day is not None and self._day_start_equity is not None and self._day_start_equity > 0:
+                self._daily_returns.append((equity - self._day_start_equity) / self._day_start_equity)
             self._day = day
             self._day_start_equity = equity
         state = self._peak_state or PeakState(peak=equity)
@@ -559,6 +572,10 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     def _note_refusal(self, reason: str) -> None:
         if self._peak_state is not None and self._last_equity_ts is not None:
             self._peak_state = on_refusal(self._peak_state, reason=reason, now=self._last_equity_ts)
+
+    @property
+    def daily_returns(self) -> tuple[Decimal, ...]:
+        return tuple(self._daily_returns)
 
 
 def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:

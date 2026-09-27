@@ -22,7 +22,7 @@
 | [`tri_scan`](../specs/strategies/tri_scan.yaml) | blocked | — | `none` | — | — | — | — | не виміряно | (1) Класу-робота не існує. |
 | [`vpin_momentum`](../specs/strategies/vpin_momentum.yaml) | blocked | так | `signal_strategy` | так | — | так | так | виміряно: не обганяє buy&hold | Поріг VPIN_TOXIC_THRESHOLD=0.7 при p99 bar-VPIN ≈ 0.36 на 1h-барах дає 0 угод: стратегія незмірювана. |
 | [`adaptive_ema`](../specs/strategies/adaptive_ema.yaml) | rejected | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Контрольний A/B на каталозі 1h (23 697 барів на інструмент, 4 rolling-фолди, embargo 10, конфігурації зафіксовані всередині фолду і НЕ віді… |
-| [`ema`](../specs/strategies/ema.yaml) | rejected | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | EMA crossover: always-in-market baseline на двох експоненційних середніх |
+| [`ema`](../specs/strategies/ema.yaml) | rejected | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Failed PBO audit (Probability of Backtest Overfitting) in Gate v2 on 1d timeframe (e.g. |
 
 Лише в live paper (еталони, не стратегії): `hold`.
 

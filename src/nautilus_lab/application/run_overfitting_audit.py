@@ -146,15 +146,21 @@ class RunOverfitAudit:
         candidates = list(iter_param_grid(request.backtest))
         labels = tuple(candidate.label() for candidate in candidates)
         matrix: list[tuple[Decimal | None, ...]] = []
+        daily_matrix: list[tuple[tuple[Decimal, ...], ...]] = []
         for block_index in range(block_count):
             row: list[Decimal | None] = []
+            daily_row: list[tuple[Decimal, ...]] = []
             for candidate in candidates:
                 resolved = apply_selected(request.backtest, candidate)
                 report = run(resolved, block_index)
                 row.append(_return_fraction(report, request.backtest.starting_equity))
+                daily_row.append(report.daily_returns)
             matrix.append(tuple(row))
+            daily_matrix.append(tuple(daily_row))
         total = record_trials(self._trial_ledger, request.backtest, labels)
-        return audit_from_matrix(labels, tuple(matrix), block_count, total_trials=total)
+        return audit_from_matrix(
+            labels, tuple(matrix), block_count, total_trials=total, daily_matrix=tuple(daily_matrix)
+        )
 
 
 def _return_fraction(report: BacktestReport, starting_equity: Decimal) -> Decimal | None:
@@ -190,6 +196,7 @@ def audit_from_matrix(
     block_count: int,
     *,
     total_trials: int | None = None,
+    daily_matrix: tuple[tuple[tuple[Decimal, ...], ...], ...] | None = None,
 ) -> OverfitAuditReport:
     """PBO + DSR from a `blocks x configurations` return matrix, whoever produced it.
 
@@ -200,6 +207,20 @@ def audit_from_matrix(
     result = probability_of_backtest_overfitting(numeric)
     best = labels[index_of_best_configuration(matrix)]
     deflated = deflated_sharpe_for_winner(numeric, matrix, total_trials=total_trials)
+    
+    daily_trial_sharpes: list[Decimal] = []
+    if daily_matrix:
+        # daily_matrix is blocks x configurations x daily_returns
+        # transpose to get configurations x blocks x daily_returns
+        columns = tuple(zip(*daily_matrix, strict=True))
+        for col in columns:
+            # Flatten the daily returns for this configuration across all blocks
+            full_daily: list[Decimal] = []
+            for block_returns in col:
+                full_daily.extend(block_returns)
+            val = sharpe_ratio(full_daily)
+            daily_trial_sharpes.append(Decimal("0") if val is None else val)
+
     return OverfitAuditReport(
         pbo=result.pbo,
         split_count=result.split_count,
@@ -208,6 +229,7 @@ def audit_from_matrix(
         block_returns=matrix,
         labels=labels,
         deflated_sharpe=deflated,
+        daily_trial_sharpes=tuple(daily_trial_sharpes),
         notes=(
             f"PBO/CSCV over {block_count} contiguous blocks: {result.split_count} symmetric "
             "splits, parameters re-selected on each train half and ranked on the test half. "

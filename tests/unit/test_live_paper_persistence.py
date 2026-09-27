@@ -222,13 +222,13 @@ def test_autostart_and_journal_come_from_settings(tmp_path: Path) -> None:
         live_paper_robot="ema",
         live_paper_journal="data/paper/live_events.jsonl",
         risk_per_trade=Decimal("0.003"),
-        taker_fee=Decimal("0.0007"),
+        spot_taker_fee=Decimal("0.0007"),
     )
     config = autostart_config(on)
     assert config is not None
     assert (config.symbol, config.interval, config.robot) == ("BTCUSDT", "4h", "ema")
     assert config.risk_per_trade == Decimal("0.003"), "risk comes from the tested settings"
-    assert config.taker_fee == Decimal("0.0007")
+    assert config.spot_taker_fee == Decimal("0.0007")
     journal = journal_from_settings(on, root=tmp_path)
     assert journal is not None
     assert journal.path == tmp_path / "data/paper/live_events.jsonl"

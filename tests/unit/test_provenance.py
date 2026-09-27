@@ -165,12 +165,12 @@ def test_nothing_known_is_recorded_as_unknown_not_as_an_error(tmp_path: Path) ->
 
 
 def test_settings_hash_is_order_free_and_ignores_secrets() -> None:
-    base = {"maker_fee": "0.001", "taker_fee": "0.001", "robot": "regime"}
+    base = {"spot_maker_fee": "0.001", "spot_taker_fee": "0.001", "robot": "regime"}
     assert settings_sha256(base) == settings_sha256(dict(reversed(list(base.items()))))
     with_secrets = {**base, "llm_api_key": "sk-1", "api_token": "t", "telegram_chat_id": "1"}
     assert settings_sha256(with_secrets) == settings_sha256(base)
     # A shell override of a fee is exactly what this hash exists to expose.
-    assert settings_sha256({**base, "taker_fee": "0.0005"}) != settings_sha256(base)
+    assert settings_sha256({**base, "spot_taker_fee": "0.0005"}) != settings_sha256(base)
 
 
 def test_catalog_fingerprint_follows_the_data_not_the_copy(tmp_path: Path) -> None:

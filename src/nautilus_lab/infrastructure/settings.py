@@ -142,8 +142,10 @@ class Settings(BaseSettings):
     bar_interval: str = "1h"
     binance_symbol: str = "ETHUSDT"
     binance_symbols: list[str] = Field(default_factory=lambda: ["ETHUSDT", "BTCUSDT"])
-    maker_fee: Decimal = Decimal("0.001")
-    taker_fee: Decimal = Decimal("0.001")
+    spot_maker_fee: Decimal = Decimal("0.00075")
+    spot_taker_fee: Decimal = Decimal("0.00075")
+    usdm_maker_fee: Decimal = Decimal("0.0002")
+    usdm_taker_fee: Decimal = Decimal("0.0005")
     funding_min_net_apy: Decimal = Decimal("0.10")
     funding_holding_periods: int = 30
     funding_basis_max: Decimal = Decimal("0.005")
@@ -201,8 +203,11 @@ class Settings(BaseSettings):
             max_var_99=self.max_var_99,
         )
 
-    def fee_schedule(self) -> FeeSchedule:
-        return FeeSchedule(maker=self.maker_fee, taker=self.taker_fee)
+    def spot_fee_schedule(self) -> FeeSchedule:
+        return FeeSchedule(maker=self.spot_maker_fee, taker=self.spot_taker_fee)
+
+    def usdm_fee_schedule(self) -> FeeSchedule:
+        return FeeSchedule(maker=self.usdm_maker_fee, taker=self.usdm_taker_fee)
 
     def regime_params(self) -> RegimeParams:
         return RegimeParams(
@@ -262,8 +267,8 @@ class Settings(BaseSettings):
     def funding_params(self) -> FundingParams:
         return FundingParams(
             min_net_apy=self.funding_min_net_apy,
-            taker_fee=self.taker_fee,
             holding_periods=self.funding_holding_periods,
             basis_max=self.funding_basis_max,
             close_on_negative=self.funding_close_on_negative,
+            taker_fee=self.spot_taker_fee + self.usdm_taker_fee,
         )

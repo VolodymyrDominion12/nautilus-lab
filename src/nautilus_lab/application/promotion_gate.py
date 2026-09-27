@@ -39,6 +39,9 @@ class WalkForwardEvidence(Protocol):
     def oos_returns(self) -> tuple[Decimal, ...]: ...
 
     @property
+    def oos_daily_returns(self) -> tuple[Decimal, ...]: ...
+
+    @property
     def profitable_folds(self) -> int: ...
 
     @property
@@ -147,7 +150,7 @@ def evaluate_gate(
             _preregistration_check(preregistration),
             *_alpha_level_checks(multi, rules),
             *_walk_forward_checks(multi, rules, strategy_class),
-            *_audit_checks(audit, rules, strategy_class),
+            *_audit_checks(audit, rules, strategy_class, multi),
         )
     )
 
@@ -276,19 +279,34 @@ def _vol_matched_check(multi: WalkForwardEvidence) -> tuple[GateCheck, ...]:
 
 
 def _audit_checks(
-    audit: OverfitAuditReport | None, rules: GateCriteria, strategy_class: StrategyClass | None = None
+    audit: OverfitAuditReport | None, rules: GateCriteria, strategy_class: StrategyClass | None = None, multi: WalkForwardEvidence | None = None
 ) -> tuple[GateCheck, ...]:
     if audit is None:
         missing = "run `lab research --pbo`"
         return (_check("pbo", None, missing), _check("dsr", None, missing))
     pbo_passed = audit.pbo <= rules.max_pbo if audit.is_meaningful else None
-    dsr = audit.deflated_sharpe.probability
-    trials = audit.deflated_sharpe.n_trials_total
+    
+    if multi is not None and getattr(multi, "oos_daily_returns", None) is not None and getattr(audit, "daily_trial_sharpes", None):
+        from nautilus_lab.domain.deflated_sharpe import deflated_sharpe_ratio
+        dsr_result = deflated_sharpe_ratio(
+            multi.oos_daily_returns,
+            list(audit.daily_trial_sharpes),
+            total_trials=audit.deflated_sharpe.n_trials_total
+        )
+        dsr = dsr_result.probability
+        trials = dsr_result.n_trials_total
+        dsr_str = f"DSR={dsr} (OOS daily returns)"
+    else:
+        dsr = None
+        trials = audit.deflated_sharpe.n_trials_total
+        missing = "run `lab research --folds N` for OOS daily returns"
+        dsr_str = missing
+
     return (
         _check("pbo", pbo_passed, f"PBO={audit.pbo} (need <= {rules.max_pbo})"),
         _check(
             "dsr",
             None if dsr is None else dsr >= rules.min_dsr,
-            f"DSR={dsr} over n_trials_total={trials} (need >= {rules.min_dsr})",
+            f"{dsr_str} over n_trials_total={trials} (need >= {rules.min_dsr})",
         ),
     )

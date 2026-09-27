@@ -67,7 +67,11 @@ def settings() -> Settings:
 
 
 def catalog(cfg: Settings, *, path: str | None = None) -> NautilusParquetCatalog:
-    return NautilusParquetCatalog(Path(path or cfg.catalog_path), fees=cfg.fee_schedule())
+    return NautilusParquetCatalog(
+        Path(path or cfg.catalog_path),
+        spot_fees=cfg.spot_fee_schedule(),
+        usdm_fees=cfg.usdm_fee_schedule(),
+    )
 
 
 def taker_flow_catalog(cfg: Settings, *, path: str | None = None) -> ParquetTakerFlowCatalog:
@@ -341,7 +345,8 @@ def research_request(
         instrument_ids=instrument_ids,
         start=start,
         end=end,
-        fee_schedule=cfg.fee_schedule(),
+        spot_fees=cfg.spot_fee_schedule(),
+        usdm_fees=cfg.usdm_fee_schedule(),
         embargo_bars=cfg.embargo_bars,
         stress_slice=stress_slice,
         use_bar_vpin=cfg.use_bar_vpin,

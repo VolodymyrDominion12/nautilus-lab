@@ -5,7 +5,7 @@ kind: strategy
 name: ema
 version: "1.0"
 status: rejected
-rejected_reason: >
+rejection_reason: >
   Failed PBO audit (Probability of Backtest Overfitting) in Gate v2 on 1d timeframe (e.g. SOLUSDT, MATICUSDT).
   Despite beating baseline and having good out-of-sample metrics, the strategy suffers from severe overfitting.
 title: "EMA crossover: always-in-market baseline на двох експоненційних середніх"
@@ -89,7 +89,7 @@ params:
       price × STOP_PCT, далі — ATR × atr_stop_multiplier (2). Це правило
       розрахунку розміру, а не частина сигналу, тому воно не підбирається разом
       із періодами EMA.
-  - env: TAKER_FEE
+  - env: SPOT_TAKER_FEE
     default: 0.001
     tuned: false
     note: >

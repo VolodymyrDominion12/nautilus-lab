@@ -114,7 +114,7 @@ params:
       стану flat (open_positions = 0), тому ліміт угоди не блокує; docs/05 §3.5
       цитує 2 — це типове значення конфіга адаптера, а не те, що приходить із
       CLI.
-  - env: TAKER_FEE
+  - env: SPOT_TAKER_FEE
     default: 0.001
     tuned: false
     note: >

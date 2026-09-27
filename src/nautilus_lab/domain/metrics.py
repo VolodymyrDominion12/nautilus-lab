@@ -47,6 +47,7 @@ class BacktestMetrics:
     # risk, which the volatility-matched buy & hold is scaled to (docs/27 R-4). None when
     # the curve is too short to measure.
     return_volatility: Decimal | None = None
+    exposure_pct: Decimal | None = None
 
     @property
     def paid_cost_rate(self) -> Decimal | None:
@@ -82,6 +83,7 @@ def compute_metrics(
     fees_paid: Decimal,
     turnover: Decimal,
     traded_notional: Decimal = Decimal("0"),
+    exposure_pct: Decimal | None = None,
     ending_equity: Decimal | None = None,
     periods_per_year: int | None = None,
 ) -> BacktestMetrics:
@@ -106,6 +108,7 @@ def compute_metrics(
         ),
         sharpe_annualized=annualized,
         return_volatility=sample_volatility(return_series_from_equity(equity_curve)),
+        exposure_pct=exposure_pct,
     )
 
 

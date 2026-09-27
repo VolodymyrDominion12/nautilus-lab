@@ -95,11 +95,13 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         self._peak_state: PeakState | None = None
         self._last_equity_ts: datetime | None = None
         self._day: date | None = None
+        self._daily_returns: list[Decimal] = []
         self._equity_curve: list[Decimal] = []
         self._turnover: Decimal = Decimal("0")
         self._returns: list[Decimal] = []
         self._previous_equity: Decimal | None = None
         self._entry_equity: Decimal | None = None
+        self._exposure_bars: int = 0
         self._trade_stats = TradeStats()
         self._atr_a = AverageTrueRange(14)
         self._atr_b = AverageTrueRange(14)
@@ -138,6 +140,8 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             if self._previous_equity is not None and self._previous_equity > 0:
                 self._returns.append((equity - self._previous_equity) / self._previous_equity)
             self._previous_equity = equity
+            if self._open_legs() > 0:
+                self._exposure_bars += 1
 
         if signal is None:
             return
@@ -227,6 +231,13 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
     def turnover(self) -> Decimal:
         return self._turnover
 
+    @property
+    def exposure_pct(self) -> Decimal | None:
+        bars = len(self._equity_curve)
+        if bars == 0:
+            return None
+        return Decimal(self._exposure_bars) / Decimal(bars)
+
     def _submit_leg(
         self,
         instrument_id: InstrumentId,
@@ -277,6 +288,8 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
     def _update_equity_path(self, ts_utc: datetime, equity: Decimal) -> None:
         day = ts_utc.date()
         if self._day != day:
+            if self._day is not None and self._day_start_equity is not None and self._day_start_equity > 0:
+                self._daily_returns.append((equity - self._day_start_equity) / self._day_start_equity)
             self._day = day
             self._day_start_equity = equity
         state = self._peak_state or PeakState(peak=equity)
@@ -292,6 +305,10 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
     def _note_refusal(self, reason: str) -> None:
         if self._peak_state is not None and self._last_equity_ts is not None:
             self._peak_state = on_refusal(self._peak_state, reason=reason, now=self._last_equity_ts)
+
+    @property
+    def daily_returns(self) -> tuple[Decimal, ...]:
+        return tuple(self._daily_returns)
 
 
 def _to_domain_bar(bar: Bar) -> OhlcvBar:

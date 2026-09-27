@@ -94,6 +94,7 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         self._peak_state: PeakState | None = None
         self._last_equity_ts: datetime | None = None
         self._day: date | None = None
+        self._daily_returns: list[Decimal] = []
         self._equity_curve: list[Decimal] = []
         self._turnover: Decimal = Decimal("0")
         self._returns: list[Decimal] = []
@@ -330,6 +331,8 @@ class FundingRobot(Strategy):  # type: ignore[misc]
     def _update_equity_path(self, ts_utc: datetime, equity: Decimal) -> None:
         day = ts_utc.date()
         if self._day != day:
+            if self._day is not None and self._day_start_equity is not None and self._day_start_equity > 0:
+                self._daily_returns.append((equity - self._day_start_equity) / self._day_start_equity)
             self._day = day
             self._day_start_equity = equity
         state = self._peak_state or PeakState(peak=equity)
@@ -346,6 +349,10 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         self._refusal_reasons[reason] = self._refusal_reasons.get(reason, 0) + 1
         if self._peak_state is not None and self._last_equity_ts is not None:
             self._peak_state = on_refusal(self._peak_state, reason=reason, now=self._last_equity_ts)
+
+    @property
+    def daily_returns(self) -> tuple[Decimal, ...]:
+        return tuple(self._daily_returns)
 
 
 def _to_domain_bar(bar: Bar) -> OhlcvBar:

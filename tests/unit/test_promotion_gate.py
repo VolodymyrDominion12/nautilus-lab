@@ -36,7 +36,8 @@ def _fold(
         breakeven_cost=Decimal("0.0006"),
     )
     report = BacktestReport(
-        fills=fills, positions=1, ending_balance=Decimal("1"), notes="", metrics=metrics
+        fills=fills, positions=1, ending_balance=Decimal("1"), notes="", metrics=metrics,
+        daily_returns=(Decimal("0.10"), Decimal("-0.01")) * 5
     )
     return WalkForwardFold(
         index=index,
@@ -90,6 +91,7 @@ def _audit(pbo: str, dsr: str | None) -> OverfitAuditReport:
             trials=4,
             note="",
         ),
+        daily_trial_sharpes=(Decimal("0.02"), Decimal("0.01"), Decimal("0.05"), Decimal("0.03")) if dsr is not None else (),
     )
 
 

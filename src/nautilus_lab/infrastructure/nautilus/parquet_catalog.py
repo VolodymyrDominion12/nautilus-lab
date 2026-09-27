@@ -21,10 +21,17 @@ from nautilus_lab.infrastructure.nautilus.instrument import resolve_instrument
 class NautilusParquetCatalog:
     """Adapter over Nautilus `ParquetDataCatalog`. Stores closed bars only."""
 
-    def __init__(self, path: Path, *, fees: FeeSchedule | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        spot_fees: FeeSchedule | None = None,
+        usdm_fees: FeeSchedule | None = None,
+    ) -> None:
         self._path = path.expanduser().resolve()
         self._path.mkdir(parents=True, exist_ok=True)
-        self._fees = fees or FeeSchedule.binance_spot_vip0()
+        self._spot_fees = spot_fees or FeeSchedule.binance_spot_vip0()
+        self._usdm_fees = usdm_fees or FeeSchedule.binance_usdm_vip0()
 
     @property
     def path(self) -> Path:
@@ -34,7 +41,11 @@ class NautilusParquetCatalog:
         if not bars:
             raise CatalogEmptyError("cannot write an empty bar series")
         resolved_id = instrument_id or bars[0].instrument_id
-        instrument = resolve_instrument(resolved_id, fees=self._fees)
+        instrument = resolve_instrument(
+            resolved_id,
+            spot_fees=self._spot_fees,
+            usdm_fees=self._usdm_fees,
+        )
         nautilus_type = BarType.from_str(bar_type)
         engine_bars = to_engine_bars(list(bars), bar_type=nautilus_type, instrument=instrument)
         catalog = self._catalog()

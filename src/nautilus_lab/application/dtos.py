@@ -42,7 +42,8 @@ class BacktestRequest:
     instrument_ids: tuple[str, ...] = ()
     start: datetime | None = None
     end: datetime | None = None
-    fee_schedule: FeeSchedule = field(default_factory=FeeSchedule.binance_spot_vip0)
+    spot_fees: FeeSchedule = field(default_factory=FeeSchedule.binance_spot_vip0)
+    usdm_fees: FeeSchedule = field(default_factory=FeeSchedule.binance_usdm_vip0)
     embargo_bars: int = 0
     stress_slice: str | None = None
     use_bar_vpin: bool = False
@@ -94,6 +95,7 @@ class BacktestReport:
     # order each first fired. Empty means no entry was ever blocked — which is
     # itself information, and different from "we did not look".
     risk_breaches: tuple[tuple[str, int], ...] = ()
+    daily_returns: tuple[Decimal, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +296,13 @@ class MultiWindowReport:
         return tuple(fold.oos_return for fold in self.folds if fold.oos_return is not None)
 
     @property
+    def oos_daily_returns(self) -> tuple[Decimal, ...]:
+        """All out-of-sample daily returns concatenated across folds."""
+        return tuple(
+            ret for fold in self.folds for ret in fold.out_of_sample.daily_returns
+        )
+
+    @property
     def profitable_folds(self) -> int:
         return sum(1 for value in self.oos_returns if value > 0)
 
@@ -396,7 +405,14 @@ class MultiWindowReport:
 
     @property
     def mean_exposure_pct(self) -> Decimal | None:
-        return None  # TODO: implement from position time in market
+        values = []
+        for fold in self.folds:
+            metrics = fold.out_of_sample.metrics
+            if metrics is not None and metrics.exposure_pct is not None:
+                values.append(metrics.exposure_pct)
+        if not values:
+            return None
+        return sum(values, Decimal("0")) / Decimal(len(values))
 
     def beats_buy_and_hold(self) -> bool | None:
         """True when the robot out-earned holding the instrument on average.
@@ -522,6 +538,7 @@ class OverfitAuditReport:
     labels: tuple[str, ...]
     notes: str
     deflated_sharpe: DeflatedSharpeResult
+    daily_trial_sharpes: tuple[Decimal, ...] = ()
 
     @property
     def is_meaningful(self) -> bool:

@@ -53,13 +53,15 @@ def supported_instrument_ids() -> tuple[str, ...]:
 
 
 def resolve_instrument(
-    instrument_id: str, *, fees: FeeSchedule | None = None
+    instrument_id: str,
+    *,
+    spot_fees: FeeSchedule | None = None,
+    usdm_fees: FeeSchedule | None = None,
 ) -> CurrencyPair | CryptoPerpetual:
-    schedule = fees or FeeSchedule.binance_spot_vip0()
     if instrument_id in _PERP_SPECS:
-        return _crypto_perpetual(instrument_id, fees=schedule)
+        return _crypto_perpetual(instrument_id, fees=usdm_fees or FeeSchedule.binance_usdm_vip0())
     if instrument_id in _SPOT_SPECS:
-        return _currency_pair(instrument_id, fees=schedule)
+        return _currency_pair(instrument_id, fees=spot_fees or FeeSchedule.binance_spot_vip0())
     # Fail closed, but name the open doors: the symbol->instrument_id step accepts
     # any `*USDT` ticker, so without this list the message arrives one layer away
     # from the cause ("unsupported instrument_id: SOL/USDT.SIM" while the user asked

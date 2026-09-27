@@ -37,11 +37,11 @@ golden = _golden()
 def test_settings_ignore_env_file_and_shell(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("TAKER_FEE", "0.5")
+    monkeypatch.setenv("SPOT_TAKER_FEE", "0.5")
     monkeypatch.setenv("ROBOT", "ema")
     cfg = golden.hermetic_settings(tmp_path)
     defaults = golden.Settings.model_fields
-    assert cfg.taker_fee == defaults["taker_fee"].default
+    assert cfg.spot_taker_fee == defaults["spot_taker_fee"].default
     assert cfg.robot == defaults["robot"].default
     assert cfg.catalog_path == str(tmp_path)
 

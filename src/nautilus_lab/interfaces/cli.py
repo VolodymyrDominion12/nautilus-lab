@@ -1304,6 +1304,7 @@ def _print_multi_window(
         )
     print(
         f"out-of-sample aggregate profitable={report.profitable_folds}/{len(report.folds)} "
+        f"mean_gross={_pct(report.mean_gross_return)} "
         f"mean={_pct(report.mean_oos_return)} median={_pct(report.median_oos_return)} "
         f"worst={_pct(report.worst_oos_return)} best={_pct(report.best_oos_return)}"
     )

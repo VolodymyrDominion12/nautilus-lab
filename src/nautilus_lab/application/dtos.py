@@ -318,6 +318,18 @@ class MultiWindowReport:
         return max(values) if values else None
 
     @property
+    def mean_gross_return(self) -> Decimal | None:
+        gross_returns = []
+        for fold in self.folds:
+            if fold.oos_return is None or fold.out_of_sample.metrics is None:
+                continue
+            fees_return = fold.out_of_sample.metrics.fees_paid / self.starting_equity
+            gross_returns.append(fold.oos_return + fees_return)
+        if not gross_returns:
+            return None
+        return sum(gross_returns, Decimal("0")) / Decimal(len(gross_returns))
+
+    @property
     def mean_buy_and_hold_return(self) -> Decimal | None:
         values = tuple(
             fold.buy_and_hold_return for fold in self.folds if fold.buy_and_hold_return is not None
@@ -399,7 +411,7 @@ class MultiWindowReport:
         )
         return (
             f"folds={len(self.folds)} profitable={self.profitable_folds}/{len(self.folds)} "
-            f"mean_oos={percent(self.mean_oos_return)} "
+            f"mean_gross={percent(self.mean_gross_return)} mean_oos={percent(self.mean_oos_return)} "
             f"median_oos={percent(self.median_oos_return)} "
             f"worst={percent(self.worst_oos_return)} best={percent(self.best_oos_return)} "
             f"mean_buy_hold={percent(self.mean_buy_and_hold_return)} ({comparison}) "

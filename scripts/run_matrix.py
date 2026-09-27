@@ -43,18 +43,17 @@ class MatrixRun:
 
 
 MATRIX: tuple[MatrixRun, ...] = (
-    # Тір A — базова лінія (чиста ревізія після хвилі 4)
-    # Запускати ЛИШЕ після фіксу B2/B3 і з чистим деревом.
-    MatrixRun("A", "regime", "BTCUSDT", "4h", ("--folds", "4")),
-    MatrixRun("A", "regime", "ETHUSDT", "4h", ("--folds", "4")),
-    MatrixRun("A", "regime", "BTCUSDT", "1h", ("--folds", "4")),
-    MatrixRun("A", "ema", "BTCUSDT", "1d", ("--folds", "4")),
-    MatrixRun("A", "ema", "ETHUSDT", "1d", ("--folds", "4")),
-    MatrixRun("A", "ema", "BTCUSDT", "1h", ("--folds", "4")),
-    MatrixRun("A", "pairs", "ETHUSDT", "1h", ("--folds", "4")),
-    # Тір B — PBO-аудит для кращих кандидатів з тіру A
-    MatrixRun("B", "regime", "BTCUSDT", "4h", ("--folds", "4", "--pbo")),
-    MatrixRun("B", "ema", "BTCUSDT", "1d", ("--folds", "4", "--pbo")),
+    # Phase 4.2 - Regime router 6-fold validation on major pairs
+    MatrixRun("4_2", "regime", "BTCUSDT", "4h", ("--folds", "6")),
+    MatrixRun("4_2", "regime", "ETHUSDT", "4h", ("--folds", "6")),
+    MatrixRun("4_2", "regime", "SOLUSDT", "4h", ("--folds", "6")),
+    MatrixRun("4_2", "regime", "BNBUSDT", "4h", ("--folds", "6")),
+    
+    # Phase 4.2 PBO audits for the same pairs
+    MatrixRun("4_2_PBO", "regime", "BTCUSDT", "4h", ("--folds", "6", "--pbo")),
+    MatrixRun("4_2_PBO", "regime", "ETHUSDT", "4h", ("--folds", "6", "--pbo")),
+    MatrixRun("4_2_PBO", "regime", "SOLUSDT", "4h", ("--folds", "6", "--pbo")),
+    MatrixRun("4_2_PBO", "regime", "BNBUSDT", "4h", ("--folds", "6", "--pbo")),
 )
 # ─────────────────────────────────────────────────────────────────────────────
 

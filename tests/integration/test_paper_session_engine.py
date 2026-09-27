@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from unittest.mock import patch
 
 from nautilus_lab.application.dtos import BacktestRequest
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
@@ -82,9 +83,16 @@ def test_paper_session_never_stacks_entries_on_a_book_driven_robot() -> None:
         robot=RobotName.ML_OBI,
         seed=7,
         source=BarOrigin.SYNTHETIC,
+        ml_obi_model_path="dummy",
     )
 
-    report = NautilusResearchBacktest().run_paper(request, bars, None, _books_for(bars))
+    with patch(
+        "nautilus_lab.infrastructure.nautilus.signal_strategy._build_classifier"
+    ) as mock_build:
+        from nautilus_lab.infrastructure.lightgbm_classifier import HeuristicDirectionClassifier
+
+        mock_build.return_value = HeuristicDirectionClassifier()
+        report = NautilusResearchBacktest().run_paper(request, bars, None, _books_for(bars))
 
     assert report.fills, "the book-driven robot must trade on this fixture"
     single_entry = request.starting_equity * request.risk.risk_per_trade / request.risk.stop_pct

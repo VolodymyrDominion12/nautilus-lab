@@ -46,26 +46,26 @@
       "unrealized_pnl": "157.833819999994112"
     },
     "regime": {
-      "ending_balance": "630511.81421230007688",
-      "fees_paid": "30513.44875771",
+      "ending_balance": "626945.0945990100453125",
+      "fees_paid": "30473.26474099",
       "fills": 57,
-      "max_drawdown": "0.04488394533474526769077250537",
+      "max_drawdown": "0.05028742640709397213706580635",
       "positions": 29,
-      "realized_balance": "529282.87801230",
+      "realized_balance": "526288.50709901",
       "risk_breaches": [
         [
           "order already working",
-          18
+          16
         ],
         [
           "daily loss circuit breaker",
-          893
+          916
         ]
       ],
-      "sharpe_like": "0.6932363700466582972775968828",
-      "traded_notional": "30513448.757709999714366",
-      "turnover": "15296254.77331",
-      "unrealized_pnl": "101228.93620000007688"
+      "sharpe_like": "0.6891295278814009291731916101",
+      "traded_notional": "30473264.7409899996521845",
+      "turnover": "15272727.31136",
+      "unrealized_pnl": "100656.5875000000453125"
     },
     "vpin_momentum": {
       "ending_balance": "100000.00000000",

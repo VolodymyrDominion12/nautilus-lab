@@ -1,0 +1,106 @@
+{
+  "schema": "preregistration/1",
+  "registered_at": "2026-09-27T08:12:22.726142+00:00",
+  "hypothesis": "ema z USE_VOL_SCALING=true, кошик 10 монет, 1d, 6 folds",
+  "terms_sha256": "8d951a300510231d7634d795f9148525198bfa6e06d3bdc5a2e7a653757221b9",
+  "terms": {
+    "robot": "ema",
+    "dataset": "ETH/USDT.SIM-1-DAY-LAST-EXTERNAL",
+    "grid": [
+      "fast_ema=5 slow_ema=20 donchian=20 bb_k=2 z_entry=2 formulaic_threshold=0.55 meta_label_threshold=0.55 adaptive_period=40 adaptive_selectivity=0.5 funding_min_net_apy=0.10 funding_holding_periods=30",
+      "fast_ema=10 slow_ema=20 donchian=20 bb_k=2 z_entry=2 formulaic_threshold=0.55 meta_label_threshold=0.55 adaptive_period=40 adaptive_selectivity=0.5 funding_min_net_apy=0.10 funding_holding_periods=30",
+      "fast_ema=10 slow_ema=40 donchian=20 bb_k=2 z_entry=2 formulaic_threshold=0.55 meta_label_threshold=0.55 adaptive_period=40 adaptive_selectivity=0.5 funding_min_net_apy=0.10 funding_holding_periods=30",
+      "fast_ema=12 slow_ema=26 donchian=20 bb_k=2 z_entry=2 formulaic_threshold=0.55 meta_label_threshold=0.55 adaptive_period=40 adaptive_selectivity=0.5 funding_min_net_apy=0.10 funding_holding_periods=30"
+    ],
+    "folds": 6,
+    "in_sample_fraction": "0.7",
+    "embargo_bars": 10,
+    "selection_metric": "pnl",
+    "oos_windows": [
+      [
+        "2024-06-11T23:59:59.999000+00:00",
+        "2024-10-28T23:59:59.999000+00:00"
+      ],
+      [
+        "2024-10-28T23:59:59.999000+00:00",
+        "2025-03-16T23:59:59.999000+00:00"
+      ],
+      [
+        "2025-03-16T23:59:59.999000+00:00",
+        "2025-08-02T23:59:59.999000+00:00"
+      ],
+      [
+        "2025-08-02T23:59:59.999000+00:00",
+        "2025-12-19T23:59:59.999000+00:00"
+      ],
+      [
+        "2025-12-19T23:59:59.999000+00:00",
+        "2026-05-07T23:59:59.999000+00:00"
+      ],
+      [
+        "2026-05-07T23:59:59.999000+00:00",
+        "2026-09-26T23:59:59.999001+00:00"
+      ]
+    ],
+    "gate": [
+      [
+        "min_folds",
+        "6"
+      ],
+      [
+        "min_profitable_share",
+        "0.83"
+      ],
+      [
+        "min_oos_fills",
+        "30"
+      ],
+      [
+        "max_pbo",
+        "0.3"
+      ],
+      [
+        "min_dsr",
+        "0.95"
+      ]
+    ],
+    "options": [
+      [
+        "bar_type",
+        "ETH/USDT.SIM-1-DAY-LAST-EXTERNAL"
+      ],
+      [
+        "fee_schedule",
+        "FeeSchedule(maker=Decimal('0.001'), taker=Decimal('0.001'))"
+      ],
+      [
+        "risk",
+        "RiskLimits(risk_per_trade=Decimal('0.005'), stop_pct=Decimal('0.01'), max_daily_loss=Decimal('0.02'), max_drawdown=Decimal('0.06'), max_open_positions=1, kelly_fraction=Decimal('0.25'), max_var_99=Decimal('0.05'), atr_stop_multiplier=Decimal('2'))"
+      ],
+      [
+        "risk_overlay",
+        "RiskOverlay(use_vol_scaling=True, vol_scaling_target=Decimal('0.2'), vol_model=<VolModel.HAR: 'har'>, vol_refit_every=24, use_fractional_kelly=False, kelly_min_trades=30, use_cvar_breaker=False, max_cvar_99=Decimal('0.05'), use_ratchet=False, ratchet_arm_pct=Decimal('0.0125'), use_protective_stop=True, drawdown_cooldown_days=7)"
+      ],
+      [
+        "starting_equity",
+        "100000"
+      ],
+      [
+        "stress_slice",
+        ""
+      ],
+      [
+        "use_bar_vpin",
+        "False"
+      ],
+      [
+        "use_hawkes",
+        "False"
+      ],
+      [
+        "use_tick_vpin",
+        "False"
+      ]
+    ]
+  }
+}

@@ -250,7 +250,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     research.add_argument(
         "--vol-target",
         type=float,
-        help="Target annualized volatility for position sizing (e.g., 0.20 for 20%)",
+        help="Target annualized volatility for position sizing (e.g., 0.20 for 20%%)",
     )
 
     paper = sub.add_parser(

@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     use_protective_stop: bool = True
     selection_metric: SelectionMetric = SelectionMetric.PNL
     drawdown_cooldown_days: int = 0
+    research_drawdown_cooldown_days: int = 7
     pairs_refit_every: int = 0
     # 0 disables the quantile gate and leaves the fixed `PairsParams.z_entry` in
     # charge, which is how every documented `pairs` run was measured. A plain
@@ -231,6 +232,11 @@ class Settings(BaseSettings):
         )
 
     def risk_overlay(self) -> RiskOverlay:
+        cooldown = (
+            self.research_drawdown_cooldown_days
+            if self.trading_mode is TradingMode.RESEARCH
+            else self.drawdown_cooldown_days
+        )
         return RiskOverlay(
             use_vol_scaling=self.use_vol_scaling,
             vol_scaling_target=self.vol_scaling_target,
@@ -243,7 +249,7 @@ class Settings(BaseSettings):
             use_ratchet=self.use_ratchet,
             ratchet_arm_pct=self.ratchet_arm_pct,
             use_protective_stop=self.use_protective_stop,
-            drawdown_cooldown_days=self.drawdown_cooldown_days,
+            drawdown_cooldown_days=cooldown,
         )
 
     def pairs_params(self) -> PairsParams:

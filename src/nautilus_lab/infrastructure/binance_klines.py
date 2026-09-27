@@ -55,11 +55,18 @@ class BinancePublicKlines:
         bars: list[OhlcvBar] = []
         previous_ts: datetime | None = None
         cursor = start
+        
+        url = BINANCE_KLINES_URL
+        query_symbol = symbol
+        if symbol.endswith("-PERP"):
+            url = "https://fapi.binance.com/fapi/v1/klines"
+            query_symbol = symbol[: -len("-PERP")]
+            
         while cursor < end:
             payload = self._http.get_json(
-                BINANCE_KLINES_URL,
+                url,
                 {
-                    "symbol": symbol,
+                    "symbol": query_symbol,
                     "interval": interval,
                     "startTime": str(int(cursor.timestamp() * 1000)),
                     "endTime": str(int(end.timestamp() * 1000) - 1),

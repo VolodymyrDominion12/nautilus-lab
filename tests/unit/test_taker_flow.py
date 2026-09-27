@@ -188,7 +188,7 @@ def test_bar_feed_without_a_flow_store_returns_the_bars_unchanged() -> None:
     assert ResearchBarFeed(_FakeBarCatalog(bars)).load(_request()) == bars
 
 
-def test_bar_feed_leaves_instruments_without_a_spot_symbol_alone(tmp_path: Path) -> None:
+def test_bar_feed_leaves_bars_alone_if_no_flow_is_found_for_instrument(tmp_path: Path) -> None:
     store = ParquetTakerFlowCatalog(tmp_path)
     store.write([_bar(0, taker_buy="40")], symbol="ETHUSDT", interval="1h")
     feed = ResearchBarFeed(_FakeBarCatalog([_bar(0)]), taker_flow=store)
@@ -197,9 +197,9 @@ def test_bar_feed_leaves_instruments_without_a_spot_symbol_alone(tmp_path: Path)
     assert loaded[0].taker_buy_base_volume is None
 
 
-def test_instrument_symbol_lookup_round_trips_spot_only() -> None:
+def test_instrument_symbol_lookup_round_trips() -> None:
     assert binance_symbol_for_instrument(binance_symbol_to_instrument_id("ETHUSDT")) == "ETHUSDT"
-    assert binance_symbol_for_instrument("ETHUSDT-PERP.SIM") is None
+    assert binance_symbol_for_instrument("ETHUSDT-PERP.SIM") == "ETHUSDT-PERP"
     assert binance_symbol_for_instrument("not-an-instrument") is None
 
 

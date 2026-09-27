@@ -31,10 +31,15 @@ _SPOT_SPECS: dict[str, tuple[str, str, int, str, str]] = {
     "XRP/USDT.SIM": ("XRP", "USDT", 4, "0.0001", "0.1"),
     "ADA/USDT.SIM": ("ADA", "USDT", 4, "0.0001", "0.1"),
     "DOGE/USDT.SIM": ("DOGE", "USDT", 5, "0.00001", "1"),
+    "AVAX/USDT.SIM": ("AVAX", "USDT", 3, "0.001", "0.01"),
+    "DOT/USDT.SIM": ("DOT", "USDT", 3, "0.001", "0.01"),
+    "MATIC/USDT.SIM": ("MATIC", "USDT", 4, "0.0001", "0.1"),
+    "LINK/USDT.SIM": ("LINK", "USDT", 3, "0.001", "0.01"),
 }
 
 _PERP_SPECS: dict[str, tuple[str, str, int, str, str]] = {
     "ETHUSDT-PERP.SIM": ("ETH", "USDT", 2, "0.01", "0.001"),
+    "BTCUSDT-PERP.SIM": ("BTC", "USDT", 1, "0.1", "0.001"),
 }
 
 
@@ -80,6 +85,8 @@ def eth_usdt_perp_sim(*, fees: FeeSchedule | None = None) -> CryptoPerpetual:
 
 
 def binance_symbol_to_instrument_id(symbol: str) -> str:
+    if symbol.endswith("-PERP"):
+        return f"{symbol}.SIM"
     if symbol.endswith("USDT"):
         base = symbol.removesuffix("USDT")
         return f"{base}/USDT.SIM"
@@ -94,6 +101,8 @@ def binance_symbol_for_instrument(instrument_id: str) -> str | None:
     answer: the caller then has no taker-flow series to join and falls back, instead of
     inventing a symbol and silently reading the wrong instrument's flow.
     """
+    if instrument_id.endswith("-PERP.SIM"):
+        return instrument_id.removesuffix(".SIM")
     base, separator, quote = instrument_id.partition("/")
     if not separator or not quote.startswith("USDT"):
         return None

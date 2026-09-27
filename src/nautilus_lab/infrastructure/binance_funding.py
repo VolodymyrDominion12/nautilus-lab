@@ -105,11 +105,14 @@ class BinancePublicFunding:
                 break
             last_ms: int | None = None
             for item in page:
+                if isinstance(item, dict) and "fundingTime" in item:
+                    item_ts = int(str(item["fundingTime"]))
+                    last_ms = max(last_ms or item_ts, item_ts)
+
                 parsed = _parse_funding_row(item, symbol=symbol, start=start, end=end)
                 if parsed is None:
                     continue
                 ts, rate, mark = parsed
-                last_ms = max(last_ms or _to_ms(ts), _to_ms(ts))
                 if ts in seen:
                     continue
                 seen.add(ts)

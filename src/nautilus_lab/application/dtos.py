@@ -214,7 +214,7 @@ class SelectedParams:
     meta_label_threshold: Decimal = Decimal("0.55")
     adaptive_period: int = 40
     adaptive_selectivity: Decimal = Decimal("0.5")
-    funding_min_net_apy: Decimal = Decimal("0.10")
+    funding_min_net_apy: Decimal = Decimal("0")
     funding_holding_periods: int = 30
 
     def label(self) -> str:

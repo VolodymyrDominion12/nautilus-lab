@@ -105,7 +105,7 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
             )
         return
     if request.robot is RobotName.FUNDING:
-        for min_apy in (Decimal("0.05"), Decimal("0.10"), Decimal("0.15")):
+        for min_apy in (Decimal("0"), Decimal("0.05"), Decimal("0.10"), Decimal("0.15")):
             for holding_periods in (15, 30, 45):
                 yield SelectedParams(
                     fast_ema=base.fast_ema,

@@ -37,6 +37,7 @@ class MatrixRun:
     symbol: str  # Binance symbol, напр. BTCUSDT
     interval: str  # 1h / 4h / 1d
     extra_args: tuple[str, ...] = ()
+    env_vars: tuple[tuple[str, str], ...] = ()
 
     @property
     def label(self) -> str:
@@ -44,6 +45,18 @@ class MatrixRun:
 
 
 MATRIX: tuple[MatrixRun, ...] = (
+    # Phase 4.1 - EMA with vol_scaling on 10 coins, 1d (6 folds)
+    MatrixRun("4_1", "ema", "BTCUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1", "ema", "ETHUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1", "ema", "BNBUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1", "ema", "SOLUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1", "ema", "XRPUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1", "ema", "ADAUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1", "ema", "DOTUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1", "ema", "AVAXUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1", "ema", "MATICUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1", "ema", "LINKUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+
     # Phase 4.2 - Regime router 6-fold validation on major pairs
     MatrixRun("4_2", "regime", "BTCUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
     MatrixRun("4_2", "regime", "ETHUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
@@ -123,7 +136,11 @@ def _run_all(
             base = run.symbol.replace("USDT", "")
             instrument_id = f"{base}/USDT.SIM"
             env["INSTRUMENT_ID"] = instrument_id
+
             env["BAR_INTERVAL"] = run.interval
+            for k, v in run.env_vars:
+                env[k] = v
+
             
             # Map interval 4h -> 4-HOUR, 1h -> 1-HOUR, 1d -> 1-DAY
             interval_str = run.interval.upper()

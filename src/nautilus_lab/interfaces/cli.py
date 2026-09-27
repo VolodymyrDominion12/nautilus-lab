@@ -247,6 +247,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Only a later run with matching terms can be promoted"
         ),
     )
+    research.add_argument(
+        "--vol-target",
+        type=float,
+        help="Target annualized volatility for position sizing (e.g., 0.20 for 20%)",
+    )
 
     paper = sub.add_parser(
         "paper",
@@ -634,6 +639,11 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
     subject = f"{(robot or cfg.robot).value} {cfg.instrument_id}"
     journal_enabled = _journal_enabled(cfg, args)
     started_at = datetime.now(UTC)
+    
+    if getattr(args, "vol_target", None) is not None:
+        cfg.use_vol_scaling = True
+        cfg.vol_scaling_target = Decimal(str(args.vol_target))
+
     if getattr(args, "register", None) is not None:
         return _run_register(cfg, args, robot, folds)
     manifest = _announce_manifest(cfg, synthetic=bool(args.synthetic))

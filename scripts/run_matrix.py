@@ -57,6 +57,10 @@ MATRIX: tuple[MatrixRun, ...] = (
     MatrixRun("4_1", "ema", "MATICUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
     MatrixRun("4_1", "ema", "LINKUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
 
+    # Phase 4.1 PBO for promising candidates
+    MatrixRun("4_1_PBO", "ema", "SOLUSDT", "1d", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+    MatrixRun("4_1_PBO", "ema", "MATICUSDT", "1d", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
+
     # Phase 4.2 - Regime router 6-fold validation on major pairs
     MatrixRun("4_2", "regime", "BTCUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
     MatrixRun("4_2", "regime", "ETHUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),

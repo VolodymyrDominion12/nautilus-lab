@@ -25,7 +25,12 @@
 kind: strategy
 name: ml_obi
 version: "1.0"
-status: candidate
+status: blocked
+blocked_reason: >
+  1 доба знімків стакану (ETHUSDT, 2026-09-21) — це не вибірка: забороно
+  евристичний фолбек без моделі (fail closed). Блокується до
+  хвилі 7 — потрібно ≥ 3 місяців L2-знімків, зібраних на VPS
+  (виправити мапінг символу B7 вже закрито).
 params:
   - env: ml_obi_threshold
     type: Decimal

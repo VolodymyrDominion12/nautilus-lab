@@ -5,7 +5,12 @@
 kind: strategy
 name: vpin_momentum
 version: "1.1"
-status: candidate
+status: blocked
+blocked_reason: >
+  Поріг VPIN_TOXIC_THRESHOLD=0.7 при p99 bar-VPIN ≈ 0.36 на 1h-барах дає 0 угод:
+  стратегія незмірювана. Bar-VPIN на 1h є слабким проксі мікроструктури. Блокується
+  до хвилі 7, коли буде доступна тік-історія (aggTrades ≥ 6 місяців). Якщо
+  повертати — поріг як перцентиль (напр. p90), а не фіксовані 0.7.
 title: "VPIN momentum: момент у бік токсичного потоку, трейлінг-стоп за ATR"
 
 hypothesis: >

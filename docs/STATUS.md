@@ -16,12 +16,12 @@
 | [`formulaic_lgbm`](../specs/strategies/formulaic_lgbm.yaml) | candidate | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Formulaic LGBM: напрямок бару з 12 формульних ознак OHLCV + пороговий класифікатор |
 | [`funding`](../specs/strategies/funding.yaml) | candidate | так | `funding_strategy` | — | — | так | — | не виміряно | Funding cash-and-carry: спот лонг + перпетуал шорт, вхід за нетто-APY |
 | [`meta_label`](../specs/strategies/meta_label.yaml) | candidate | так | `signal_strategy` | так | так | так | — | не виміряно | Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни |
-| [`ml_obi`](../specs/strategies/ml_obi.yaml) | candidate | так | `signal_strategy` | — | — | так | — | не виміряно | ML за дисбалансом книги: OBI + WOFI + fade → сигнал напрямку |
 | [`pairs`](../specs/strategies/pairs.yaml) | candidate | так | `spread_strategy` | — | — | так | — | виміряно: не обганяє buy&hold | Pairs trading: коінтеграція ETH/BTC і повернення до середнього за z-score |
 | [`regime`](../specs/strategies/regime.yaml) | candidate | так | `signal_strategy` | так | так | так | так | виміряно: не обганяє buy&hold | Regime router: Donchian у тренді, Bollinger mean reversion у флеті |
-| [`vpin_momentum`](../specs/strategies/vpin_momentum.yaml) | candidate | так | `signal_strategy` | так | — | так | так | виміряно: не обганяє buy&hold | VPIN momentum: момент у бік токсичного потоку, трейлінг-стоп за ATR |
 | [`glft`](../specs/strategies/glft.yaml) | blocked | — | `none` | — | — | — | — | не виміряно | (1) Немає споживача `QuoteIntent`. |
+| [`ml_obi`](../specs/strategies/ml_obi.yaml) | blocked | так | `signal_strategy` | — | — | так | — | не виміряно | Виміру немає, і причина тепер одна — обсяг даних книги, а не код. |
 | [`tri_scan`](../specs/strategies/tri_scan.yaml) | blocked | — | `none` | — | — | — | — | не виміряно | (1) Класу-робота не існує. |
+| [`vpin_momentum`](../specs/strategies/vpin_momentum.yaml) | blocked | так | `signal_strategy` | так | — | так | так | виміряно: не обганяє buy&hold | Поріг VPIN_TOXIC_THRESHOLD=0.7 при p99 bar-VPIN ≈ 0.36 на 1h-барах дає 0 угод: стратегія незмірювана. |
 | [`adaptive_ema`](../specs/strategies/adaptive_ema.yaml) | rejected | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Контрольний A/B на каталозі 1h (23 697 барів на інструмент, 4 rolling-фолди, embargo 10, конфігурації зафіксовані всередині фолду і НЕ віді… |
 
 Лише в live paper (еталони, не стратегії): `hold`.

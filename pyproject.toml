@@ -145,6 +145,10 @@ select = [
 # scripts/gen_status.py — генератор docs/STATUS.md, українською, як і сама таблиця:
 # RUF001-003 спрацьовують на кожному рядку тексту, а не на коді.
 "scripts/gen_status.py" = ["RUF001", "RUF002", "RUF003"]
+# scripts/run_matrix.py -- matrix operator, intentional Ukrainian user messages.
+"scripts/run_matrix.py" = ["RUF001", "RUF002", "RUF003", "S603", "S607"]
+# tests/unit/test_regime_router.py -- B2/B3 regression tests, Ukrainian docstrings.
+"tests/unit/test_regime_router.py" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.12"

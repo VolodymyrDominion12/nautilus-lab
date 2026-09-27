@@ -161,14 +161,23 @@ class RegimeRouter:
             self._last_snapshot, self._last_vpin_state, self._last_hawkes_state
         )
         filters = self._filter_steps(self._last_snapshot, self._last_effective_regime)
+        # B2 fix: all three legs must receive every bar so their rolling windows and
+        # EMAs stay warm. Without this, a leg that has not traded for N bars wakes up
+        # with stale indicators when the regime switches to it, producing a phantom
+        # signal or a missed entry on the very first bar of the new regime.
+        up_signal = self._uptrend.on_bar(bar)
+        down_signal = self._downtrend.on_bar(bar)
+        range_signal = self._range.on_bar(bar)
         if self._last_effective_regime is MarketRegime.UPTREND:
-            leg: UptrendBreakout | DowntrendBreakout | RangeMeanReversion = self._uptrend
+            signal = up_signal
+            active_trace = self._uptrend.last_trace
         elif self._last_effective_regime is MarketRegime.DOWNTREND:
-            leg = self._downtrend
+            signal = down_signal
+            active_trace = self._downtrend.last_trace
         else:
-            leg = self._range
-        signal = leg.on_bar(bar)
-        self._trace = (regime, *filters, *leg.last_trace)
+            signal = range_signal
+            active_trace = self._range.last_trace
+        self._trace = (regime, *filters, *active_trace)
         return signal
 
     def _filter_steps(

@@ -138,6 +138,8 @@ class _FundingFeedAdapter:
             return snapshots
         perp_id = request.funding_perp_id or "ETHUSDT-PERP.SIM"
         symbol = binance_symbol_for_instrument(perp_id) or "ETHUSDT"
+        if symbol.endswith("-PERP"):
+            symbol = symbol[:-5]
         return self._catalog.load(symbol=symbol, start=request.start, end=request.end)
 
 

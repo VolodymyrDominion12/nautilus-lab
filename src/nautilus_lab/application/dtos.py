@@ -270,6 +270,8 @@ class WalkForwardFold:
     # Buy & hold scaled to the robot's realized OOS volatility (docs/27 R-4): a robot that
     # carries a third of the asset's risk is compared with a third of the asset's move.
     vol_matched_buy_and_hold_return: Decimal | None = None
+    oos_bar_count: int = 0
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,6 +376,28 @@ class MultiWindowReport:
             return None
         return sum(values, Decimal("0")) / Decimal(len(values))
 
+    @property
+    def mean_breakeven_bps(self) -> Decimal | None:
+        cost = self.mean_breakeven_cost
+        if cost is None:
+            return None
+        return cost * 10000
+
+    @property
+    def mean_turnover_per_bar(self) -> Decimal | None:
+        values = []
+        for fold in self.folds:
+            metrics = fold.out_of_sample.metrics
+            if metrics is not None and fold.oos_bar_count > 0:
+                values.append(metrics.turnover / fold.oos_bar_count)
+        if not values:
+            return None
+        return sum(values, Decimal("0")) / Decimal(len(values))
+
+    @property
+    def mean_exposure_pct(self) -> Decimal | None:
+        return None  # TODO: implement from position time in market
+
     def beats_buy_and_hold(self) -> bool | None:
         """True when the robot out-earned holding the instrument on average.
 
@@ -405,13 +429,20 @@ class MultiWindowReport:
         def percent(value: Decimal | None) -> str:
             return "n/a" if value is None else f"{value * 100:.2f}%"
 
+        def bps(value: Decimal | None) -> str:
+            return "n/a" if value is None else f"{value:.2f}"
+
         verdict = self.beats_buy_and_hold()
         comparison = (
             "n/a" if verdict is None else "beats buy&hold" if verdict else "does not beat buy&hold"
         )
         return (
             f"folds={len(self.folds)} profitable={self.profitable_folds}/{len(self.folds)} "
-            f"mean_gross={percent(self.mean_gross_return)} mean_oos={percent(self.mean_oos_return)} "
+            f"mean_gross={percent(self.mean_gross_return)} "
+            f"exposure={percent(self.mean_exposure_pct)} "
+            f"turnover/bar={bps(self.mean_turnover_per_bar)} "
+            f"breakeven={bps(self.mean_breakeven_bps)}bps "
+            f"mean_oos={percent(self.mean_oos_return)} "
             f"median_oos={percent(self.median_oos_return)} "
             f"worst={percent(self.worst_oos_return)} best={percent(self.best_oos_return)} "
             f"mean_buy_hold={percent(self.mean_buy_and_hold_return)} ({comparison}) "

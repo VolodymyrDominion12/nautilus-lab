@@ -137,9 +137,50 @@ class XsMomWalkForwardReport:
             return None
         return robot > basket
 
+    @property
+    def mean_gross_return(self) -> Decimal | None:
+        gross_returns = []
+        for fold in self.folds:
+            if fold.oos_return is None or fold.out_of_sample.metrics is None:
+                continue
+            # xsmom equity is hardcoded to 100k, we can use it to derive fees impact
+            fees_return = fold.out_of_sample.metrics.fees_paid / Decimal("100000")
+            gross_returns.append(fold.oos_return + fees_return)
+        if not gross_returns:
+            return None
+        return sum(gross_returns, Decimal("0")) / Decimal(len(gross_returns))
+
+    @property
+    def mean_breakeven_bps(self) -> Decimal | None:
+        values = []
+        for fold in self.folds:
+            metrics = fold.out_of_sample.metrics
+            if metrics is not None and metrics.breakeven_cost is not None:
+                values.append(metrics.breakeven_cost * 10000)
+        if not values:
+            return None
+        return sum(values, Decimal("0")) / Decimal(len(values))
+
+    @property
+    def mean_turnover_per_bar(self) -> Decimal | None:
+        values = []
+        for fold in self.folds:
+            metrics = fold.out_of_sample.metrics
+            # XsMom fold doesn't have oos_bar_count saved yet. We could estimate using window
+            # but for now we'll just return None or add it.
+            # We'll return None for XsMom for now as it's not fully mapped.
+        return None
+
+    @property
+    def mean_exposure_pct(self) -> Decimal | None:
+        return None
+
     def summary_line(self) -> str:
         def percent(value: Decimal | None) -> str:
             return "n/a" if value is None else f"{value * 100:.2f}%"
+
+        def bps(value: Decimal | None) -> str:
+            return "n/a" if value is None else f"{value:.2f}"
 
         verdict = self.beats_buy_and_hold()
         comparison = (
@@ -148,6 +189,10 @@ class XsMomWalkForwardReport:
         return (
             f"xsmom symbols={','.join(self.symbols)} folds={len(self.folds)} "
             f"profitable={self.profitable_folds}/{len(self.folds)} "
+            f"mean_gross={percent(self.mean_gross_return)} "
+            f"exposure={percent(self.mean_exposure_pct)} "
+            f"turnover/bar={bps(self.mean_turnover_per_bar)} "
+            f"breakeven={bps(self.mean_breakeven_bps)}bps "
             f"mean_oos={percent(self.mean_oos_return)} "
             f"median_oos={percent(self.median_oos_return)} "
             f"mean_basket={percent(self.mean_buy_and_hold_return)} ({comparison}) "

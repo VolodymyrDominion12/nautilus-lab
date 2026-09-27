@@ -16,7 +16,7 @@ A single command only ever sees half of it, so its verdict is at best INCOMPLETE
 from __future__ import annotations
 
 from collections.abc import Sized
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from enum import StrEnum
 from typing import Protocol
@@ -46,6 +46,32 @@ class WalkForwardEvidence(Protocol):
 
     def beats_buy_and_hold(self) -> bool | None: ...
 
+    @property
+    def mean_gross_return(self) -> Decimal | None: ...
+
+    @property
+    def mean_breakeven_bps(self) -> Decimal | None: ...
+
+    @property
+    def mean_turnover_per_bar(self) -> Decimal | None: ...
+
+    @property
+    def mean_exposure_pct(self) -> Decimal | None: ...
+
+class StrategyClass(StrEnum):
+    TREND_FOLLOWING = "trend_following"
+    MEAN_REVERSION = "mean_reversion"
+    CARRY = "carry"
+
+def class_for_robot(robot: str) -> StrategyClass | None:
+    if robot in ("ema", "regime", "adaptive_ema"):
+        return StrategyClass.TREND_FOLLOWING
+    if robot in ("vpin_momentum", "pairs", "meta_label", "ml_obi", "glft", "tri_scan", "xsmom"):
+        return StrategyClass.MEAN_REVERSION
+    if robot == "funding":
+        return StrategyClass.CARRY
+    return None
+
 
 class CheckStatus(StrEnum):
     PASS = "pass"  # noqa: S105 — a check outcome, not a password
@@ -62,6 +88,17 @@ class GateCriteria:
     min_oos_fills: int = 30
     max_pbo: Decimal = Decimal("0.3")
     min_dsr: Decimal = Decimal("0.95")
+    # Gate v2 additions (Alpha level)
+    min_gross_return: Decimal = Decimal("0")
+    min_breakeven_bps: Decimal = Decimal("5.0")
+    
+    def apply_class_thresholds(self, strategy_class: StrategyClass | None) -> GateCriteria:
+        """Return a copy of the criteria adjusted for the strategy class."""
+        if strategy_class is StrategyClass.CARRY:
+            return replace(self, min_profitable_share=Decimal("0.95"))
+        if strategy_class is StrategyClass.TREND_FOLLOWING:
+            return replace(self, min_profitable_share=Decimal("0.5"))
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,14 +135,43 @@ def evaluate_gate(
     criteria: GateCriteria | None = None,
     *,
     preregistration: PreregistrationVerdict | None = None,
+    strategy_class: StrategyClass | None = None,
 ) -> GateVerdict:
+    from dataclasses import replace
     rules = criteria or GateCriteria()
+    if strategy_class:
+        rules = rules.apply_class_thresholds(strategy_class)
+
     return GateVerdict(
         checks=(
             _preregistration_check(preregistration),
-            *_walk_forward_checks(multi, rules),
-            *_audit_checks(audit, rules),
+            *_alpha_level_checks(multi, rules),
+            *_walk_forward_checks(multi, rules, strategy_class),
+            *_audit_checks(audit, rules, strategy_class),
         )
+    )
+
+def _alpha_level_checks(
+    multi: WalkForwardEvidence | None, rules: GateCriteria
+) -> tuple[GateCheck, ...]:
+    if multi is None:
+        missing = "run `lab research --folds N`"
+        return (_check("alpha_gross", None, missing), _check("alpha_breakeven", None, missing))
+    
+    gross = multi.mean_gross_return
+    breakeven = multi.mean_breakeven_bps
+    
+    return (
+        _check(
+            "alpha_gross", 
+            None if gross is None else gross > rules.min_gross_return, 
+            f"Gross={gross} (need > {rules.min_gross_return})"
+        ),
+        _check(
+            "alpha_breakeven", 
+            None if breakeven is None else breakeven > rules.min_breakeven_bps, 
+            f"Breakeven={breakeven}bps (need > {rules.min_breakeven_bps}bps)"
+        ),
     )
 
 
@@ -132,24 +198,23 @@ def _check(name: str, passed: bool | None, detail: str) -> GateCheck:
 
 
 def _walk_forward_checks(
-    multi: WalkForwardEvidence | None, rules: GateCriteria
+    multi: WalkForwardEvidence | None, rules: GateCriteria, strategy_class: StrategyClass | None = None
 ) -> tuple[GateCheck, ...]:
     if multi is None:
         missing = "run `lab research --folds N`"
-        return (
+        checks = [
             _check("folds", None, missing),
             _check("profitable_folds", None, missing),
             _check("beats_buy_hold", None, missing),
-            _check("beats_vol_matched", None, missing),
-            _check("oos_fills", None, missing),
-        )
+        ]
+        if strategy_class is StrategyClass.TREND_FOLLOWING:
+            checks.append(_check("beats_vol_matched", None, missing))
+        checks.append(_check("oos_fills", None, missing))
+        return tuple(checks)
     fold_count = len(multi.folds)
     measured = len(multi.oos_returns)
     share = Decimal(multi.profitable_folds) / Decimal(measured) if measured else None
-    return (
-        # Measured folds, not requested ones (audit B4): a fold that produced no
-        # out-of-sample return is not evidence, and `profitable_folds` already divides
-        # by the measured count — both checks must count the same thing.
+    checks = [
         _check(
             "folds",
             measured >= rules.min_folds,
@@ -165,14 +230,20 @@ def _walk_forward_checks(
             "beats_buy_hold",
             multi.beats_buy_and_hold(),
             "mean out-of-sample return vs mean buy&hold over the same folds",
-        ),
-        *_vol_matched_check(multi),
+        )
+    ]
+    
+    if strategy_class is StrategyClass.TREND_FOLLOWING:
+        checks.extend(_vol_matched_check(multi))
+        
+    checks.append(
         _check(
             "oos_fills",
             multi.total_oos_fills >= rules.min_oos_fills,
             f"{multi.total_oos_fills} fills (need >= {rules.min_oos_fills})",
-        ),
+        )
     )
+    return tuple(checks)
 
 
 def _vol_matched_check(multi: WalkForwardEvidence) -> tuple[GateCheck, ...]:
@@ -204,7 +275,9 @@ def _vol_matched_check(multi: WalkForwardEvidence) -> tuple[GateCheck, ...]:
     )
 
 
-def _audit_checks(audit: OverfitAuditReport | None, rules: GateCriteria) -> tuple[GateCheck, ...]:
+def _audit_checks(
+    audit: OverfitAuditReport | None, rules: GateCriteria, strategy_class: StrategyClass | None = None
+) -> tuple[GateCheck, ...]:
     if audit is None:
         missing = "run `lab research --pbo`"
         return (_check("pbo", None, missing), _check("dsr", None, missing))

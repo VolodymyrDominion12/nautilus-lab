@@ -17,7 +17,7 @@ from nautilus_lab.application.dtos import (
 )
 from nautilus_lab.application.journal import JournalEntry, record_run
 from nautilus_lab.application.preregistration import register, research_terms, verdict_for
-from nautilus_lab.application.promotion_gate import evaluate_gate
+from nautilus_lab.application.promotion_gate import class_for_robot, evaluate_gate
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_alpha_proposal import ProposeJobConfig, execute_propose
 from nautilus_lab.application.run_paper import (
@@ -670,7 +670,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
             use_case = walk_forward_use_case(cfg)
             if folds > 1:
                 multi = use_case.execute_multi(request)
-                _print_multi_window(multi)
+                _print_multi_window(multi, robot_name=(robot or cfg.robot).value)
                 if should_notify:
                     notifier(cfg).notify(
                         f"Synthetic multi-window walk-forward complete: {multi.summary_line()}"
@@ -774,7 +774,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                 run_started_at=started_at,
             )
             manifest = replace(manifest, preregistration_sha256=registration.run_sha256)
-            _print_multi_window(multi, registration)
+            _print_multi_window(multi, registration, robot_name=(robot or cfg.robot).value)
             if should_notify:
                 notifier(cfg).notify(
                     "Catalog multi-window walk-forward complete: "
@@ -939,7 +939,8 @@ def _run_pbo(
         print(f"  [{index}] {label} :: {cells}")
     print(report.summary_line())
     print(report.deflated_sharpe.summary_line())
-    print(evaluate_gate(None, report).summary_line())
+    cls = class_for_robot((robot or cfg.robot).value)
+    print(evaluate_gate(None, report, strategy_class=cls).summary_line())
     if getattr(args, "notify", False):
         notifier(cfg).notify(f"Overfitting audit complete: {report.summary_line()}")
     if _journal_enabled(cfg, args):
@@ -1256,7 +1257,8 @@ def _run_xsmom(cfg: Settings, args: argparse.Namespace) -> int:
     if audit is not None:
         print(audit.summary_line())
         print(audit.deflated_sharpe.summary_line())
-    print(evaluate_gate(report, audit).summary_line())
+    cls = class_for_robot("xsmom")
+    print(evaluate_gate(report, audit, strategy_class=cls).summary_line())
     return 0
 
 
@@ -1287,7 +1289,9 @@ def _optional_window(args: argparse.Namespace) -> WalkForwardWindow | None:
 
 
 def _print_multi_window(
-    report: MultiWindowReport, registration: PreregistrationVerdict | None = None
+    report: MultiWindowReport,
+    registration: PreregistrationVerdict | None = None,
+    robot_name: str | None = None,
 ) -> None:
     print(report.notes)
     # Full ISO timestamps, not dates: on intraday bars an out-of-sample block can be
@@ -1323,7 +1327,8 @@ def _print_multi_window(
     if registration is not None:
         print(registration.summary_line())
     # Half the evidence: PBO/DSR come from `--pbo`, so this is INCOMPLETE at best.
-    print(evaluate_gate(report, None, preregistration=registration).summary_line())
+    cls = class_for_robot(robot_name) if robot_name else None
+    print(evaluate_gate(report, None, preregistration=registration, strategy_class=cls).summary_line())
 
 
 def _breach_suffix(line: str | None) -> str:

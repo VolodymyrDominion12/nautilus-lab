@@ -367,6 +367,7 @@ class RunWalkForward:
                 bars=oos_reference,
                 strategy_volatility=None if oos.metrics is None else oos.metrics.return_volatility,
             ),
+            oos_bar_count=len(oos_reference),
         )
 
     def _select_and_evaluate(

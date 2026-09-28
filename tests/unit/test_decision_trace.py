@@ -22,7 +22,7 @@ from nautilus_lab.application.decision_narrative import render_narrative
 from nautilus_lab.application.decision_trace_codec import record_to_dict, upgrade_row
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.decision_log import DecisionRecord
-from nautilus_lab.domain.decision_trace import Outcome, Stage, Verdict
+from nautilus_lab.domain.decision_trace import Outcome, Stage, Verdict, blocked_by_label
 from nautilus_lab.domain.donchian import UptrendBreakout
 from nautilus_lab.domain.mean_reversion import RangeMeanReversion
 from nautilus_lab.domain.regime import RegimeParams
@@ -179,6 +179,15 @@ def test_risk_block_is_recorded_with_the_breaker_and_its_numbers() -> None:
     assert gate.verdict is Verdict.BLOCK
     assert gate.values["value"] == Decimal("0.5")
     assert gate.thresholds["limit"] == manager.config.max_drawdown
+
+
+def test_blocked_by_label_uses_the_structured_vocabulary() -> None:
+    """paper and backtest share one `blocked_by` vocabulary, so the digest counts one breaker."""
+    assert blocked_by_label("max_daily_loss") == "risk.max_daily_loss"
+    assert blocked_by_label("max_drawdown") == "risk.max_drawdown"
+    assert blocked_by_label("equity") == "risk.equity"
+    assert blocked_by_label("order_working") == "execution.order_working"
+    assert blocked_by_label("sizing") == "sizing"
 
 
 def test_entry_and_reverse_carry_the_fill_ids() -> None:

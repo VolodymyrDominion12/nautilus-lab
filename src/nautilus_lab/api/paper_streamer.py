@@ -56,6 +56,7 @@ from nautilus_lab.domain.decision_trace import (
     TraceStep,
     TraceValue,
     Verdict,
+    blocked_by_label,
     is_warmup,
     step,
 )
@@ -946,7 +947,7 @@ class LivePaperSessionManager:
                 )
             )
             result.outcome = Outcome.ENTRY_BLOCKED_RISK
-            result.blocked_by = f"risk.{decision.code or 'unknown'}"
+            result.blocked_by = blocked_by_label(decision.code or "unknown")
             return result
         account = self._account_snapshot()
         result.steps.append(

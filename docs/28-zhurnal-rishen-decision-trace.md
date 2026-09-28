@@ -70,6 +70,10 @@
   `DowntrendBreakout`, `RangeMeanReversion`, `EmaCrossover`, `VpinMomentum`, `FormulaicLgbmStrategy`, `BuyAndHold`.
 * `api/paper_streamer.py` — `_decide` / `_execute_signal` додають кроки плану, гейтів і виконання; запис
   робиться **після** виконання; stop/TP/ручні дії пишуть `intrabar`. Помилка запису журналу не зупиняє торгівлю.
+* `infrastructure/nautilus/signal_strategy.py` — бектест пише **той самий** `decision_trace/1` запис:
+  `_process_signal` додає plan/gate/execution-кроки, `_record_decision_log` — `account`/`bar`/`config_hash`/
+  `narrative`. `blocked_by` іде зі спільного `blocked_by_label()` (`domain/decision_trace.py`), тому
+  дайджест і LLM-аналіз бачать один словник для paper і backtest.
 * `RiskDecision` має `code`, `value`, `limit` (який запобіжник і на скільки).
 * `application/decision_narrative.py` — текст лише з кроків; `application/decision_trace_codec.py` — JSON.
 * `application/decision_digest.py` — дайджест для LLM; `application/decision_analysis.py` — виклик моделі.
@@ -97,5 +101,8 @@
 ## Що далі (не зроблено в цій ітерації)
 
 * Стрічка рішень і маркери на графіку в `LiveTradingTerminal` (зараз — оновлена вкладка DecisionLogPanel).
-* Trace у бектесті (`signal_strategy`) і `scripts/trace_diff.py` для порівняння paper ↔ backtest.
+* `scripts/trace_diff.py` для порівняння paper ↔ backtest (сам trace у бектесті тепер пишеться,
+  див. `specs/components/decision-trace.yaml`).
+* `intrabar`-записи в бектесті: protective stop/TP закривають позицію, але окремого
+  `STOP_LOSS`/`TAKE_PROFIT` запису в журнал рішень бектесту поки немає.
 * `meta_label` у paper не запускається, тому trace для нього не додано.

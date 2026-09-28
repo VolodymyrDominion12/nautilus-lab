@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Protocol
@@ -13,6 +15,12 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.strategy import Strategy
 
+from nautilus_lab.application.decision_narrative import render_narrative
+from nautilus_lab.application.decision_trace_codec import (
+    legacy_indicators,
+    legacy_states,
+    record_to_dict,
+)
 from nautilus_lab.application.risk import (
     RiskBreachTally,
     TradeStats,
@@ -21,19 +29,26 @@ from nautilus_lab.application.risk import (
     size_position,
     stop_distance,
 )
-from nautilus_lab.application.decision_trace_codec import legacy_indicators, legacy_states
-from nautilus_lab.domain.decision_log import DecisionRecord
-from nautilus_lab.domain.decision_trace import Outcome, Stage, TraceStep, Verdict, is_warmup
-from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRouter
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
+from nautilus_lab.domain.decision_log import DecisionRecord
+from nautilus_lab.domain.decision_trace import (
+    Outcome,
+    Stage,
+    TraceStep,
+    TraceValue,
+    Verdict,
+    blocked_by_label,
+    step,
+)
 from nautilus_lab.domain.drawdown_cooldown import PeakState, advance, on_refusal
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
 from nautilus_lab.domain.marking import OpenLot, marked_equity
 from nautilus_lab.domain.meta_label_strategy import MetaLabelStrategy
 from nautilus_lab.domain.ml_obi_strategy import MlObiStrategy
+from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.position_plan import (
     Holding,
     holding_from_signed_qty,
@@ -59,6 +74,22 @@ from nautilus_lab.infrastructure.vol_forecast import build_vol_forecaster
 
 class SingleLegRobot(Protocol):
     def on_bar(self, bar: OhlcvBar) -> Signal | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _EntryRefusal:
+    """Why `_entry_allowed` refused a new entry, in the decision-log vocabulary.
+
+    `code` is a closed token (`max_daily_loss`, `max_drawdown`, `order_working`,
+    `sizing`, …) that `blocked_by_label` turns into the structured `blocked_by`
+    string; `reason` is the human sentence; `value`/`limit` say how close the
+    breaker was — the same shape the live paper terminal records.
+    """
+
+    code: str
+    reason: str
+    value: Decimal | None = None
+    limit: Decimal | None = None
 
 
 class SignalRobotConfig(StrategyConfig, frozen=True):
@@ -244,7 +275,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._last_mark = domain_bar.close
 
         trace = getattr(self._robot, "last_trace", ())
-        steps = list(trace) if isinstance(trace, tuple) or isinstance(trace, list) else []
+        steps = list(trace) if isinstance(trace, (tuple, list)) else []
 
         if self._warming_up(int(bar.ts_event)):
             self._record_decision_log(domain_bar, signal, Outcome.WARMUP, steps)
@@ -255,8 +286,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             self._record_decision_log(domain_bar, signal, Outcome.EXIT, steps)
             return
 
-        outcome, blocked_by = self._process_signal(signal, domain_bar.close)
-        self._record_decision_log(domain_bar, signal, outcome, steps, blocked_by)
+        outcome, blocked_by, execution_steps = self._process_signal(signal, domain_bar.close)
+        self._record_decision_log(domain_bar, signal, outcome, steps, blocked_by, execution_steps)
 
     def on_order_book_depth(self, depth: OrderBookDepth10) -> None:
         if not hasattr(self._robot, "on_book"):
@@ -272,14 +303,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return
         self._track_equity(snapshot.ts_utc)
 
-        trace = getattr(self._robot, "last_trace", ())
-        steps = list(trace) if isinstance(trace, tuple) or isinstance(trace, list) else []
-        outcome, blocked_by = self._process_signal(signal, mid_price)
-
-        # Book robots don't have domain bars. DecisionRecord requires a bar,
-        # but in backtest, book robots don't trigger on_bar for decisions, so we omit logging
-        # for book signals here for now unless a bar is provided.
-        pass
+        # Book robots write no per-bar decision record: DecisionRecord requires a bar,
+        # and book robots never trigger on_bar in the backtest.
+        self._process_signal(signal, mid_price)
 
     def _place_protective_stop(self, entry_order: object) -> None:
         """Rest a reduce-only stop behind a fully filled entry order.
@@ -357,47 +383,140 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             if not self._is_flat():
                 self._exposure_bars += 1
 
-    def _process_signal(self, signal: Signal | None, current_price: Decimal) -> tuple[Outcome, str | None]:
+    @staticmethod
+    def _plan_step(held: Holding, exit_position: bool, wants_entry: bool) -> TraceStep:
+        """The position-plan verdict, mirroring the live paper terminal's step."""
+        if exit_position and wants_entry:
+            result = "exit_and_enter"
+        elif exit_position:
+            result = "exit"
+        elif wants_entry:
+            result = "enter"
+        else:
+            result = "noop"
+        return step(
+            Stage.PLAN,
+            "position_plan",
+            Verdict.PASS,
+            result=result,
+            values={"holding": held.value, "exit": exit_position, "entry": wants_entry},
+        )
+
+    def _account_snapshot(self) -> dict[str, TraceValue]:
+        """The account the gates decided on, before this bar's execution changes it.
+
+        Same shape the live paper terminal records (`decision_trace/1`), so the
+        narrative and the digest read both without branching.
+        """
+        equity = self._equity()
+        day_start = self._day_start_equity
+        peak = self._peak_equity
+        day_loss_pct = (
+            (day_start - equity) / day_start * Decimal("100")
+            if day_start is not None and equity is not None and day_start > 0
+            else None
+        )
+        drawdown_pct = (
+            (peak - equity) / peak * Decimal("100")
+            if peak is not None and equity is not None and peak > 0
+            else None
+        )
+        holding = self._holding()
+        snapshot: dict[str, TraceValue] = {
+            "position": holding.value.upper(),
+            "equity": equity,
+            "day_loss_pct": day_loss_pct,
+            "drawdown_pct": drawdown_pct,
+        }
+        lots = self._open_lots()
+        if lots and self._last_mark is not None:
+            qty = sum((abs(lot.signed_qty) for lot in lots), Decimal("0"))
+            entry = sum((lot.avg_price * abs(lot.signed_qty) for lot in lots), Decimal("0")) / qty
+            unrealized = sum(
+                ((self._last_mark - lot.avg_price) * lot.signed_qty for lot in lots),
+                Decimal("0"),
+            )
+            snapshot["qty"] = qty
+            snapshot["entry_price"] = entry
+            snapshot["unrealized_pnl"] = unrealized
+        return {k: v for k, v in snapshot.items() if v is not None}
+
+    def _config_hash(self) -> str:
+        """Short, stable id of the parameters this run traded with (same config -> same hash)."""
+        payload = json.dumps(self.config.dict(), sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+    def _process_signal(
+        self, signal: Signal | None, current_price: Decimal
+    ) -> tuple[Outcome, str | None, list[TraceStep]]:
         """Exit first (never gated by risk), then — only if allowed — enter.
 
         The risk layer guards new exposure. An opposite or FLAT signal closes what we
         hold even when every breaker is tripped; see `domain/position_plan.py` for why
         the old "gate first, return on refusal" order froze losing positions.
+
+        Returns the plan/gate/execution steps alongside the outcome, so a research
+        backtest's decision log answers "why" with the same detail as a paper session
+        (`decision_trace/1`, docs/28).
         """
         if signal is None:
-            return Outcome.NO_SIGNAL, None
-        plan = plan_for_signal(self._holding(), signal.side)
+            return Outcome.NO_SIGNAL, None, []
+        held = self._holding()
+        plan = plan_for_signal(held, signal.side)
+        steps: list[TraceStep] = [self._plan_step(held, plan.exit_position, plan.wants_entry)]
         if plan.is_noop:
-            return Outcome.HOLD_NOOP, None
+            return Outcome.HOLD_NOOP, None, steps
 
         # Gate the entry BEFORE the exit is submitted: the exit's own close order would
         # otherwise count as "an order already working" and block the entry it precedes.
         entry: tuple[Decimal, Decimal] | None = None
-        blocked_by: str | None = None
+        refusal: _EntryRefusal | None = None
         if plan.wants_entry:
             result = self._entry_allowed(current_price, reversing=plan.exit_position)
-            if isinstance(result, str):
-                blocked_by = result
-            elif result is not None:
+            if isinstance(result, _EntryRefusal):
+                refusal = result
+            else:
                 entry = result
 
         if plan.exit_position:
+            exit_qty = sum((abs(lot.signed_qty) for lot in self._open_lots()), Decimal("0"))
             self._flatten()
+            steps.append(
+                step(
+                    Stage.EXECUTION,
+                    "paper_broker",
+                    Verdict.EMIT,
+                    result="exit",
+                    values={"side": held.value.upper(), "qty": exit_qty, "price": current_price},
+                )
+            )
             if not plan.wants_entry:
-                return Outcome.EXIT, None
+                return Outcome.EXIT, None, steps
 
-        if blocked_by:
-            return Outcome.ENTRY_BLOCKED_RISK, blocked_by
+        if refusal is not None:
+            blocked_by = blocked_by_label(refusal.code)
+            steps.append(
+                step(
+                    Stage.GATE,
+                    blocked_by,
+                    Verdict.BLOCK,
+                    result=refusal.reason,
+                    values={"value": refusal.value},
+                    thresholds={"limit": refusal.limit},
+                )
+            )
+            return Outcome.ENTRY_BLOCKED_RISK, blocked_by, steps
 
         if entry is None:
-            return Outcome.NO_SIGNAL, None
+            return Outcome.NO_SIGNAL, None, steps
 
         qty, distance = entry
         instrument = self.cache.instrument(self.config.instrument_id)
         if instrument is None:
             self.log.error("Instrument missing from cache; skip order")
-            return Outcome.NO_SIGNAL, None
+            return Outcome.NO_SIGNAL, None, steps
         desired_buy = signal.side is SignalSide.BUY
+        side = "LONG" if desired_buy else "SHORT"
         order = self.order_factory.market(
             self.config.instrument_id,
             OrderSide.BUY if desired_buy else OrderSide.SELL,
@@ -408,19 +527,33 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self.submit_order(order)
         self._turnover += current_price * qty
         self._arm_ratchet(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
+        steps.append(
+            step(
+                Stage.EXECUTION,
+                "paper_broker",
+                Verdict.EMIT,
+                result="entry",
+                values={
+                    "side": side,
+                    "qty": qty,
+                    "price": current_price,
+                    "stop_distance": distance,
+                },
+            )
+        )
 
         if plan.exit_position:
-            return Outcome.REVERSE, None
-        return Outcome.ENTRY_OPENED, None
+            return Outcome.REVERSE, None, steps
+        return Outcome.ENTRY_OPENED, None, steps
 
     def _entry_allowed(
         self, current_price: Decimal, *, reversing: bool
-    ) -> tuple[Decimal, Decimal] | str | None:
-        """(qty, stop distance) for a new entry, string for refusal reason, or None."""
+    ) -> tuple[Decimal, Decimal] | _EntryRefusal:
+        """(qty, stop distance) for a new entry, or a structured `_EntryRefusal`."""
         equity = self._equity()
         if equity is None:
             self.log.error("No account equity; skip entry (fail closed)")
-            return "No account equity"
+            return _EntryRefusal("equity", "No account equity")
         snapshot = AccountSnapshot(
             equity=equity,
             peak_equity=self._peak_equity or equity,
@@ -434,7 +567,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             self._breaches.record(decision.reason)
             self._note_refusal(decision.reason)
             self.log.warning(f"Risk blocked entry: {decision.reason}")
-            return decision.reason
+            return _EntryRefusal(
+                decision.code or "unknown", decision.reason, decision.value, decision.limit
+            )
 
         # An order that is accepted but not yet filled leaves the portfolio flat, so the
         # next signal would stack another entry on top of the pending one. On book-driven
@@ -442,7 +577,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         # updates arrive far faster than the 50ms fill latency. One live entry at a time.
         if self._has_working_order():
             self._breaches.record("order already working")
-            return "order already working"
+            return _EntryRefusal("order_working", "order already working")
 
         distance = stop_distance(current_price, self._limits, atr=self._atr.value)
         risk_fraction = resolve_risk_fraction(
@@ -460,7 +595,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         if qty <= 0:
             self.log.warning("Sized quantity is 0; skip order")
-            return None
+            return _EntryRefusal("sizing", "sized quantity is 0")
         return qty, distance
 
     def on_stop(self) -> None:
@@ -484,10 +619,12 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         outcome: Outcome,
         steps: list[TraceStep],
         blocked_by: str | None = None,
+        execution_steps: list[TraceStep] | None = None,
     ) -> None:
         if self.decision_log is None or self.session_id is None:
             return
 
+        all_steps = tuple(steps) + tuple(execution_steps or ())
         regime = self._record_regime(signal, steps)
         record = DecisionRecord(
             bar_end_utc=bar.ts_utc,
@@ -497,14 +634,19 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             regime=regime,
             signal=signal.side.value if signal else None,
             signal_reason=signal.reason if signal else None,
-            indicators=legacy_indicators(tuple(steps)),
-            states=legacy_states(tuple(steps)),
+            indicators=legacy_indicators(all_steps),
+            states=legacy_states(all_steps),
             session_id=self.session_id,
+            bar={"o": bar.open, "h": bar.high, "l": bar.low, "c": bar.close, "v": bar.volume},
+            account=self._account_snapshot(),
+            steps=all_steps,
             outcome=outcome.value,
             blocked_by=blocked_by,
-            fill_ids=[],  # We don't trace fills in backtest decisions per-bar this way. They're available in BacktestReport.
-            narrative="",
+            # Fills are not traced per-bar in backtest decisions: they live in BacktestReport.
+            fill_ids=(),
+            config_hash=self._config_hash(),
         )
+        record = replace(record, narrative=render_narrative(record_to_dict(record)))
         self.decision_log.log(record)
 
     @property
@@ -634,8 +776,14 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     def _update_equity_path(self, ts_utc: datetime, equity: Decimal) -> None:
         day = ts_utc.date()
         if self._day != day:
-            if self._day is not None and self._day_start_equity is not None and self._day_start_equity > 0:
-                self._daily_returns.append((equity - self._day_start_equity) / self._day_start_equity)
+            if (
+                self._day is not None
+                and self._day_start_equity is not None
+                and self._day_start_equity > 0
+            ):
+                self._daily_returns.append(
+                    (equity - self._day_start_equity) / self._day_start_equity
+                )
             self._day = day
             self._day_start_equity = equity
         state = self._peak_state or PeakState(peak=equity)

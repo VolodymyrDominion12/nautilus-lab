@@ -141,6 +141,21 @@ def is_warmup(trace: tuple[TraceStep, ...]) -> bool:
     return bool(trace) and all(item.stage is Stage.WARMUP for item in trace)
 
 
+def blocked_by_label(code: str) -> str:
+    """The `blocked_by` string a decision record carries for an entry that did not open.
+
+    Risk breakers are namespaced `risk.<code>` so a digest can count them apart from the
+    execution-state guard and the zero-size skip, which map to their own labels. The live
+    paper terminal and the research backtest share this vocabulary (`code` comes from
+    `RiskDecision.code`), so one reader serves both.
+    """
+    if code == "order_working":
+        return "execution.order_working"
+    if code == "sizing":
+        return "sizing"
+    return f"risk.{code}"
+
+
 class Explainable(Protocol):
     """A robot that explains its last `on_bar` call.
 

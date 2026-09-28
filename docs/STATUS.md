@@ -61,6 +61,7 @@
 | [`breakeven-cost`](../specs/components/breakeven-cost.yaml) | active | Breakeven-cost: максимальна комісія на одиницю обороту, за якої PnL = 0 |
 | [`dashboard-api`](../specs/components/dashboard-api.yaml) | active | Веб-дашборд ↔ FastAPI: повага до fail-closed і до відсутніх даних |
 | [`data-catalog`](../specs/components/data-catalog.yaml) | active | Parquet-каталог історії: публічний ingest Binance, один каталог — одна серія |
+| [`decision-trace`](../specs/components/decision-trace.yaml) | active | Журнал рішень: paper і backtest пояснюють кожен бар тим самим ланцюжком |
 | [`deflated-sharpe`](../specs/components/deflated-sharpe.yaml) | partial | DSR: чи переможець сітки кращий за найкращого з N випадкових прогонів |
 | [`execution-modes`](../specs/components/execution-modes.yaml) | active | Режими виконання: research, paper, live — і fail-closed запобіжники |
 | [`overfitting-audit`](../specs/components/overfitting-audit.yaml) | active | PBO/CSCV: чи переживає вибір параметрів дані, яких вона не бачила |

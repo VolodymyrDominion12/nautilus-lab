@@ -1,0 +1,93 @@
+# =============================================================================
+#  decision-trace — журнал рішень: чому робот (не) торгував на закритому барі
+# =============================================================================
+#  Компонентна спека: наскрізний механізм `decision_trace/1` (docs/28). Один
+#  запис на закритий бар (`kind: bar_decision`) плюс події між закриттями
+#  (`kind: intrabar`) пояснює ланцюжок «бар → режим → фільтри → стратегія →
+#  план → гейти → виконання». Головний ризик механізму — розбіжність між тим,
+#  що пише live-paper термінал, і тим, що пише дослідницький бектест: якщо
+#  бектест (де робиться walk-forward/PBO/Optuna) пише тонший запис, дайджест,
+#  near-miss і LLM-аналіз мовчки не працюють для нього.
+# =============================================================================
+kind: component
+name: decision-trace
+version: "1.0"
+status: active
+title: "Журнал рішень: paper і backtest пояснюють кожен бар тим самим ланцюжком"
+
+hypothesis: >
+  Журнал рішень — це відповідь на питання «чому угоди не було?»: який режим, який
+  фільтр, який гейт і наскільки близько до порога спрацював. Якщо live-paper і
+  дослідницький бектест пишуть один і той самий `decision_trace/1` (steps, outcome,
+  blocked_by, account, bar, config_hash, narrative), то один дайджест і один
+  фронтенд читають обидва, і висновок не залежить від того, де робот торгував.
+
+invariants:
+  paper_and_backtest_write_the_same_bar_record: true
+  blocked_by_is_a_structured_vocabulary: true
+  narrative_is_rendered_from_steps_only: true
+  tracing_never_changes_a_signal: true
+
+invariants_enforced:
+  - statement: >
+      Запис закритого бару (`kind: bar_decision`) містить ті самі поля в live-paper
+      терміналі й у дослідницькому бектесті: впорядкований ланцюжок `steps`
+      (режим/фільтри/стратегія/план/гейти/виконання), `narrative`, знімок `account`
+      (позиція, equity, денний збиток, просадка), OHLC бару `bar` і `config_hash`.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/signal_strategy.py
+    verified_by: tests/integration/test_backtest_decision_trace.py::test_backtest_records_carry_the_full_decision_trace
+    note: >
+      До 2026-09-28 бектест (`signal_strategy.py::_record_decision_log`) обчислював
+      `steps`, але не передавав їх у `DecisionRecord`, і писав `narrative=""`,
+      `fill_ids=[]`, без `account`/`bar`/`config_hash`: модалка «Backtest Details»
+      показувала лише індикатори й outcome, а дайджест і near-miss не бачили
+      ланцюжка. Live-paper (`api/paper_streamer.py`) писав повний запис ще з
+      `decision_trace/1`. Друга половина інваріанта — що розмір позиції в бектесті
+      рахує той самий `size_position`, що й у терміналі —
+      tests/integration/test_backtest_paper_parity.py::test_backtest_and_live_paper_sizing_parity.
+
+  - statement: >
+      `blocked_by` — це закритий словник, спільний для paper і backtest: ризикові
+      запобіжники мають префікс `risk.<code>` (`risk.max_daily_loss`,
+      `risk.max_drawdown`, …), стан виконання — `execution.order_working`, а нульовий
+      розмір — `sizing`. Сирий текст причини («daily loss circuit breaker») у
+      `blocked_by` не пишеться.
+    enforced_by: src/nautilus_lab/domain/decision_trace.py
+    verified_by: tests/unit/test_decision_trace.py::test_blocked_by_label_uses_the_structured_vocabulary
+    note: >
+      До 2026-09-28 paper писав `risk.<code>`, а бектест — сирий `decision.reason`
+      («daily loss circuit breaker», «order already working»). Дайджест
+      (`decision_digest.py`) рахує `blocked_by` як окремі ключі, тож той самий
+      запобіжник розпадався на два «різні» в LLM-аналізі, а «order already working»
+      помилково позначався як ризик-відмова. Єдине джерело істини —
+      `blocked_by_label(code)`.
+
+  - statement: >
+      `narrative` рендериться лише зі `steps` запису (`render_narrative`), а не
+      пишеться вручну поруч із логікою: якщо кроку немає в записі, речення про нього
+      теж немає, тому текст не може розійтися з тим, що код справді вирішив.
+    enforced_by: src/nautilus_lab/application/decision_narrative.py
+    verified_by: tests/unit/test_decision_trace.py::test_narrative_explains_a_blocked_entry_in_ukrainian
+
+  - statement: >
+      Трасування — це лише читання: робот із `last_trace` повертає рівно ті самі
+      сигнали, що й той самий робот без нього, і читання `last_trace` між барами
+      нічого не змінює.
+    enforced_by: src/nautilus_lab/domain/regime_router.py
+    verified_by: tests/unit/test_decision_trace.py::test_tracing_does_not_change_any_signal
+
+notes: >
+  Механізм працює для одноногих роботів, які може збудувати і термінал, і бектест.
+  Свідомо лишається відкритим (docs/28 §«Що далі»):
+  (1) `intrabar`-записи в бектесті — protective stop/TP закривають позицію, але
+  окремого `STOP_LOSS`/`TAKE_PROFIT` запису в журнал рішень бектесту поки немає,
+  тож реконструкція угоди може прочитати стоп як розворот;
+  (2) `meta_label` не запускається в live-paper, тому trace для нього не додано;
+  (3) `scripts/trace_diff.py` (порівняння paper ↔ backtest) не існує.
+  Статус `active`, а не `partial`, бо саме барний запис — головна частина
+  механізму — тепер однакова в обох контурах і за нею стоїть тест.
+
+references:
+  - docs/28-zhurnal-rishen-decision-trace.md
+  - docs/20-veb-dashbord-ta-alpha-proposer.md
+  - docs/24-paper-treydynh.md

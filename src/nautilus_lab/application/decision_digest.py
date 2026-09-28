@@ -54,7 +54,7 @@ NOTABLE = frozenset(
         "ERROR",
     }
 )
-DEFAULT_HORIZONS: tuple[int, ...] = (1, 4, 24)
+DEFAULT_HORIZONS: tuple[int, ...] = (1, 4, 24, 48, 96)
 #: A strategy step this close to its trigger (percent of price) counts as a near-miss.
 NEAR_MISS_PCT = 0.2
 #: Below this many signals a pattern is reported as a hypothesis, not a finding.
@@ -89,6 +89,7 @@ class DecisionDigest:
     near_miss_examples: list[str]
     intrabar: dict[str, int]
     config_hashes: list[str]
+    params: dict[str, Any]
     v0_rows: int
     narratives: list[str] = field(default_factory=list)
 
@@ -227,6 +228,7 @@ def build_digest(
         near_miss_examples=near[-10:],
         intrabar=dict(Counter(str(r.get("outcome")) for r in intrabar).most_common()),
         config_hashes=sorted({str(r["config_hash"]) for r in upgraded if r.get("config_hash")}),
+        params=next((r.get("params") for r in reversed(upgraded) if r.get("params")), {}),
         v0_rows=sum(1 for r in upgraded if r.get("schema") == "decision_trace/0"),
         narratives=narratives,
     )
@@ -256,6 +258,10 @@ def digest_markdown(digest: DecisionDigest) -> str:
         f"пропусків у bar_seq: {digest.bar_seq_gaps}",
         f"- Конфіги (config_hash): {', '.join(digest.config_hashes) or '—'}",
     ]
+    if digest.params:
+        lines.append("- Параметри стратегії:")
+        for k, v in digest.params.items():
+            lines.append(f"  - `{k}`: {v}")
     if digest.v0_rows:
         lines.append(f"- Записів старого формату без кроків (v0): {digest.v0_rows}")
     lines += ["", "## Підсумки барів (outcome)", ""]
@@ -291,10 +297,10 @@ SYSTEM_PROMPT = f"""Ти — аналітик торгових рішень ро
 Правила:
 1. Кожне твердження підкріплюй цифрою з дайджесту або часом бару (ts).
 2. Якщо сигналів менше {MIN_SIGNALS_FOR_FINDING}, формулюй висновки як гіпотези, а не факти.
-3. Не радь міняти параметри напряму: пропонуй гіпотези для бектесту (що змінити, як перевірити,
-   яка метрика підтвердить).
+3. Обов'язково генеруй рекомендації у вигляді Markdown-таблиці з гіпотезами.
+   Стовпці: | Назва гіпотези | Що змінити в параметрах/коді | Очікуваний ефект | Метрика перевірки |
 4. Форвард-прибутки — діагностика фільтрів без комісій і стопів, не результат стратегії.
-5. Відповідай українською, коротко, з розділами: Що сталося / Чому / Що перевірити.
+5. Відповідай українською, коротко, з розділами: Що сталося / Чому / Таблиця гіпотез.
 """
 
 PRESET_QUESTIONS: dict[str, str] = {
@@ -305,6 +311,8 @@ PRESET_QUESTIONS: dict[str, str] = {
     ),
     "regime_quality": "Де режим перемикався запізно або хаотично («пилка»)? Наведи бари.",
     "hypotheses": "Які 3 гіпотези для бектесту випливають з цього журналу?",
+    "trade_management": "Оціни ефективність виходів. Чи часто ми втрачаємо прибуток перед розворотом ціни? Чи варто змінити стопи (напр., trailing-stop)?",
+    "near_misses": "Проаналізуй 'майже-сигнали' (near misses). Чи пропустили ми прибуткові рухи через занадто жорсткий фільтр? Запропонуй гіпотезу послаблення фільтра.",
 }
 
 

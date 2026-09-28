@@ -418,6 +418,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             ),
             outcome=Outcome.STOP_LOSS.value,
             config_hash=self._config_hash(),
+            params={k: str(v) for k, v in self.config.dict().items()},
         )
         record = replace(record, narrative=render_narrative(record_to_dict(record)))
         self.decision_log.log(record)
@@ -699,6 +700,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             # Fills are not traced per-bar in backtest decisions: they live in BacktestReport.
             fill_ids=(),
             config_hash=self._config_hash(),
+            params={k: str(v) for k, v in self.config.dict().items()},
         )
         record = replace(record, narrative=render_narrative(record_to_dict(record)))
         self.decision_log.log(record)

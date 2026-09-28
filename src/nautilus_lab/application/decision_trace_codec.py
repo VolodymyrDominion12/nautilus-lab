@@ -109,6 +109,8 @@ def record_to_dict(record: DecisionRecord) -> dict[str, Any]:
     row["steps"] = [step_to_dict(item) for item in record.steps]
     if record.config_hash:
         row["config_hash"] = record.config_hash
+    if record.params:
+        row["params"] = plain_number(record.params)
     if record.narrative:
         row["narrative"] = record.narrative
     return row

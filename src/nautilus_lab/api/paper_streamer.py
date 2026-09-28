@@ -761,6 +761,7 @@ class LivePaperSessionManager:
                 blocked_by=execution.blocked_by,
                 fill_ids=tuple(execution.fill_ids),
                 config_hash=self._config_hash(),
+                params={k: str(v) for k, v in config_to_dict(self.config).items()},
             )
             self.decision_log.log(self._with_narrative(record))
         except Exception:
@@ -822,6 +823,7 @@ class LivePaperSessionManager:
                 outcome=outcome.value,
                 fill_ids=fill_ids,
                 config_hash=self._config_hash(),
+                params={k: str(v) for k, v in config_to_dict(self.config).items()},
             )
             self.decision_log.log(self._with_narrative(record))
         except Exception:

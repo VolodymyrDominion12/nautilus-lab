@@ -48,4 +48,5 @@ class DecisionRecord:
     blocked_by: str | None = None
     fill_ids: tuple[str, ...] = ()
     config_hash: str | None = None
+    params: dict[str, Any] = field(default_factory=dict)
     narrative: str | None = None

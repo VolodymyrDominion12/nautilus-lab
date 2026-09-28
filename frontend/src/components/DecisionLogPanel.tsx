@@ -9,6 +9,7 @@ import {
 
 import { DecisionSteps } from './DecisionSteps';
 import { DecisionDigestSummary } from './DecisionDigestSummary';
+import { RegimeTimeline } from './RegimeTimeline';
 import { CatalogChart } from './CatalogChart';
 
 interface DecisionLogPanelProps {
@@ -216,6 +217,8 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
       </div>
 
       {digest && <DecisionDigestSummary digest={digest} />}
+
+      {logs.length > 0 && <RegimeTimeline logs={logs} />}
 
       {analysis && (
         <div className="p-4 bg-purple-950/20 border border-purple-900/40 rounded-lg text-xs text-purple-200/90 whitespace-pre-wrap">

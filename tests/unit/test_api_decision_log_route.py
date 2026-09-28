@@ -8,7 +8,8 @@ network: the session is registered the way `SessionRegistry.create` registers it
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -136,6 +137,31 @@ def test_decision_log_route_reads_a_research_backtest_run(tmp_path: Path) -> Non
     assert body["status"] == "ok"
     assert [row["session_id"] for row in body["logs"]] == [run_id]
     assert body["logs"][0]["robot"] == "regime"
+
+
+def test_decision_log_route_filters_by_regime_and_signal(tmp_path: Path) -> None:
+    """`regime` and `signal` query params narrow the same log end to end."""
+    app = create_app(_cfg(), root=tmp_path)
+    run_id = "filter-run-00000000"
+    writer = app.state.lab.sessions.decision_log_writer
+    base = _record(run_id)
+    t0 = base.bar_end_utc
+    writer.log(replace(base, bar_end_utc=t0, regime="uptrend", signal="buy"))
+    writer.log(
+        replace(base, bar_end_utc=t0 + timedelta(minutes=1), regime="downtrend", signal="sell")
+    )
+
+    client = TestClient(app)
+    up = client.get(f"/api/paper/sessions/{run_id}/decision-log?regime=uptrend").json()["logs"]
+    assert [row["regime"] for row in up] == ["uptrend"]
+
+    sell = client.get(f"/api/paper/sessions/{run_id}/decision-log?signal=sell").json()["logs"]
+    assert [row["signal"] for row in sell] == ["sell"]
+
+    none = client.get(
+        f"/api/paper/sessions/{run_id}/decision-log?regime=uptrend&signal=sell"
+    ).json()["logs"]
+    assert none == []
 
 
 def test_decision_log_route_reports_an_unknown_key_as_empty(tmp_path: Path) -> None:

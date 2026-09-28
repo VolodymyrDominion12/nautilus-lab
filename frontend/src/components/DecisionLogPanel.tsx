@@ -41,6 +41,11 @@ const PRESETS: { key: string; label: string }[] = [
   { key: 'hypotheses', label: 'Гіпотези для бектесту' },
 ];
 
+// The regimes the regime-family robots classify into, and the signal sides a bar can
+// carry. Filtering by either drops intrabar records (they carry neither).
+const REGIME_OPTIONS = ['uptrend', 'downtrend', 'range'];
+const SIGNAL_OPTIONS = ['buy', 'sell', 'flat'];
+
 function outcomeClass(outcome?: string): string {
   switch (outcome) {
     case 'ENTRY_OPENED':
@@ -75,6 +80,8 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('all');
+  const [regimeFilter, setRegimeFilter] = useState('');
+  const [signalFilter, setSignalFilter] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
   const [preset, setPreset] = useState(PRESETS[0]?.key ?? 'why_no_trades');
   const [analyzing, setAnalyzing] = useState(false);
@@ -86,7 +93,10 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
     setError(null);
     try {
       const outcomes = FILTERS.find((f) => f.key === filter)?.outcomes;
-      const data = await fetchDecisionLogs(sessionId, 200, outcomes);
+      const data = await fetchDecisionLogs(sessionId, 200, outcomes, {
+        regime: regimeFilter || undefined,
+        signal: signalFilter || undefined,
+      });
       if (data.status === 'ok') {
         setLogs(data.logs);
       } else {
@@ -109,7 +119,7 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
   useEffect(() => {
     loadLogs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, filter]);
+  }, [sessionId, filter, regimeFilter, signalFilter]);
 
   const handleAnalyze = async () => {
     setAnalyzing(true);
@@ -149,6 +159,30 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
           <span className="ml-2">
             Записів: <span className="font-mono text-gray-200">{logs.length}</span>
           </span>
+          <select
+            value={regimeFilter}
+            onChange={(e) => setRegimeFilter(e.target.value)}
+            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300"
+          >
+            <option value="">Усі режими</option>
+            {REGIME_OPTIONS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          <select
+            value={signalFilter}
+            onChange={(e) => setSignalFilter(e.target.value)}
+            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300"
+          >
+            <option value="">Усі сигнали</option>
+            {SIGNAL_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="flex gap-2">
           <button

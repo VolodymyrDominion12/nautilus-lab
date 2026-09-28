@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -135,6 +136,33 @@ def test_decision_log_writer_writes_and_reads(tmp_path: Path) -> None:
     writer.append(record)
     logs_after = writer.get_recent_logs("regime")
     assert len(logs_after) == 2
+
+
+def test_get_recent_logs_filters_by_regime_and_signal(tmp_path: Path) -> None:
+    """`regime` and `signal` narrow bar decisions, case-insensitively; no-match stays empty."""
+    writer = _enabled_writer(tmp_path)
+    base = _sample_record(session_id="regime-eth-159a09")
+    t0 = base.bar_end_utc
+    writer.log(replace(base, bar_end_utc=t0, regime="uptrend", signal="buy"))
+    writer.log(
+        replace(base, bar_end_utc=t0 + timedelta(minutes=1), regime="downtrend", signal="sell")
+    )
+    writer.log(
+        replace(base, bar_end_utc=t0 + timedelta(minutes=2), regime="range", signal=None)
+    )
+
+    assert [r["regime"] for r in writer.get_recent_logs("regime-eth-159a09", regime="uptrend")] == [
+        "uptrend"
+    ]
+    assert [r["signal"] for r in writer.get_recent_logs("regime-eth-159a09", signal="sell")] == [
+        "sell"
+    ]
+    assert writer.get_recent_logs("regime-eth-159a09", regime="uptrend", signal="sell") == []
+    assert [r["regime"] for r in writer.get_recent_logs("regime-eth-159a09", signal="buy")] == [
+        "uptrend"
+    ]
+    # A signal filter drops rows that carried no signal (the range row above).
+    assert writer.get_recent_logs("regime-eth-159a09", signal="flat") == []
 
 
 def test_decision_log_writer_fallback_on_oserror(tmp_path: Path) -> None:

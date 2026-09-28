@@ -173,11 +173,15 @@ class JsonlDecisionLogWriter(DecisionLogPort):
         kind: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        regime: str | None = None,
+        signal: str | None = None,
     ) -> list[dict[str, Any]]:
         """Most recent records of one session (or robot), oldest first, optionally filtered.
 
         Rows written before `decision_trace/1` are upgraded on read (`outcome` =
-        `UNKNOWN_V0`), so one reader serves old and new files.
+        `UNKNOWN_V0`), so one reader serves old and new files. `regime`/`signal` are
+        top-level fields of `bar_decision` rows; `intrabar` rows carry neither, so a
+        regime or signal filter drops them (they are not a match, not an error).
         """
         if not self._enabled:
             return []
@@ -187,6 +191,10 @@ class JsonlDecisionLogWriter(DecisionLogPort):
             if wanted is not None and str(row.get("outcome", "")).upper() not in wanted:
                 continue
             if kind is not None and row.get("kind") != kind:
+                continue
+            if regime is not None and str(row.get("regime", "")).lower() != regime.lower():
+                continue
+            if signal is not None and str(row.get("signal", "")).lower() != signal.lower():
                 continue
             ts = _row_ts(row)
             if since is not None and (ts is None or ts < since):

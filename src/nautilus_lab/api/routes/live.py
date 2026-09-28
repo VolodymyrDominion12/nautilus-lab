@@ -141,6 +141,8 @@ def get_paper_session_decision_log(
     kind: str | None = Query(None, pattern="^(bar_decision|intrabar)$"),
     since: datetime | None = None,
     until: datetime | None = None,
+    regime: str | None = Query(None, description="Filter by regime (uptrend|downtrend|range)"),
+    signal: str | None = Query(None, pattern="^(buy|sell|flat)$"),
 ) -> dict[str, Any]:
     """Decisions recorded for this session at bar closes.
 
@@ -179,7 +181,14 @@ def get_paper_session_decision_log(
             [item.strip() for item in outcome.split(",") if item.strip()] if outcome else None
         )
         logs = writer.get_recent_logs(
-            session_key, lines=lines, outcomes=outcomes, kind=kind, since=since, until=until
+            session_key,
+            lines=lines,
+            outcomes=outcomes,
+            kind=kind,
+            since=since,
+            until=until,
+            regime=regime,
+            signal=signal,
         )
         return {"status": "ok", "logs": logs}
     except Exception as e:

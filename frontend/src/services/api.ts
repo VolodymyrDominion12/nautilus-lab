@@ -1047,10 +1047,14 @@ export async function fetchDecisionLogs(
   sessionId: string,
   lines: number = 100,
   outcomes?: string[],
+  options: { regime?: string; signal?: string } = {},
 ): Promise<any> {
-  const filter = outcomes && outcomes.length ? `&outcome=${encodeURIComponent(outcomes.join(','))}` : '';
+  const params = new URLSearchParams({ lines: String(lines) });
+  if (outcomes && outcomes.length) params.set('outcome', outcomes.join(','));
+  if (options.regime) params.set('regime', options.regime);
+  if (options.signal) params.set('signal', options.signal);
   return parseJson(
-    await fetch(sessionPath(sessionId, `decision-log?lines=${lines}${filter}`), { method: 'GET' })
+    await fetch(sessionPath(sessionId, `decision-log?${params.toString()}`), { method: 'GET' })
   );
 }
 

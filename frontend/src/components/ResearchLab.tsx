@@ -25,6 +25,7 @@ import { RunControls } from './research/RunControls';
 import { TearsheetPanel } from './research/TearsheetPanel';
 import { useResearchForm } from './research/useResearchForm';
 import { useResearchRun } from './research/useResearchRun';
+import { BacktestDetailsModal } from './BacktestDetailsModal';
 
 interface ResearchLabProps {
   strategies: StrategySpec[];
@@ -83,6 +84,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
   const [pickedTearsheet, setPickedTearsheet] = useState<string | null>(null);
+  const [detailsEntry, setDetailsEntry] = useState<HistoryEntry | null>(null);
   const selectedTearsheetUrl = pickedTearsheet ?? reports[0]?.url ?? null;
 
   const onFinished = useCallback(() => {
@@ -185,6 +187,12 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   const handleLoadHistory = (entry: HistoryEntry) => {
     if (!entry.config) return;
     job.setLaunchError(loadArchived(entry.config));
+  };
+
+  const handleOpenDetails = (entry: HistoryEntry) => {
+    if (entry.single_backtest?.session_id) {
+      setDetailsEntry(entry);
+    }
   };
 
   const onRunKeyDown = (event: React.KeyboardEvent) => {
@@ -346,7 +354,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
 
       {summary?.is_finished && !summary.is_error && <RunConditions summary={summary} />}
 
-      <ExperimentHistory key={historyKey} onRerun={handleLoadHistory} />
+      <ExperimentHistory key={historyKey} onRerun={handleLoadHistory} onOpenDetails={handleOpenDetails} />
 
       <RunsCompare refreshKey={historyKey} />
 
@@ -358,6 +366,13 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           onSelect={setPickedTearsheet}
         />
       </div>
+
+      {detailsEntry && (
+        <BacktestDetailsModal
+          entry={detailsEntry}
+          onClose={() => setDetailsEntry(null)}
+        />
+      )}
     </div>
   );
 };

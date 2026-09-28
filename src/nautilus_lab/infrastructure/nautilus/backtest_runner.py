@@ -26,6 +26,7 @@ from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.marking import OpenLot, unrealized_pnl
 from nautilus_lab.domain.metrics import PERIODS_PER_YEAR, compute_metrics
+from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.ticks import AggTrade
@@ -74,6 +75,9 @@ class _RunSpec:
 class NautilusResearchBacktest:
     """Low-level BacktestEngine with fees, latency, and slippage."""
 
+    def __init__(self, decision_log: DecisionLogPort | None = None) -> None:
+        self.decision_log = decision_log
+
     def run(
         self,
         request: BacktestRequest,
@@ -81,7 +85,7 @@ class NautilusResearchBacktest:
         ticks: list[AggTrade] | None = None,
         books: list[OrderBookSnapshot] | None = None,
     ) -> BacktestReport:
-        report, _ = self._execute(_single_run(request, bars, ticks, books))
+        report, _ = self._execute(_single_run(request, bars, ticks, books, decision_log=self.decision_log))
         return report
 
     def run_paper(
@@ -97,7 +101,7 @@ class NautilusResearchBacktest:
         would drift from the numbers the research runs report, and the drift would be
         invisible until it mattered.
         """
-        report, ledger = self._execute(_single_run(request, bars, ticks, books))
+        report, ledger = self._execute(_single_run(request, bars, ticks, books, decision_log=self.decision_log))
         traded = _traded(bars, request)
         return _paper_report(
             request,
@@ -234,6 +238,7 @@ class NautilusResearchBacktest:
                 realized_balance=realized,
                 unrealized_pnl=open_pnl,
                 daily_returns=daily_returns,
+                session_id=request.session_id,
             )
             ledger = _Ledger(
                 fills_report=fills_report,
@@ -542,6 +547,7 @@ def _single_run(
     bars: list[OhlcvBar],
     ticks: list[AggTrade] | None,
     books: list[OrderBookSnapshot] | None,
+    decision_log: DecisionLogPort | None = None,
 ) -> _RunSpec:
     """Everything `_execute` needs for a single-instrument run."""
     if request.robot is RobotName.PAIRS:
@@ -618,6 +624,8 @@ def _single_run(
             drawdown_cooldown_days=request.risk_overlay.drawdown_cooldown_days,
         ),
         taker_buy_base_volume_by_ns=taker_buy_by_ns or None,
+        decision_log=decision_log,
+        session_id=request.session_id,
     )
 
     # Every caller loads the whole tick/book series; only the part the bars cover may

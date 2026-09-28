@@ -235,6 +235,7 @@ export interface SingleBacktestSummary {
   paid_cost_rate: number | null;
   cost_headroom: number | null;
   traded_notional: number | null;
+  session_id?: string | null;
   metrics?: BacktestMetricsPayload | null;
   notes?: string;
 }

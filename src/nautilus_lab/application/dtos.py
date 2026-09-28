@@ -73,6 +73,7 @@ class BacktestRequest:
     trade_start: datetime | None = None
     # What in-sample selection maximises (grid, Optuna, paper --select-on-is).
     selection_metric: SelectionMetric = SelectionMetric.PNL
+    session_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +97,7 @@ class BacktestReport:
     # itself information, and different from "we did not look".
     risk_breaches: tuple[tuple[str, int], ...] = ()
     daily_returns: tuple[Decimal, ...] = ()
+    session_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

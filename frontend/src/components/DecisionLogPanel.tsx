@@ -2,8 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { RefreshCw, Brain, Copy } from 'lucide-react';
 import { fetchDecisionLogs, analyzeSessionDecisions } from '../services/api';
 
+import { CatalogChart } from './CatalogChart';
+
 interface DecisionLogPanelProps {
   sessionId: string;
+  catalogPath?: string;
+  barInterval?: string;
+  instrumentId?: string;
 }
 
 // decision_trace/1 outcome codes (src/nautilus_lab/domain/decision_trace.py).
@@ -53,7 +58,12 @@ function outcomeClass(outcome?: string): string {
   }
 }
 
-export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({ sessionId }) => {
+export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({ 
+  sessionId, 
+  catalogPath, 
+  barInterval, 
+  instrumentId 
+}) => {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -237,6 +247,39 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({ sessionId })
                             {Object.entries(log.indicators)
                               .map(([k, v]) => `${k}: ${v}`)
                               .join(', ')}
+                          </div>
+                        )}
+                        {['ENTRY_OPENED', 'EXIT', 'TAKE_PROFIT', 'STOP_LOSS'].includes(log.outcome) && log.ts && (
+                          <div className="mt-4 border border-gray-800 rounded-xl overflow-hidden p-2 bg-gray-950/50">
+                            <h4 className="text-[10px] font-bold text-gray-400 mb-2 uppercase">Trade Context Chart</h4>
+                            <CatalogChart 
+                              instrumentId={instrumentId}
+                              catalogPath={catalogPath}
+                              barInterval={barInterval}
+                              height={300}
+                              boundaries={{
+                                isStart: null,
+                                isEnd: null,
+                                oosStart: Math.floor(new Date(log.ts).getTime() / 1000) - 3600 * 4,
+                                oosEnd: Math.floor(new Date(log.ts).getTime() / 1000) + 3600,
+                              }}
+                              customMarkers={[
+                                { 
+                                  time: Math.floor(new Date(log.ts).getTime() / 1000), 
+                                  text: log.outcome, 
+                                  color: log.outcome === 'STOP_LOSS' ? '#ef4444' : (log.outcome === 'TAKE_PROFIT' ? '#10b981' : '#3b82f6'), 
+                                  shape: 'arrowDown', 
+                                  position: 'aboveBar' 
+                                }
+                              ]}
+                              priceLines={[
+                                ...(log.close_price ? [{ price: parseFloat(log.close_price), color: '#3b82f6', title: 'Action', lineStyle: 0 }] : []),
+                                ...(log.indicators?.['stop_loss'] ? [{ price: parseFloat(log.indicators['stop_loss']), color: '#ef4444', title: 'SL', lineStyle: 2 }] : []),
+                                ...(log.indicators?.['take_profit'] ? [{ price: parseFloat(log.indicators['take_profit']), color: '#10b981', title: 'TP', lineStyle: 2 }] : []),
+                                ...(log.states?.['stop_loss'] ? [{ price: parseFloat(log.states['stop_loss']), color: '#ef4444', title: 'SL', lineStyle: 2 }] : []),
+                                ...(log.states?.['take_profit'] ? [{ price: parseFloat(log.states['take_profit']), color: '#10b981', title: 'TP', lineStyle: 2 }] : []),
+                              ]}
+                            />
                           </div>
                         )}
                       </div>

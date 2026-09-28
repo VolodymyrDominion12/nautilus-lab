@@ -21,6 +21,10 @@ from nautilus_lab.application.risk import (
     size_position,
     stop_distance,
 )
+from nautilus_lab.application.decision_trace_codec import legacy_indicators, legacy_states
+from nautilus_lab.domain.decision_log import DecisionRecord
+from nautilus_lab.domain.decision_trace import Outcome, Stage, TraceStep, Verdict, is_warmup
+from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRouter
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
@@ -126,8 +130,12 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         config: SignalRobotConfig,
         *,
         taker_buy_base_volume_by_ns: Mapping[int, Decimal] | None = None,
+        decision_log: DecisionLogPort | None = None,
+        session_id: str | None = None,
     ) -> None:
         super().__init__(config)
+        self.decision_log = decision_log
+        self.session_id = session_id
         self._robot = _build_robot(config)
         self._limits = RiskLimits(
             risk_per_trade=config.risk_per_trade,
@@ -234,14 +242,21 @@ class SignalRobot(Strategy):  # type: ignore[misc]
 
         signal = self._robot.on_bar(domain_bar)
         self._last_mark = domain_bar.close
+
+        trace = getattr(self._robot, "last_trace", ())
+        steps = list(trace) if isinstance(trace, tuple) or isinstance(trace, list) else []
+
         if self._warming_up(int(bar.ts_event)):
+            self._record_decision_log(domain_bar, signal, Outcome.WARMUP, steps)
             return
         self._track_equity(domain_bar.ts_utc)
 
         if self._apply_ratchet(domain_bar):
+            self._record_decision_log(domain_bar, signal, Outcome.EXIT, steps)
             return
 
-        self._process_signal(signal, domain_bar.close)
+        outcome, blocked_by = self._process_signal(signal, domain_bar.close)
+        self._record_decision_log(domain_bar, signal, outcome, steps, blocked_by)
 
     def on_order_book_depth(self, depth: OrderBookDepth10) -> None:
         if not hasattr(self._robot, "on_book"):
@@ -256,7 +271,15 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         if self._warming_up(int(depth.ts_event)):
             return
         self._track_equity(snapshot.ts_utc)
-        self._process_signal(signal, mid_price)
+
+        trace = getattr(self._robot, "last_trace", ())
+        steps = list(trace) if isinstance(trace, tuple) or isinstance(trace, list) else []
+        outcome, blocked_by = self._process_signal(signal, mid_price)
+
+        # Book robots don't have domain bars. DecisionRecord requires a bar,
+        # but in backtest, book robots don't trigger on_bar for decisions, so we omit logging
+        # for book signals here for now unless a bar is provided.
+        pass
 
     def _place_protective_stop(self, entry_order: object) -> None:
         """Rest a reduce-only stop behind a fully filled entry order.
@@ -334,7 +357,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             if not self._is_flat():
                 self._exposure_bars += 1
 
-    def _process_signal(self, signal: Signal | None, current_price: Decimal) -> None:
+    def _process_signal(self, signal: Signal | None, current_price: Decimal) -> tuple[Outcome, str | None]:
         """Exit first (never gated by risk), then — only if allowed — enter.
 
         The risk layer guards new exposure. An opposite or FLAT signal closes what we
@@ -342,27 +365,38 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         the old "gate first, return on refusal" order froze losing positions.
         """
         if signal is None:
-            return
+            return Outcome.NO_SIGNAL, None
         plan = plan_for_signal(self._holding(), signal.side)
         if plan.is_noop:
-            return
+            return Outcome.HOLD_NOOP, None
 
         # Gate the entry BEFORE the exit is submitted: the exit's own close order would
         # otherwise count as "an order already working" and block the entry it precedes.
         entry: tuple[Decimal, Decimal] | None = None
+        blocked_by: str | None = None
         if plan.wants_entry:
-            entry = self._entry_allowed(current_price, reversing=plan.exit_position)
+            result = self._entry_allowed(current_price, reversing=plan.exit_position)
+            if isinstance(result, str):
+                blocked_by = result
+            elif result is not None:
+                entry = result
 
         if plan.exit_position:
             self._flatten()
+            if not plan.wants_entry:
+                return Outcome.EXIT, None
+
+        if blocked_by:
+            return Outcome.ENTRY_BLOCKED_RISK, blocked_by
 
         if entry is None:
-            return
+            return Outcome.NO_SIGNAL, None
+
         qty, distance = entry
         instrument = self.cache.instrument(self.config.instrument_id)
         if instrument is None:
             self.log.error("Instrument missing from cache; skip order")
-            return
+            return Outcome.NO_SIGNAL, None
         desired_buy = signal.side is SignalSide.BUY
         order = self.order_factory.market(
             self.config.instrument_id,
@@ -375,14 +409,18 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._turnover += current_price * qty
         self._arm_ratchet(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
 
+        if plan.exit_position:
+            return Outcome.REVERSE, None
+        return Outcome.ENTRY_OPENED, None
+
     def _entry_allowed(
         self, current_price: Decimal, *, reversing: bool
-    ) -> tuple[Decimal, Decimal] | None:
-        """(qty, stop distance) for a new entry, or None with the refusal recorded."""
+    ) -> tuple[Decimal, Decimal] | str | None:
+        """(qty, stop distance) for a new entry, string for refusal reason, or None."""
         equity = self._equity()
         if equity is None:
             self.log.error("No account equity; skip entry (fail closed)")
-            return None
+            return "No account equity"
         snapshot = AccountSnapshot(
             equity=equity,
             peak_equity=self._peak_equity or equity,
@@ -396,7 +434,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             self._breaches.record(decision.reason)
             self._note_refusal(decision.reason)
             self.log.warning(f"Risk blocked entry: {decision.reason}")
-            return None
+            return decision.reason
 
         # An order that is accepted but not yet filled leaves the portfolio flat, so the
         # next signal would stack another entry on top of the pending one. On book-driven
@@ -404,7 +442,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         # updates arrive far faster than the 50ms fill latency. One live entry at a time.
         if self._has_working_order():
             self._breaches.record("order already working")
-            return None
+            return "order already working"
 
         distance = stop_distance(current_price, self._limits, atr=self._atr.value)
         risk_fraction = resolve_risk_fraction(
@@ -427,6 +465,47 @@ class SignalRobot(Strategy):  # type: ignore[misc]
 
     def on_stop(self) -> None:
         self._flatten()
+
+    @staticmethod
+    def _record_regime(signal: Signal | None, steps: list[TraceStep]) -> str:
+        if signal is not None and getattr(signal, "regime", None) is not None:
+            return getattr(signal.regime, "value", "UNKNOWN")
+        for item in steps:
+            if item.stage is Stage.REGIME and item.result:
+                return item.result
+        if steps and all(item.stage is Stage.WARMUP for item in steps):
+            return "WARMUP"
+        return "UNKNOWN"
+
+    def _record_decision_log(
+        self,
+        bar: OhlcvBar,
+        signal: Signal | None,
+        outcome: Outcome,
+        steps: list[TraceStep],
+        blocked_by: str | None = None,
+    ) -> None:
+        if self.decision_log is None or self.session_id is None:
+            return
+
+        regime = self._record_regime(signal, steps)
+        record = DecisionRecord(
+            bar_end_utc=bar.ts_utc,
+            robot=self.config.robot.lower(),
+            instrument_id=bar.instrument_id,
+            close_price=bar.close,
+            regime=regime,
+            signal=signal.side.value if signal else None,
+            signal_reason=signal.reason if signal else None,
+            indicators=legacy_indicators(tuple(steps)),
+            states=legacy_states(tuple(steps)),
+            session_id=self.session_id,
+            outcome=outcome.value,
+            blocked_by=blocked_by,
+            fill_ids=[],  # We don't trace fills in backtest decisions per-bar this way. They're available in BacktestReport.
+            narrative="",
+        )
+        self.decision_log.log(record)
 
     @property
     def equity_curve(self) -> tuple[Decimal, ...]:

@@ -29,6 +29,19 @@ interface CatalogChartProps {
   boundaries?: WindowBoundaries;
   showVolume?: boolean;
   title?: string;
+  priceLines?: {
+    price: number;
+    color: string;
+    title: string;
+    lineStyle?: number;
+  }[];
+  customMarkers?: {
+    time: number;
+    text: string;
+    color: string;
+    shape: 'arrowDown' | 'arrowUp' | 'circle' | 'square';
+    position: 'aboveBar' | 'belowBar' | 'inBar';
+  }[];
 }
 
 /**
@@ -48,12 +61,15 @@ export function CatalogChart({
   boundaries,
   showVolume = true,
   title,
+  priceLines,
+  customMarkers,
 }: CatalogChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const bandsRef = useRef<WindowBandsPrimitive | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const priceLinesRefs = useRef<any[]>([]);
   const [generation, setGeneration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -198,7 +214,7 @@ export function CatalogChart({
         bandsRef.current?.setBands(bandValues);
 
         const known = new Set(candles.map((candle) => candle.time as number));
-        const markers = (
+        const markers: { time: Time; position: 'aboveBar' | 'belowBar' | 'inBar'; color: string; shape: 'arrowDown' | 'arrowUp' | 'circle' | 'square'; text: string }[] = (
           [
             [bandValues.isStart, 'IS starts', '#f59e0b'],
             [bandValues.isEnd, 'IS ends', '#f59e0b'],
@@ -209,12 +225,44 @@ export function CatalogChart({
           .filter(([seconds]) => seconds != null && known.has(seconds as number))
           .map(([seconds, text, color]) => ({
             time: seconds as unknown as Time,
-            position: 'aboveBar' as const,
+            position: 'aboveBar',
             color,
-            shape: 'arrowDown' as const,
+            shape: 'arrowDown',
             text,
           }));
+          
+        if (customMarkers) {
+          customMarkers.forEach(m => {
+            if (known.has(m.time)) {
+              markers.push({
+                time: m.time as unknown as Time,
+                position: m.position,
+                color: m.color,
+                shape: m.shape,
+                text: m.text,
+              });
+            }
+          });
+        }
+          
         createSeriesMarkers(series, markers);
+
+        // Add price lines
+        priceLinesRefs.current.forEach((line) => series.removePriceLine(line));
+        priceLinesRefs.current = [];
+        if (priceLines) {
+          priceLines.forEach((pl) => {
+            const line = series.createPriceLine({
+              price: pl.price,
+              color: pl.color,
+              lineWidth: 2,
+              lineStyle: pl.lineStyle ?? 2, // Dashed
+              axisLabelVisible: true,
+              title: pl.title,
+            });
+            priceLinesRefs.current.push(line);
+          });
+        }
 
         chart.timeScale().fitContent();
         setLoading(false);
@@ -236,6 +284,8 @@ export function CatalogChart({
     barInterval,
     limit,
     bandValues,
+    priceLines,
+    customMarkers,
   ]);
 
   const hasWindow = Object.values(bandValues).some((value) => value != null);

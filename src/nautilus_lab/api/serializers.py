@@ -98,6 +98,7 @@ def serialize_backtest(report: BacktestReport) -> dict[str, Any]:
         "paid_cost_rate": costs["paid_cost_rate"],
         "cost_headroom": costs["cost_headroom"],
         "traded_notional": costs["traded_notional"],
+        "session_id": report.session_id,
     }
 
 

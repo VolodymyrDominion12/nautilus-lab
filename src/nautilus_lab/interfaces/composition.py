@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+import uuid
 
 from nautilus_lab.application.collect_live_agg_trades import CollectLiveAggTrades, CollectProgress
 from nautilus_lab.application.dtos import (
@@ -60,6 +61,7 @@ from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
 from nautilus_lab.infrastructure.trial_ledger import JsonlTrialLedger
+from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
 
 
 def settings() -> Settings:
@@ -87,6 +89,11 @@ def orderbook_catalog(cfg: Settings, *, path: str | None = None) -> ParquetOrder
 def funding_catalog(cfg: Settings, *, path: str | None = None) -> ParquetFundingCatalog:
     """Funding settlements series under the catalog root."""
     return ParquetFundingCatalog(Path(path or cfg.catalog_path))
+
+
+def decision_log_writer(cfg: Settings) -> JsonlDecisionLogWriter:
+    """JSONL logger for robot decisions."""
+    return JsonlDecisionLogWriter(cfg)
 
 
 def research_feed(cfg: Settings, *, path: str | None = None) -> ResearchBarFeed:
@@ -156,7 +163,7 @@ def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
     book_feed = _BookFeedAdapter(book_catalog)
     funding_feed = _FundingFeedAdapter(funding_cat)
     return RunResearchBacktest(
-        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed, funding_feed
+        NautilusResearchBacktest(decision_log_writer(resolved)), research_feed(resolved), tick_feed, book_feed, funding_feed
     )
 
 
@@ -169,7 +176,7 @@ def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
     book_feed = _BookFeedAdapter(book_catalog)
     funding_feed = _FundingFeedAdapter(funding_cat)
     return RunWalkForward(
-        NautilusResearchBacktest(),
+        NautilusResearchBacktest(decision_log_writer(resolved)),
         research_feed(resolved),
         tick_feed,
         book_feed,
@@ -188,7 +195,7 @@ def overfit_audit_use_case(cfg: Settings | None = None) -> RunOverfitAudit:
     book_feed = _BookFeedAdapter(book_catalog)
     funding_feed = _FundingFeedAdapter(funding_cat)
     return RunOverfitAudit(
-        NautilusResearchBacktest(),
+        NautilusResearchBacktest(decision_log_writer(resolved)),
         research_feed(resolved),
         tick_feed,
         book_feed,
@@ -369,6 +376,7 @@ def research_request(
         adaptive_params=cfg.adaptive_ema_params(),
         tearsheet_path=tearsheet_path,
         selection_metric=cfg.selection_metric,
+        session_id=str(uuid.uuid4()),
     )
 
 
@@ -382,7 +390,7 @@ def paper_use_case(cfg: Settings | None = None) -> RunPaperSession:
     book_feed = _BookFeedAdapter(book_catalog)
     funding_feed = _FundingFeedAdapter(funding_cat)
     return RunPaperSession(
-        NautilusResearchBacktest(), research_feed(resolved), tick_feed, book_feed, funding_feed
+        NautilusResearchBacktest(decision_log_writer(resolved)), research_feed(resolved), tick_feed, book_feed, funding_feed
     )
 
 
@@ -393,7 +401,7 @@ def param_selection_use_case(cfg: Settings | None = None) -> RunParamSelection:
     book_catalog = orderbook_catalog(resolved)
     funding_cat = funding_catalog(resolved)
     return RunParamSelection(
-        NautilusResearchBacktest(),
+        NautilusResearchBacktest(decision_log_writer(resolved)),
         research_feed(resolved),
         _TickFeedAdapter(tick_catalog),
         _BookFeedAdapter(book_catalog),
@@ -428,7 +436,7 @@ def live_paper_use_case(
     tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
     book_catalog = orderbook_catalog(resolved)
     return RunPaperSession(
-        NautilusResearchBacktest(),
+        NautilusResearchBacktest(decision_log_writer(resolved)),
         feed,
         _TickFeedAdapter(tick_catalog),
         _BookFeedAdapter(book_catalog),

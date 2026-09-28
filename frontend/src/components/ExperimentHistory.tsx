@@ -5,9 +5,10 @@ import type { HistoryEntry } from '../services/api';
 
 interface ExperimentHistoryProps {
   onRerun?: (entry: HistoryEntry) => void;
+  onOpenDetails?: (entry: HistoryEntry) => void;
 }
 
-export const ExperimentHistory: React.FC<ExperimentHistoryProps> = ({ onRerun }) => {
+export const ExperimentHistory: React.FC<ExperimentHistoryProps> = ({ onRerun, onOpenDetails }) => {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -69,15 +70,26 @@ export const ExperimentHistory: React.FC<ExperimentHistoryProps> = ({ onRerun })
                   <span>{entry.report_label}</span>
                 )}
               </div>
-              {onRerun && entry.config && (
-                <button
-                  type="button"
-                  onClick={() => onRerun(entry)}
-                  className="self-start mt-1 text-[11px] text-blue-400 hover:text-blue-300"
-                >
-                  Load config
-                </button>
-              )}
+              <div className="flex gap-4">
+                {onRerun && entry.config && (
+                  <button
+                    type="button"
+                    onClick={() => onRerun(entry)}
+                    className="self-start mt-1 text-[11px] text-blue-400 hover:text-blue-300"
+                  >
+                    Load config
+                  </button>
+                )}
+                {onOpenDetails && entry.single_backtest?.session_id && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenDetails(entry)}
+                    className="self-start mt-1 text-[11px] text-purple-400 hover:text-purple-300"
+                  >
+                    Details
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

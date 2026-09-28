@@ -74,3 +74,43 @@ test('a live paper session is listed and its stream connects', async ({ page, re
 
   expect(errors).toEqual([]);
 });
+
+test('the trade list and a trade page open from the session', async ({ page, request }) => {
+  const errors = collectPageErrors(page);
+  const name = `e2e-trades-${Date.now().toString(36)}`;
+  const started = await request.post(`${API}/api/paper/sessions`, {
+    data: { symbol: 'BTCUSDT', interval: '1m', robot: 'regime', name },
+  });
+  expect(started.ok(), await started.text()).toBe(true);
+  const { session_id: sessionId } = (await started.json()) as { session_id: string };
+
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Trading Terminal' }).click();
+    await page.getByRole('button', { name: /Trades & Analysis/ }).click();
+
+    // The panel reads `GET /api/paper/sessions/{key}/trades` and lists what it finds. This
+    // server runs no decision log, so the honest answer is an empty list with the reason —
+    // not a spinner, an error banner, or a table that looks like a robot that never traded.
+    await expect(page.getByText('Кожен рядок веде на окрему сторінку розбору')).toBeVisible();
+    await expect(page.getByText(/Угод:/)).toBeVisible();
+  } finally {
+    await request.post(`${API}/api/paper/sessions/${encodeURIComponent(sessionId)}/stop`);
+  }
+
+  // A trade page has an address of its own: opening the fragment directly renders it (this
+  // is the link the list puts on every row), and a trade that is not in the log says so
+  // instead of showing a blank page.
+  await page.goto(
+    `/#/trade?session=${encodeURIComponent(sessionId)}&id=${encodeURIComponent(sessionId)}-trade-1` +
+      '&instrument=BTCUSDT&interval=1m&origin=paper',
+  );
+  await expect(page.getByRole('button', { name: 'Назад' })).toBeVisible();
+  await expect(page.getByText('Угоду не вдалося прочитати')).toBeVisible();
+
+  // Back returns to the dashboard tab the link was opened from, not to a fresh page.
+  await page.getByRole('button', { name: 'Назад' }).click();
+  await expect(page.getByRole('heading', { name: 'Nautilus Lab' })).toBeVisible();
+
+  expect(errors).toEqual([]);
+});

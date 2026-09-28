@@ -1,10 +1,11 @@
 import React from 'react';
 import type { LivePaperState } from '../services/api';
 import { DecisionLogPanel } from './DecisionLogPanel';
+import { TradesPanel } from './trades/TradesPanel';
 
 interface LiveTradingTabsProps {
-  activeTab: 'position' | 'fills' | 'risk' | 'decision_logs';
-  onTabChange: (tab: 'position' | 'fills' | 'risk' | 'decision_logs') => void;
+  activeTab: 'position' | 'fills' | 'trades' | 'risk' | 'decision_logs';
+  onTabChange: (tab: 'position' | 'fills' | 'trades' | 'risk' | 'decision_logs') => void;
   state: LivePaperState | null;
   sessionId: string | null;
 }
@@ -40,6 +41,17 @@ export const LiveTradingTabs: React.FC<LiveTradingTabsProps> = ({
           }`}
         >
           Order Fills History ({state?.fills.length || 0})
+        </button>
+        <button
+          type="button"
+          onClick={() => onTabChange('trades')}
+          className={`px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${
+            activeTab === 'trades'
+              ? 'border-blue-500 text-blue-400'
+              : 'border-transparent text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          Trades &amp; Analysis
         </button>
         <button
           type="button"
@@ -229,6 +241,26 @@ export const LiveTradingTabs: React.FC<LiveTradingTabsProps> = ({
             )}
           </div>
         )}
+
+        {activeTab === 'trades' &&
+          (sessionId ? (
+            <TradesPanel
+              sessionKey={sessionId}
+              pollMs={5000}
+              linkContext={{
+                session: sessionId,
+                instrument: state?.config?.symbol,
+                interval: state?.config?.interval,
+                title: state?.name,
+                origin: 'paper',
+              }}
+              emptyHint="Угод ще немає: робот не відкривав позицій, або журнал рішень вимкнено."
+            />
+          ) : (
+            <div className="py-8 text-center text-xs text-gray-500">
+              Немає активної сесії: список угод читається з журналу рішень сесії.
+            </div>
+          ))}
 
         {activeTab === 'decision_logs' &&
           (sessionId ? (

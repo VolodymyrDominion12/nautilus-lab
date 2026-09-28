@@ -243,6 +243,33 @@ invariants_enforced:
       ...::test_decision_log_writer_keeps_everything_when_retention_is_off.
 
   - statement: >
+      Сторінка угоди однакова для paper-сесії та бектесту, бо обидві відновлюються з
+      журналу рішень за одним ключем: `GET /api/paper/sessions/{key}/trades` віддає
+      список (без пер-барних записів, зі `pnl_source`/`qty_known`/`fee_known`), а
+      `.../trades/{id}` — саму угоду разом із записами, індикаторами на вході й виході
+      та барами для графіка. Ключ без живої сесії (`single_backtest.session_id`) не є
+      404: саме його просить модалка «Backtest Details».
+    enforced_by: src/nautilus_lab/api/routes/live.py
+    verified_by: tests/unit/test_api_trades_route.py::test_trades_work_for_a_backtest_run_with_no_live_session
+    note: >
+      Друга половина — те, що число не показується без своєї підстави: у бектесті
+      філів у журналі немає (`fill_ids` порожні за задумом), тож результат там — це
+      різниця цін на припущеному розмірі, і список це пише
+      (test_trades_list_admits_a_price_only_pnl: `pnl_source == "price_delta"`,
+      `qty_known is False`, `fee is None`). Комісія «нуль», якої ніхто не записував, —
+      саме те, що перетворює діагностику на фальшиву бухгалтерію. Коли сесія жива,
+      її власний журнал філів переважає арифметику цін
+      (test_a_live_session_reports_pnl_and_fees_from_its_own_fills), а філ закриття
+      попередньої позиції не приписується угоді, що відкрилась у ту саму мить
+      (tests/unit/test_trade_history.py::test_reversal_does_not_inherit_the_previous_trade_s_closure).
+      Порядок із журналом, який містить кілька проходів по тому самому вікну
+      (walk-forward пише кожен фолд під одним id сесії), закритий
+      ...::test_a_log_holding_several_passes_is_not_read_as_one_timeline: без цього
+      вхід одного проходу змикався з входом наступного і список показував однобаровi
+      «угоди» з однаковою ціною входу й виходу. Скільки записів прочитано і чи
+      обрізано вікно (`truncated`, `windows`) роут каже явно, а не мовчить.
+
+  - statement: >
       Слот джоба займається всередині запиту під блокуванням: другий запуск того
       самого джоба, поки перший ще не породив процес, отримує `status: error`, а
       опитування логу одразу після старту бачить `is_running: true`.

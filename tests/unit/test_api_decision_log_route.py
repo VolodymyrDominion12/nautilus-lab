@@ -178,3 +178,4 @@ def test_decision_log_route_reports_logging_being_off(tmp_path: Path) -> None:
     assert body["status"] == "error"
     assert "disabled" in body["message"]
     assert body["logs"] == []
+

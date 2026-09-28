@@ -10,6 +10,7 @@ import type {
   CandlestickData,
   IChartApi,
   ISeriesApi,
+  ISeriesMarkersPluginApi,
   Time,
   UTCTimestamp,
 } from 'lightweight-charts';
@@ -18,6 +19,7 @@ import { fetchCatalogBars } from '../services/api';
 import type { CatalogBarPoint } from '../services/api';
 import { createWindowBands } from '../lib/windowBands';
 import type { WindowBandsPrimitive, WindowBoundaries } from '../lib/windowBands';
+import { snapToBar } from '../lib/trades';
 
 interface CatalogChartProps {
   instrumentId?: string;
@@ -70,6 +72,9 @@ export function CatalogChart({
   const bandsRef = useRef<WindowBandsPrimitive | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const priceLinesRefs = useRef<any[]>([]);
+  // Re-applied on every load (a boundary edit reloads): attaching a second markers
+  // primitive instead of updating the first would draw every marker twice.
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const [generation, setGeneration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -139,6 +144,7 @@ export function CatalogChart({
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      markersRef.current = null;
       bandsRef.current = null;
       volumeRef.current = null;
       seriesRef.current = null;
@@ -232,20 +238,24 @@ export function CatalogChart({
           }));
           
         if (customMarkers) {
-          customMarkers.forEach(m => {
-            if (known.has(m.time)) {
-              markers.push({
-                time: m.time as unknown as Time,
-                position: m.position,
-                color: m.color,
-                shape: m.shape,
-                text: m.text,
-              });
-            }
+          customMarkers.forEach((m) => {
+            // A marker that lands on no candle is dropped by the chart without a word, and
+            // a decision log stamps the bar's **close** while a candle is plotted at the
+            // time the API reports — the two never match exactly, so the time is snapped.
+            const at = snapToBar(m.time, [...known].sort((a, b) => a - b));
+            if (at == null) return;
+            markers.push({
+              time: at as unknown as Time,
+              position: m.position,
+              color: m.color,
+              shape: m.shape,
+              text: m.text,
+            });
           });
         }
           
-        createSeriesMarkers(series, markers);
+        if (markersRef.current) markersRef.current.setMarkers(markers);
+        else markersRef.current = createSeriesMarkers(series, markers);
 
         // Add price lines
         priceLinesRefs.current.forEach((line) => series.removePriceLine(line));

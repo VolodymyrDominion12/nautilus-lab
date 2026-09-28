@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, WifiOff } from 'lucide-react';
 import { getSelectedCatalogPath, setSelectedCatalogPath } from './catalogSelection';
@@ -17,13 +17,50 @@ import { ScanTab } from './components/ScanTab';
 import { AlphaIdeasTab } from './components/AlphaIdeasTab';
 import { CommandPalette } from './components/CommandPalette';
 import { InterfaceGuideModal } from './components/InterfaceGuideModal';
+import { TradeDetailPage } from './components/trades/TradeDetailPage';
 import { ToastProvider } from './components/Toast';
 import { useToast } from './components/toastContext';
 import { Sidebar } from './components/Sidebar';
+import { parseTradeHash, buildTradeHash } from './lib/trades';
+import type { TradeRoute } from './lib/trades';
 
 const SettingsTab = () => <SettingsPanel />;
 
 const NO_STRATEGIES: StrategySpec[] = [];
+
+/**
+ * The trade page in the URL fragment, kept in sync with the browser.
+ *
+ * A trade gets its own address (`#/trade?session=…&id=…`) rather than a modal, so it can be
+ * linked, bookmarked, opened in a new tab and left with the Back button — the same address
+ * for a backtest trade and a paper trade, because both are reconstructed from the decision
+ * log. The fragment is read here and nowhere else; the active tab is kept in state, so Back
+ * returns to the tab the link was opened from (that tab's own component remounts, which also
+ * means a modal it had open is closed — the user came from a link, not from that modal).
+ */
+function useTradeRoute(): [TradeRoute | null, (route: TradeRoute | null) => void] {
+  const [route, setRoute] = useState<TradeRoute | null>(() =>
+    parseTradeHash(window.location.hash),
+  );
+
+  useEffect(() => {
+    const onHashChange = () => setRoute(parseTradeHash(window.location.hash));
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  const navigate = useCallback((next: TradeRoute | null) => {
+    if (next) {
+      window.location.hash = buildTradeHash(next);
+    } else if (parseTradeHash(window.location.hash)) {
+      // Setting an empty fragment fires `hashchange`, which is what updates the state.
+      window.location.hash = '';
+    }
+    setRoute(next);
+  }, []);
+
+  return [route, navigate];
+}
 
 /** The banner text when the API cannot be read; null while it answers. */
 function describeFailure(statusError: Error | null, strategiesError: Error | null): string | null {
@@ -41,6 +78,7 @@ function AppContent() {
   const [selectedRobot, setSelectedRobot] = useState('regime');
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [tradeRoute, navigateToTrade] = useTradeRoute();
   const [selectedCatalogPath, setSelectedCatalogPathState] = useState(
     () => getSelectedCatalogPath() || 'catalog',
   );
@@ -182,34 +220,40 @@ function AppContent() {
           </div>
         )}
 
-        {activeTab === 'home' && <CommandCenter />}
-        {activeTab === 'research' && (
-          <ResearchLab
-            strategies={strategies}
-            initialRobot={selectedRobot}
-            selectedCatalogPath={selectedCatalogPath}
-            tickVpinRobots={status?.tick_vpin_robots}
-            hawkesRobots={status?.hawkes_robots}
-            stressSlices={status?.stress_slices}
-            externalConfig={externalHypoConfig}
-            onClearExternalConfig={() => setExternalHypoConfig(null)}
-          />
+        {tradeRoute ? (
+          <TradeDetailPage route={tradeRoute} onClose={() => navigateToTrade(null)} />
+        ) : (
+          <>
+            {activeTab === 'home' && <CommandCenter />}
+            {activeTab === 'research' && (
+              <ResearchLab
+                strategies={strategies}
+                initialRobot={selectedRobot}
+                selectedCatalogPath={selectedCatalogPath}
+                tickVpinRobots={status?.tick_vpin_robots}
+                hawkesRobots={status?.hawkes_robots}
+                stressSlices={status?.stress_slices}
+                externalConfig={externalHypoConfig}
+                onClearExternalConfig={() => setExternalHypoConfig(null)}
+              />
+            )}
+            {activeTab === 'catalog' && (
+              <CatalogManager
+                selectedCatalogPath={selectedCatalogPath}
+                onCatalogChange={handleCatalogChange}
+              />
+            )}
+            {activeTab === 'strategies' && (
+              <StrategyCatalog strategies={strategies} onSelectStrategy={handleSelectStrategy} />
+            )}
+            {activeTab === 'ml' && <MLPipeline selectedCatalogPath={selectedCatalogPath} />}
+            {activeTab === 'journal' && <JournalKanban />}
+            {activeTab === 'paper' && <PaperSimulator strategies={strategies} status={status} />}
+            {activeTab === 'scan' && <ScanTab />}
+            {activeTab === 'alpha' && <AlphaIdeasTab onTestInResearch={handleTestHypothesis} />}
+            {activeTab === 'settings' && <SettingsTab />}
+          </>
         )}
-        {activeTab === 'catalog' && (
-          <CatalogManager
-            selectedCatalogPath={selectedCatalogPath}
-            onCatalogChange={handleCatalogChange}
-          />
-        )}
-        {activeTab === 'strategies' && (
-          <StrategyCatalog strategies={strategies} onSelectStrategy={handleSelectStrategy} />
-        )}
-        {activeTab === 'ml' && <MLPipeline selectedCatalogPath={selectedCatalogPath} />}
-        {activeTab === 'journal' && <JournalKanban />}
-        {activeTab === 'paper' && <PaperSimulator strategies={strategies} status={status} />}
-        {activeTab === 'scan' && <ScanTab />}
-        {activeTab === 'alpha' && <AlphaIdeasTab onTestInResearch={handleTestHypothesis} />}
-        {activeTab === 'settings' && <SettingsTab />}
       </main>
 
       <InterfaceGuideModal

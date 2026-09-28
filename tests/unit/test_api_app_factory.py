@@ -71,6 +71,9 @@ ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/paper/sessions/{key}/update-stops"),
         ("GET", "/api/paper/sessions/{key}/decision-log"),
         ("GET", "/api/paper/sessions/{key}/decision-digest"),
+        # The trade pages: one list and one trade, for a live session and a backtest run.
+        ("GET", "/api/paper/sessions/{key}/trades"),
+        ("GET", "/api/paper/sessions/{key}/trades/{trade_id}"),
         ("GET", "/api/decisions/presets"),
         ("POST", "/api/propose"),
         ("POST", "/api/research"),

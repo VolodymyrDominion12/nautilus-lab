@@ -876,6 +876,173 @@ export async function updateLiveStops(
   );
 }
 
+/** One step of the robot's reasoning chain inside a decision record (`decision_trace/1`). */
+export interface TradeDecisionStep {
+  stage?: string;
+  component?: string;
+  verdict?: string;
+  result?: string;
+  values?: Record<string, unknown>;
+  thresholds?: Record<string, unknown>;
+  note?: string;
+}
+
+/** One line of the decision log, as the trade page receives it. */
+export interface TradeDecisionRow {
+  ts: string;
+  /** Close of the bar the decision was made on; the writer stores it as a string. */
+  close?: string | number | null;
+  kind?: string;
+  outcome?: string | null;
+  signal?: string | null;
+  regime?: string;
+  signal_reason?: string | null;
+  narrative?: string | null;
+  blocked_by?: string | null;
+  indicators?: Record<string, string | number | null>;
+  states?: Record<string, string | number | boolean | null>;
+  steps?: TradeDecisionStep[];
+  account?: Record<string, unknown>;
+  bar?: Record<string, number>;
+}
+
+/**
+ * A reconstructed trade without its per-bar rows (`GET .../trades`).
+ *
+ * The money fields carry their basis: `pnl_source` says where the number came from and
+ * `qty_known` / `fee_known` say whether a size and a fee were actually recorded. A
+ * backtest log has no fills, so its PnL is price arithmetic on an assumed size — the UI
+ * must show that, not a bare number that reads as account PnL.
+ */
+export interface TradeSummary {
+  id: string;
+  session_id: string;
+  symbol: string;
+  side: 'LONG' | 'SHORT' | string;
+  status: 'OPEN' | 'CLOSED' | string;
+  /** Which pass over the window this trade belongs to; >1 means the run was replayed. */
+  window_index?: number;
+  entry_time: string;
+  entry_price: number;
+  entry_reason?: string;
+  exit_time?: string | null;
+  exit_price?: number | null;
+  exit_outcome?: string | null;
+  exit_reason?: string | null;
+  stop_loss?: number | null;
+  take_profit?: number | null;
+  qty?: number;
+  qty_known?: boolean;
+  fee?: number | null;
+  fee_known?: boolean;
+  pnl_source?: 'fills' | 'price_delta' | 'mark' | null;
+  realized_pnl?: number | null;
+  realized_pnl_pct?: number | null;
+  r_multiple?: number | null;
+  mfe_close?: number | null;
+  mae_close?: number | null;
+  mfe_close_pct?: number | null;
+  mae_close_pct?: number | null;
+  excursion_basis?: string;
+  duration_bars?: number;
+  duration_seconds?: number;
+  regime_at_entry?: string;
+  regime_at_exit?: string;
+  mark_price?: number | null;
+  decision_count?: number;
+}
+
+export interface TradeDetail extends TradeSummary {
+  decisions: TradeDecisionRow[];
+  indicators_at_entry?: Record<string, string | number | null>;
+  indicators_at_exit?: Record<string, string | number | null>;
+  states_at_entry?: Record<string, string | number | boolean | null>;
+  states_at_exit?: Record<string, string | number | boolean | null>;
+  steps_at_entry?: TradeDecisionStep[];
+  narrative_at_entry?: string;
+}
+
+export interface TradeChartBar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  is_closed?: boolean;
+}
+
+/** Candles for the trade chart, the source they came from, and why they may be empty. */
+export interface TradeChart {
+  source: 'session' | 'catalog' | 'none';
+  instrument_id?: string | null;
+  bar_interval?: string | null;
+  catalog_path?: string | null;
+  note?: string;
+  bars: TradeChartBar[];
+}
+
+export interface TradesResponse {
+  status: string;
+  session_id: string;
+  records: number;
+  limit: number;
+  /** The record reader hit its cap: older trades exist and are not in this list. */
+  truncated: boolean;
+  /** Passes over the same window merged from one log (a walk-forward writes one per fold). */
+  windows: number;
+  trades: TradeSummary[];
+}
+
+export interface TradeDetailResponse {
+  status: string;
+  session_id: string;
+  records: number;
+  truncated: boolean;
+  windows: number;
+  trade: TradeDetail;
+  chart: TradeChart;
+}
+
+/**
+ * Trades reconstructed from a session's decision log.
+ *
+ * One endpoint for a live paper session and for a research backtest run: the writer keys
+ * the log by `session_id` in both cases (`single_backtest.session_id` for a run), so the
+ * same list serves the terminal and the Backtest Details modal.
+ */
+export async function fetchSessionTrades(
+  sessionKey: string,
+  limit?: number,
+): Promise<TradesResponse> {
+  const query = limit ? `?limit=${limit}` : '';
+  return parseJson(await fetch(sessionPath(sessionKey, `trades${query}`)));
+}
+
+/** One trade with its decisions and the candles around it. */
+export async function fetchSessionTrade(
+  sessionKey: string,
+  tradeId: string,
+  context: {
+    instrumentId?: string;
+    barInterval?: string;
+    catalogPath?: string;
+    bars?: number;
+  } = {},
+): Promise<TradeDetailResponse> {
+  const params = new URLSearchParams();
+  if (context.instrumentId) params.set('instrument_id', context.instrumentId);
+  if (context.barInterval) params.set('bar_interval', context.barInterval);
+  if (context.catalogPath) params.set('catalog_path', context.catalogPath);
+  if (context.bars != null) params.set('bars', String(context.bars));
+  const query = params.toString();
+  return parseJson(
+    await fetch(
+      sessionPath(sessionKey, `trades/${encodeURIComponent(tradeId)}${query ? `?${query}` : ''}`),
+    ),
+  );
+}
+
 export async function fetchDecisionLogs(
   sessionId: string,
   lines: number = 100,

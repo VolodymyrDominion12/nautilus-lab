@@ -55,7 +55,9 @@ export const LiveTradingTerminal: React.FC<LiveTradingTerminalProps> = ({
   } = useLiveTradingSession(sessionId);
 
   const [actionError, setActionError] = useState<string | null>(null);
-  const [activeBottomTab, setActiveBottomTab] = useState<'position' | 'fills' | 'risk' | 'decision_logs'>('position');
+  const [activeBottomTab, setActiveBottomTab] = useState<
+    'position' | 'fills' | 'trades' | 'risk' | 'decision_logs'
+  >('position');
   const [showLiveWarningModal, setShowLiveWarningModal] = useState(false);
 
   // While a session runs, sync config from server

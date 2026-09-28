@@ -36,8 +36,12 @@ def _fold(
         breakeven_cost=Decimal("0.0006"),
     )
     report = BacktestReport(
-        fills=fills, positions=1, ending_balance=Decimal("1"), notes="", metrics=metrics,
-        daily_returns=(Decimal("0.10"), Decimal("-0.01")) * 5
+        fills=fills,
+        positions=1,
+        ending_balance=Decimal("1"),
+        notes="",
+        metrics=metrics,
+        daily_returns=(Decimal("0.10"), Decimal("-0.01")) * 5,
     )
     return WalkForwardFold(
         index=index,
@@ -91,7 +95,9 @@ def _audit(pbo: str, dsr: str | None) -> OverfitAuditReport:
             trials=4,
             note="",
         ),
-        daily_trial_sharpes=(Decimal("0.02"), Decimal("0.01"), Decimal("0.05"), Decimal("0.03")) if dsr is not None else (),
+        daily_trial_sharpes=(Decimal("0.02"), Decimal("0.01"), Decimal("0.05"), Decimal("0.03"))
+        if dsr is not None
+        else (),
     )
 
 
@@ -140,9 +146,9 @@ def test_undefined_dsr_is_not_measured() -> None:
 def test_beating_raw_buy_and_hold_by_leverage_alone_rejects() -> None:
     """The robot beat the asset's move only by running twice its volatility."""
     verdict = evaluate_gate(
-        _multi(["0.05"] * 6, buy_hold="0.03", vol_matched="0.06"), 
+        _multi(["0.05"] * 6, buy_hold="0.03", vol_matched="0.06"),
         _audit("0.1", "0.97"),
-        strategy_class=StrategyClass.TREND_FOLLOWING
+        strategy_class=StrategyClass.TREND_FOLLOWING,
     )
     failed = [check.name for check in verdict.checks if check.status is CheckStatus.FAIL]
     assert failed == ["beats_vol_matched"]
@@ -154,7 +160,9 @@ def test_an_unmeasured_vol_matched_baseline_is_not_a_pass() -> None:
         replace(fold, vol_matched_buy_and_hold_return=None) for fold in _multi(["0.05"] * 6).folds
     )
     report = MultiWindowReport(folds=folds, starting_equity=Decimal("100000"), notes="")
-    verdict = evaluate_gate(report, _audit("0.1", "0.97"), strategy_class=StrategyClass.TREND_FOLLOWING)
+    verdict = evaluate_gate(
+        report, _audit("0.1", "0.97"), strategy_class=StrategyClass.TREND_FOLLOWING
+    )
     check = next(check for check in verdict.checks if check.name == "beats_vol_matched")
     assert check.status is CheckStatus.NOT_MEASURED
     assert verdict.label == "INCOMPLETE"
@@ -175,12 +183,17 @@ def test_evidence_without_a_vol_matched_baseline_is_not_measured() -> None:
         @property
         def mean_gross_return(self) -> Decimal:
             return Decimal("0.05")
-            
+
         @property
         def mean_breakeven_bps(self) -> Decimal:
             return Decimal("6")
 
-    verdict = evaluate_gate(BasketEvidence(), _audit("0.1", "0.97"), preregistration=MATCHED, strategy_class=StrategyClass.TREND_FOLLOWING)
+    verdict = evaluate_gate(
+        BasketEvidence(),  # type: ignore[arg-type]  # intentionally partial evidence
+        _audit("0.1", "0.97"),
+        preregistration=MATCHED,
+        strategy_class=StrategyClass.TREND_FOLLOWING,
+    )
     check = next(check for check in verdict.checks if check.name == "beats_vol_matched")
     assert check.status is CheckStatus.NOT_MEASURED
     assert not verdict.promoted
@@ -205,12 +218,17 @@ def test_folds_check_counts_measured_folds_not_requested_ones() -> None:
         @property
         def mean_gross_return(self) -> Decimal:
             return Decimal("0.05")
-            
+
         @property
         def mean_breakeven_bps(self) -> Decimal:
             return Decimal("6")
 
-    verdict = evaluate_gate(HalfMeasured(), _audit("0.1", "0.97"), preregistration=MATCHED, strategy_class=StrategyClass.TREND_FOLLOWING)
+    verdict = evaluate_gate(
+        HalfMeasured(),  # type: ignore[arg-type]  # intentionally partial evidence
+        _audit("0.1", "0.97"),
+        preregistration=MATCHED,
+        strategy_class=StrategyClass.TREND_FOLLOWING,
+    )
     check = next(check for check in verdict.checks if check.name == "folds")
     assert check.status is CheckStatus.FAIL
     assert "3/6" in check.detail

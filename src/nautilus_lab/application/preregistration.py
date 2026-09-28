@@ -50,7 +50,8 @@ def research_terms(
     gate = tuple((item.name, str(getattr(rules, item.name))) for item in dataclasses.fields(rules))
     options = (
         ("bar_type", backtest.bar_type),
-        ("spot_fees", repr(backtest.spot_fees)), ("usdm_fees", repr(backtest.usdm_fees)),
+        ("spot_fees", repr(backtest.spot_fees)),
+        ("usdm_fees", repr(backtest.usdm_fees)),
         ("risk", repr(backtest.risk)),
         ("risk_overlay", repr(backtest.risk_overlay)),
         ("starting_equity", str(backtest.starting_equity)),

@@ -109,6 +109,12 @@ class XsMomWalkForwardReport:
         return tuple(fold.oos_return for fold in self.folds)
 
     @property
+    def oos_daily_returns(self) -> tuple[Decimal, ...]:
+        # The basket rotation reports per-fold returns, not per-day; the gate treats an
+        # empty series as "not measured" for the daily-return (DSR) checks.
+        return ()
+
+    @property
     def profitable_folds(self) -> int:
         return sum(1 for value in self.oos_returns if value > 0)
 
@@ -163,12 +169,8 @@ class XsMomWalkForwardReport:
 
     @property
     def mean_turnover_per_bar(self) -> Decimal | None:
-        values = []
-        for fold in self.folds:
-            metrics = fold.out_of_sample.metrics
-            # XsMom fold doesn't have oos_bar_count saved yet. We could estimate using window
-            # but for now we'll just return None or add it.
-            # We'll return None for XsMom for now as it's not fully mapped.
+        # XsMom folds don't persist oos_bar_count yet, so turnover-per-bar cannot be
+        # mapped honestly; return None rather than invent a number.
         return None
 
     @property

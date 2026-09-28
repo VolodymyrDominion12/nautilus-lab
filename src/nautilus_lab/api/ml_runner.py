@@ -109,7 +109,7 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
         catalog_path = resolve_catalog_path(job.catalog_path)
         instrument = job.instrument_id or cfg.instrument_id
         interval = job.bar_interval or cfg.bar_interval
-        store = NautilusParquetCatalog(catalog_path, fees=FeeSchedule.binance_spot_vip0())
+        store = NautilusParquetCatalog(catalog_path, spot_fees=FeeSchedule.binance_spot_vip0())
         bar_type = nautilus_bar_type(instrument, interval)
         start = parse_optional_utc(job.start)
         end = parse_optional_utc(job.end)

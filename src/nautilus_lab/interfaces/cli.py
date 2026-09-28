@@ -639,7 +639,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
     subject = f"{(robot or cfg.robot).value} {cfg.instrument_id}"
     journal_enabled = _journal_enabled(cfg, args)
     started_at = datetime.now(UTC)
-    
+
     if getattr(args, "vol_target", None) is not None:
         cfg.use_vol_scaling = True
         cfg.vol_scaling_target = Decimal(str(args.vol_target))
@@ -1209,7 +1209,7 @@ def _run_xsmom(cfg: Settings, args: argparse.Namespace) -> int:
         )
     request = XsMomRequest(
         starting_equity=cfg.starting_equity,
-        fees=cfg.fee_schedule(),
+        fees=cfg.spot_fee_schedule(),
         slippage=Decimal(args.slippage_bps) / Decimal("10000"),
         grid=XsMomGrid(
             lookback_bars=_int_list(args.lookbacks),
@@ -1328,7 +1328,9 @@ def _print_multi_window(
         print(registration.summary_line())
     # Half the evidence: PBO/DSR come from `--pbo`, so this is INCOMPLETE at best.
     cls = class_for_robot(robot_name) if robot_name else None
-    print(evaluate_gate(report, None, preregistration=registration, strategy_class=cls).summary_line())
+    print(
+        evaluate_gate(report, None, preregistration=registration, strategy_class=cls).summary_line()
+    )
 
 
 def _breach_suffix(line: str | None) -> str:

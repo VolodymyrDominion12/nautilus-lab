@@ -147,9 +147,7 @@ def test_get_recent_logs_filters_by_regime_and_signal(tmp_path: Path) -> None:
     writer.log(
         replace(base, bar_end_utc=t0 + timedelta(minutes=1), regime="downtrend", signal="sell")
     )
-    writer.log(
-        replace(base, bar_end_utc=t0 + timedelta(minutes=2), regime="range", signal=None)
-    )
+    writer.log(replace(base, bar_end_utc=t0 + timedelta(minutes=2), regime="range", signal=None))
 
     assert [r["regime"] for r in writer.get_recent_logs("regime-eth-159a09", regime="uptrend")] == [
         "uptrend"

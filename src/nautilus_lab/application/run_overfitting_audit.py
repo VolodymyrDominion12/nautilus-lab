@@ -207,7 +207,7 @@ def audit_from_matrix(
     result = probability_of_backtest_overfitting(numeric)
     best = labels[index_of_best_configuration(matrix)]
     deflated = deflated_sharpe_for_winner(numeric, matrix, total_trials=total_trials)
-    
+
     daily_trial_sharpes: list[Decimal] = []
     if daily_matrix:
         # daily_matrix is blocks x configurations x daily_returns

@@ -331,8 +331,14 @@ class FundingRobot(Strategy):  # type: ignore[misc]
     def _update_equity_path(self, ts_utc: datetime, equity: Decimal) -> None:
         day = ts_utc.date()
         if self._day != day:
-            if self._day is not None and self._day_start_equity is not None and self._day_start_equity > 0:
-                self._daily_returns.append((equity - self._day_start_equity) / self._day_start_equity)
+            if (
+                self._day is not None
+                and self._day_start_equity is not None
+                and self._day_start_equity > 0
+            ):
+                self._daily_returns.append(
+                    (equity - self._day_start_equity) / self._day_start_equity
+                )
             self._day = day
             self._day_start_equity = equity
         state = self._peak_state or PeakState(peak=equity)

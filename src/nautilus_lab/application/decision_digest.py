@@ -228,7 +228,10 @@ def build_digest(
         near_miss_examples=near[-10:],
         intrabar=dict(Counter(str(r.get("outcome")) for r in intrabar).most_common()),
         config_hashes=sorted({str(r["config_hash"]) for r in upgraded if r.get("config_hash")}),
-        params=next((r.get("params") for r in reversed(upgraded) if r.get("params")), {}),
+        params=next(
+            (p for r in reversed(upgraded) if isinstance((p := r.get("params")), dict)),
+            {},
+        ),
         v0_rows=sum(1 for r in upgraded if r.get("schema") == "decision_trace/0"),
         narratives=narratives,
     )
@@ -311,8 +314,14 @@ PRESET_QUESTIONS: dict[str, str] = {
     ),
     "regime_quality": "Де режим перемикався запізно або хаотично («пилка»)? Наведи бари.",
     "hypotheses": "Які 3 гіпотези для бектесту випливають з цього журналу?",
-    "trade_management": "Оціни ефективність виходів. Чи часто ми втрачаємо прибуток перед розворотом ціни? Чи варто змінити стопи (напр., trailing-stop)?",
-    "near_misses": "Проаналізуй 'майже-сигнали' (near misses). Чи пропустили ми прибуткові рухи через занадто жорсткий фільтр? Запропонуй гіпотезу послаблення фільтра.",
+    "trade_management": (
+        "Оціни ефективність виходів. Чи часто ми втрачаємо прибуток перед розворотом "
+        "ціни? Чи варто змінити стопи (напр., trailing-stop)?"
+    ),
+    "near_misses": (
+        "Проаналізуй 'майже-сигнали' (near misses). Чи пропустили ми прибуткові рухи "
+        "через занадто жорсткий фільтр? Запропонуй гіпотезу послаблення фільтра."
+    ),
 }
 
 

@@ -277,7 +277,6 @@ class WalkForwardFold:
     oos_bar_count: int = 0
 
 
-
 @dataclass(frozen=True, slots=True)
 class MultiWindowReport:
     """Out-of-sample results from several consecutive folds.
@@ -300,9 +299,7 @@ class MultiWindowReport:
     @property
     def oos_daily_returns(self) -> tuple[Decimal, ...]:
         """All out-of-sample daily returns concatenated across folds."""
-        return tuple(
-            ret for fold in self.folds for ret in fold.out_of_sample.daily_returns
-        )
+        return tuple(ret for fold in self.folds for ret in fold.out_of_sample.daily_returns)
 
     @property
     def profitable_folds(self) -> int:

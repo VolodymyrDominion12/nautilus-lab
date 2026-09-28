@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-import uuid
 
 from nautilus_lab.application.collect_live_agg_trades import CollectLiveAggTrades, CollectProgress
 from nautilus_lab.application.dtos import (
@@ -41,6 +41,7 @@ from nautilus_lab.infrastructure.binance_agg_trades import BinancePublicAggTrade
 from nautilus_lab.infrastructure.binance_funding import BinancePublicFunding
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
 from nautilus_lab.infrastructure.binance_ws import BinanceAggTradeStream, BinanceKlineStream
+from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
 from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
 from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
 from nautilus_lab.infrastructure.live_bar_feed import LiveBarCollector, SeededLiveBarFeed
@@ -61,7 +62,6 @@ from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
 from nautilus_lab.infrastructure.trial_ledger import JsonlTrialLedger
-from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
 
 
 def settings() -> Settings:
@@ -163,7 +163,11 @@ def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
     book_feed = _BookFeedAdapter(book_catalog)
     funding_feed = _FundingFeedAdapter(funding_cat)
     return RunResearchBacktest(
-        NautilusResearchBacktest(decision_log_writer(resolved)), research_feed(resolved), tick_feed, book_feed, funding_feed
+        NautilusResearchBacktest(decision_log_writer(resolved)),
+        research_feed(resolved),
+        tick_feed,
+        book_feed,
+        funding_feed,
     )
 
 
@@ -390,7 +394,11 @@ def paper_use_case(cfg: Settings | None = None) -> RunPaperSession:
     book_feed = _BookFeedAdapter(book_catalog)
     funding_feed = _FundingFeedAdapter(funding_cat)
     return RunPaperSession(
-        NautilusResearchBacktest(decision_log_writer(resolved)), research_feed(resolved), tick_feed, book_feed, funding_feed
+        NautilusResearchBacktest(decision_log_writer(resolved)),
+        research_feed(resolved),
+        tick_feed,
+        book_feed,
+        funding_feed,
     )
 
 

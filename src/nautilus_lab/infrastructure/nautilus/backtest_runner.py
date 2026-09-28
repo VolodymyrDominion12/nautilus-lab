@@ -26,8 +26,8 @@ from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.marking import OpenLot, unrealized_pnl
 from nautilus_lab.domain.metrics import PERIODS_PER_YEAR, compute_metrics
-from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.order_book import OrderBookSnapshot
+from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.domain.windowing import within_bars
@@ -85,7 +85,9 @@ class NautilusResearchBacktest:
         ticks: list[AggTrade] | None = None,
         books: list[OrderBookSnapshot] | None = None,
     ) -> BacktestReport:
-        report, _ = self._execute(_single_run(request, bars, ticks, books, decision_log=self.decision_log))
+        report, _ = self._execute(
+            _single_run(request, bars, ticks, books, decision_log=self.decision_log)
+        )
         return report
 
     def run_paper(
@@ -101,7 +103,9 @@ class NautilusResearchBacktest:
         would drift from the numbers the research runs report, and the drift would be
         invisible until it mattered.
         """
-        report, ledger = self._execute(_single_run(request, bars, ticks, books, decision_log=self.decision_log))
+        report, ledger = self._execute(
+            _single_run(request, bars, ticks, books, decision_log=self.decision_log)
+        )
         traded = _traded(bars, request)
         return _paper_report(
             request,
@@ -229,7 +233,8 @@ class NautilusResearchBacktest:
                 ending_balance=ending,
                 notes=(
                     f"{request.robot.value} {request.source.value} backtest with fees "
-                    f"(spot maker={request.spot_fees.maker} taker={request.spot_fees.taker}, usdm maker={request.usdm_fees.maker} taker={request.usdm_fees.taker}), "
+                    f"(spot maker={request.spot_fees.maker} taker={request.spot_fees.taker}, "
+                    f"usdm maker={request.usdm_fees.maker} taker={request.usdm_fees.taker}), "
                     "50ms latency, 25% one-tick slippage"
                 ),
                 metrics=metrics,
@@ -552,7 +557,9 @@ def _single_run(
     """Everything `_execute` needs for a single-instrument run."""
     if request.robot is RobotName.PAIRS:
         raise ValueError("pairs robot requires run_spread with two instruments")
-    instrument = resolve_instrument(request.instrument_id, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees)
+    instrument = resolve_instrument(
+        request.instrument_id, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees
+    )
     bar_type = BarType.from_str(request.bar_type)
     engine_bars = to_engine_bars(bars, bar_type=bar_type, instrument=instrument)
     # The taker split cannot ride inside a Nautilus `Bar`, so it is handed to the
@@ -665,8 +672,12 @@ def _spread_run(
     bars_b = bars_by_instrument.get(leg_b)
     if bars_a is None or bars_b is None:
         raise ValueError(f"missing bars for pair {leg_a}/{leg_b}")
-    instrument_a = resolve_instrument(leg_a, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees)
-    instrument_b = resolve_instrument(leg_b, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees)
+    instrument_a = resolve_instrument(
+        leg_a, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees
+    )
+    instrument_b = resolve_instrument(
+        leg_b, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees
+    )
     interval = interval_from_bar_type(request.bar_type)
     bar_type_a = BarType.from_str(nautilus_bar_type(leg_a, interval))
     bar_type_b = BarType.from_str(nautilus_bar_type(leg_b, interval))
@@ -718,8 +729,12 @@ def _funding_run(
     bars_perp = bars_by_instrument.get(perp_id)
     if bars_spot is None or bars_perp is None:
         raise ValueError(f"missing bars for funding pair {spot_id}/{perp_id}")
-    instrument_spot = resolve_instrument(spot_id, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees)
-    instrument_perp = resolve_instrument(perp_id, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees)
+    instrument_spot = resolve_instrument(
+        spot_id, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees
+    )
+    instrument_perp = resolve_instrument(
+        perp_id, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees
+    )
     interval = interval_from_bar_type(request.bar_type)
     bar_type_spot = BarType.from_str(nautilus_bar_type(spot_id, interval))
     bar_type_perp = BarType.from_str(nautilus_bar_type(perp_id, interval))

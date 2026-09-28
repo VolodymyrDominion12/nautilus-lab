@@ -61,10 +61,12 @@ class WalkForwardEvidence(Protocol):
     @property
     def mean_exposure_pct(self) -> Decimal | None: ...
 
+
 class StrategyClass(StrEnum):
     TREND_FOLLOWING = "trend_following"
     MEAN_REVERSION = "mean_reversion"
     CARRY = "carry"
+
 
 def class_for_robot(robot: str) -> StrategyClass | None:
     if robot in ("ema", "regime", "adaptive_ema"):
@@ -94,7 +96,7 @@ class GateCriteria:
     # Gate v2 additions (Alpha level)
     min_gross_return: Decimal = Decimal("0")
     min_breakeven_bps: Decimal = Decimal("5.0")
-    
+
     def apply_class_thresholds(self, strategy_class: StrategyClass | None) -> GateCriteria:
         """Return a copy of the criteria adjusted for the strategy class."""
         if strategy_class is StrategyClass.CARRY:
@@ -140,7 +142,6 @@ def evaluate_gate(
     preregistration: PreregistrationVerdict | None = None,
     strategy_class: StrategyClass | None = None,
 ) -> GateVerdict:
-    from dataclasses import replace
     rules = criteria or GateCriteria()
     if strategy_class:
         rules = rules.apply_class_thresholds(strategy_class)
@@ -154,26 +155,27 @@ def evaluate_gate(
         )
     )
 
+
 def _alpha_level_checks(
     multi: WalkForwardEvidence | None, rules: GateCriteria
 ) -> tuple[GateCheck, ...]:
     if multi is None:
         missing = "run `lab research --folds N`"
         return (_check("alpha_gross", None, missing), _check("alpha_breakeven", None, missing))
-    
+
     gross = multi.mean_gross_return
     breakeven = multi.mean_breakeven_bps
-    
+
     return (
         _check(
-            "alpha_gross", 
-            None if gross is None else gross > rules.min_gross_return, 
-            f"Gross={gross} (need > {rules.min_gross_return})"
+            "alpha_gross",
+            None if gross is None else gross > rules.min_gross_return,
+            f"Gross={gross} (need > {rules.min_gross_return})",
         ),
         _check(
-            "alpha_breakeven", 
-            None if breakeven is None else breakeven > rules.min_breakeven_bps, 
-            f"Breakeven={breakeven}bps (need > {rules.min_breakeven_bps}bps)"
+            "alpha_breakeven",
+            None if breakeven is None else breakeven > rules.min_breakeven_bps,
+            f"Breakeven={breakeven}bps (need > {rules.min_breakeven_bps}bps)",
         ),
     )
 
@@ -201,7 +203,9 @@ def _check(name: str, passed: bool | None, detail: str) -> GateCheck:
 
 
 def _walk_forward_checks(
-    multi: WalkForwardEvidence | None, rules: GateCriteria, strategy_class: StrategyClass | None = None
+    multi: WalkForwardEvidence | None,
+    rules: GateCriteria,
+    strategy_class: StrategyClass | None = None,
 ) -> tuple[GateCheck, ...]:
     if multi is None:
         missing = "run `lab research --folds N`"
@@ -233,12 +237,12 @@ def _walk_forward_checks(
             "beats_buy_hold",
             multi.beats_buy_and_hold(),
             "mean out-of-sample return vs mean buy&hold over the same folds",
-        )
+        ),
     ]
-    
+
     if strategy_class is StrategyClass.TREND_FOLLOWING:
         checks.extend(_vol_matched_check(multi))
-        
+
     checks.append(
         _check(
             "oos_fills",
@@ -279,19 +283,27 @@ def _vol_matched_check(multi: WalkForwardEvidence) -> tuple[GateCheck, ...]:
 
 
 def _audit_checks(
-    audit: OverfitAuditReport | None, rules: GateCriteria, strategy_class: StrategyClass | None = None, multi: WalkForwardEvidence | None = None
+    audit: OverfitAuditReport | None,
+    rules: GateCriteria,
+    strategy_class: StrategyClass | None = None,
+    multi: WalkForwardEvidence | None = None,
 ) -> tuple[GateCheck, ...]:
     if audit is None:
         missing = "run `lab research --pbo`"
         return (_check("pbo", None, missing), _check("dsr", None, missing))
     pbo_passed = audit.pbo <= rules.max_pbo if audit.is_meaningful else None
-    
-    if multi is not None and getattr(multi, "oos_daily_returns", None) is not None and getattr(audit, "daily_trial_sharpes", None):
+
+    if (
+        multi is not None
+        and getattr(multi, "oos_daily_returns", None)
+        and getattr(audit, "daily_trial_sharpes", None)
+    ):
         from nautilus_lab.domain.deflated_sharpe import deflated_sharpe_ratio
+
         dsr_result = deflated_sharpe_ratio(
             multi.oos_daily_returns,
             list(audit.daily_trial_sharpes),
-            total_trials=audit.deflated_sharpe.n_trials_total
+            total_trials=audit.deflated_sharpe.n_trials_total,
         )
         dsr = dsr_result.probability
         trials = dsr_result.n_trials_total

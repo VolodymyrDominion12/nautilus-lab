@@ -46,42 +46,160 @@ class MatrixRun:
 
 MATRIX: tuple[MatrixRun, ...] = (
     # Phase 4.1 - EMA with vol_scaling on 10 coins, 1d (6 folds)
-    MatrixRun("4_1", "ema", "BTCUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1", "ema", "ETHUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1", "ema", "BNBUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1", "ema", "SOLUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1", "ema", "XRPUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1", "ema", "ADAUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1", "ema", "DOTUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1", "ema", "AVAXUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1", "ema", "MATICUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1", "ema", "LINKUSDT", "1d", ("--folds", "6", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-
+    MatrixRun(
+        "4_1",
+        "ema",
+        "BTCUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1",
+        "ema",
+        "ETHUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1",
+        "ema",
+        "BNBUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1",
+        "ema",
+        "SOLUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1",
+        "ema",
+        "XRPUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1",
+        "ema",
+        "ADAUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1",
+        "ema",
+        "DOTUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1",
+        "ema",
+        "AVAXUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1",
+        "ema",
+        "MATICUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1",
+        "ema",
+        "LINKUSDT",
+        "1d",
+        ("--folds", "6", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
     # Phase 4.1 PBO for promising candidates
-    MatrixRun("4_1_PBO", "ema", "SOLUSDT", "1d", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-    MatrixRun("4_1_PBO", "ema", "MATICUSDT", "1d", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_1d"), (("USE_VOL_SCALING", "true"),)),
-
+    MatrixRun(
+        "4_1_PBO",
+        "ema",
+        "SOLUSDT",
+        "1d",
+        ("--folds", "6", "--pbo", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
+    MatrixRun(
+        "4_1_PBO",
+        "ema",
+        "MATICUSDT",
+        "1d",
+        ("--folds", "6", "--pbo", "--catalog", "catalog_2019_1d"),
+        (("USE_VOL_SCALING", "true"),),
+    ),
     # Phase 4.2 - Regime router 6-fold validation on major pairs
     MatrixRun("4_2", "regime", "BTCUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
     MatrixRun("4_2", "regime", "ETHUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
     MatrixRun("4_2", "regime", "SOLUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
     MatrixRun("4_2", "regime", "BNBUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
-    
     # Phase 4.2 PBO audits for the same pairs
-    MatrixRun("4_2_PBO", "regime", "BTCUSDT", "4h", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h")),
-    MatrixRun("4_2_PBO", "regime", "ETHUSDT", "4h", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h")),
-    MatrixRun("4_2_PBO", "regime", "SOLUSDT", "4h", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h")),
-    MatrixRun("4_2_PBO", "regime", "BNBUSDT", "4h", ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h")),
-
+    MatrixRun(
+        "4_2_PBO",
+        "regime",
+        "BTCUSDT",
+        "4h",
+        ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h"),
+    ),
+    MatrixRun(
+        "4_2_PBO",
+        "regime",
+        "ETHUSDT",
+        "4h",
+        ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h"),
+    ),
+    MatrixRun(
+        "4_2_PBO",
+        "regime",
+        "SOLUSDT",
+        "4h",
+        ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h"),
+    ),
+    MatrixRun(
+        "4_2_PBO",
+        "regime",
+        "BNBUSDT",
+        "4h",
+        ("--folds", "6", "--pbo", "--catalog", "catalog_2019_4h"),
+    ),
     # Phase 4.3 - Funding carry 4h
-    MatrixRun("4_3", "funding", "BTCUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h"), (
-        ("FUNDING_SPOT_ID", "BTC/USDT.SIM"),
-        ("FUNDING_PERP_ID", "BTCUSDT-PERP.SIM"),
-    )),
-    MatrixRun("4_3", "funding", "ETHUSDT", "4h", ("--folds", "6", "--catalog", "catalog_2019_4h"), (
-        ("FUNDING_SPOT_ID", "ETH/USDT.SIM"),
-        ("FUNDING_PERP_ID", "ETHUSDT-PERP.SIM"),
-    )),
+    MatrixRun(
+        "4_3",
+        "funding",
+        "BTCUSDT",
+        "4h",
+        ("--folds", "6", "--catalog", "catalog_2019_4h"),
+        (
+            ("FUNDING_SPOT_ID", "BTC/USDT.SIM"),
+            ("FUNDING_PERP_ID", "BTCUSDT-PERP.SIM"),
+        ),
+    ),
+    MatrixRun(
+        "4_3",
+        "funding",
+        "ETHUSDT",
+        "4h",
+        ("--folds", "6", "--catalog", "catalog_2019_4h"),
+        (
+            ("FUNDING_SPOT_ID", "ETH/USDT.SIM"),
+            ("FUNDING_PERP_ID", "ETHUSDT-PERP.SIM"),
+        ),
+    ),
 )
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -152,10 +270,8 @@ def _run_all(
             env["INSTRUMENT_ID"] = instrument_id
 
             env["BAR_INTERVAL"] = run.interval
-            for k, v in run.env_vars:
-                env[k] = v
+            env.update(run.env_vars)
 
-            
             # Map interval 4h -> 4-HOUR, 1h -> 1-HOUR, 1d -> 1-DAY
             interval_str = run.interval.upper()
             if interval_str == "4H":
@@ -164,12 +280,15 @@ def _run_all(
                 interval_str = "1-HOUR"
             elif interval_str == "1D":
                 interval_str = "1-DAY"
-                
+
             env["BAR_TYPE"] = f"{instrument_id}-{interval_str}-LAST-EXTERNAL"
 
             with log_path.open("w") as log_fh:
                 log_fh.write(f"# revision={revision} started={started_at}\n")
-                log_fh.write(f"# env: INSTRUMENT_ID={env['INSTRUMENT_ID']} BAR_INTERVAL={env['BAR_INTERVAL']} BAR_TYPE={env['BAR_TYPE']}\n")
+                log_fh.write(
+                    f"# env: INSTRUMENT_ID={env['INSTRUMENT_ID']} "
+                    f"BAR_INTERVAL={env['BAR_INTERVAL']} BAR_TYPE={env['BAR_TYPE']}\n"
+                )
                 log_fh.write(f"# cmd={' '.join(cmd)}\n\n")
                 proc = subprocess.run(
                     cmd,

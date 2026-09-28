@@ -376,7 +376,9 @@ def test_order_book_snapshot_round_trip_keeps_prices_and_sizes() -> None:
     """
     cfg = Settings()
     request = research_request(cfg, bar_count=100)
-    instrument = resolve_instrument(request.instrument_id, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule())
+    instrument = resolve_instrument(
+        request.instrument_id, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule()
+    )
     ts_utc = datetime(2024, 1, 1, tzinfo=UTC)
     snapshot = OrderBookSnapshot(
         instrument_id=request.instrument_id,
@@ -406,7 +408,9 @@ def test_order_book_conversion_truncates_to_the_engine_depth() -> None:
     """A 20-level Binance snapshot must not crash the engine's ten-level container."""
     cfg = Settings()
     request = research_request(cfg, bar_count=100)
-    instrument = resolve_instrument(request.instrument_id, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule())
+    instrument = resolve_instrument(
+        request.instrument_id, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule()
+    )
     snapshot = OrderBookSnapshot(
         instrument_id=request.instrument_id,
         ts_utc=datetime(2024, 1, 1, tzinfo=UTC),
@@ -440,7 +444,9 @@ def test_tick_conversion_accepts_binance_decimal_strings() -> None:
     """
     cfg = Settings()
     request = research_request(cfg, bar_count=100)
-    instrument = resolve_instrument(request.instrument_id, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule())
+    instrument = resolve_instrument(
+        request.instrument_id, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule()
+    )
     trade = AggTrade(
         instrument_id=request.instrument_id,
         ts_utc=datetime(2024, 1, 1, tzinfo=UTC),

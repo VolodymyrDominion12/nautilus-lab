@@ -36,7 +36,7 @@ def catalog_tail(
     path = Path(catalog_path or cfg.catalog_path)
     if not path.exists():
         return None
-    catalog = NautilusParquetCatalog(path, fees=cfg.fee_schedule())
+    catalog = NautilusParquetCatalog(path, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule())
     try:
         bars = catalog.load(bar_type=bar_type)
     except CatalogEmptyError:

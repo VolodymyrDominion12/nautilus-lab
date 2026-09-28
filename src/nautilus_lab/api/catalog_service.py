@@ -184,7 +184,7 @@ def load_catalog_bars(
     resolved_id = instrument_id or cfg.instrument_id
     interval = bar_interval or cfg.bar_interval
     bar_type = nautilus_bar_type(resolved_id, interval)
-    catalog = NautilusParquetCatalog(resolve_catalog_path(catalog_path), fees=cfg.fee_schedule())
+    catalog = NautilusParquetCatalog(resolve_catalog_path(catalog_path), spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule())
     bars = catalog.load(
         bar_type=bar_type,
         start=_parse_utc(start),

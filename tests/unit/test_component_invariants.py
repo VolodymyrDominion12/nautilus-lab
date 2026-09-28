@@ -45,10 +45,10 @@ def test_backtest_engine_fee_schedule_agreement() -> None:
     cat = catalog(cfg)
     req = research_request(cfg, bar_count=100)
 
-    assert cat._fees == req.fee_schedule == cfg.fee_schedule()
-    inst = resolve_instrument(req.instrument_id, fees=cat._fees)
-    assert Decimal(str(inst.spot_maker_fee)) == req.fee_schedule.maker
-    assert Decimal(str(inst.spot_taker_fee)) == req.fee_schedule.taker
+    assert cat._spot_fees == req.spot_fees == cfg.spot_fee_schedule()
+    inst = resolve_instrument(req.instrument_id, spot_fees=cat._spot_fees, usdm_fees=req.usdm_fees)
+    assert Decimal(str(inst.maker_fee)) == req.spot_fees.maker
+    assert Decimal(str(inst.taker_fee)) == req.spot_fees.taker
 
 
 # --- data-catalog ---
@@ -376,7 +376,7 @@ def test_order_book_snapshot_round_trip_keeps_prices_and_sizes() -> None:
     """
     cfg = Settings()
     request = research_request(cfg, bar_count=100)
-    instrument = resolve_instrument(request.instrument_id, fees=cfg.fee_schedule())
+    instrument = resolve_instrument(request.instrument_id, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule())
     ts_utc = datetime(2024, 1, 1, tzinfo=UTC)
     snapshot = OrderBookSnapshot(
         instrument_id=request.instrument_id,
@@ -406,7 +406,7 @@ def test_order_book_conversion_truncates_to_the_engine_depth() -> None:
     """A 20-level Binance snapshot must not crash the engine's ten-level container."""
     cfg = Settings()
     request = research_request(cfg, bar_count=100)
-    instrument = resolve_instrument(request.instrument_id, fees=cfg.fee_schedule())
+    instrument = resolve_instrument(request.instrument_id, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule())
     snapshot = OrderBookSnapshot(
         instrument_id=request.instrument_id,
         ts_utc=datetime(2024, 1, 1, tzinfo=UTC),
@@ -440,7 +440,7 @@ def test_tick_conversion_accepts_binance_decimal_strings() -> None:
     """
     cfg = Settings()
     request = research_request(cfg, bar_count=100)
-    instrument = resolve_instrument(request.instrument_id, fees=cfg.fee_schedule())
+    instrument = resolve_instrument(request.instrument_id, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule())
     trade = AggTrade(
         instrument_id=request.instrument_id,
         ts_utc=datetime(2024, 1, 1, tzinfo=UTC),

@@ -44,7 +44,8 @@ def live_config_from_settings(
     created_from: str = "ui",
 ) -> LivePaperConfig:
     """Robot parameters, fees and breakers from the same Settings research runs use."""
-    fees = cfg.fee_schedule()
+    spot_fees = cfg.spot_fee_schedule()
+    usdm_fees = cfg.usdm_fee_schedule()
     return LivePaperConfig(
         symbol=symbol.upper(),
         interval=interval,
@@ -55,8 +56,8 @@ def live_config_from_settings(
         take_profit_multiple=take_profit_multiple,
         mode=mode,
         auto_trade=auto_trade,
-        maker_fee=fees.maker,
-        taker_fee=fees.taker,
+        maker_fee=usdm_fees.maker if symbol.endswith("PERP") else spot_fees.maker,
+        taker_fee=usdm_fees.taker if symbol.endswith("PERP") else spot_fees.taker,
         fast_ema=cfg.fast_ema,
         slow_ema=cfg.slow_ema,
         regime=cfg.regime_params(),

@@ -47,6 +47,19 @@ invariants_enforced:
       tests/integration/test_backtest_paper_parity.py::test_backtest_and_live_paper_sizing_parity.
 
   - statement: >
+      Вихід за protective stop у бектесті пишеться як intrabar-запис `STOP_LOSS` у той
+      самий журнал рішень, тож реконструкція угоди бачить вихід за стопом, а не читає
+      його як «розворот» чи «відкрита позиція».
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/signal_strategy.py
+    verified_by: tests/integration/test_backtest_decision_trace.py::test_backtest_records_a_protective_stop_as_intrabar
+    note: >
+      Protective stop — це resting reduce-only ордер, який рушій тригерить усередині
+      бару; до 2026-09-28 його філ лише чистив `_stop_order_id` і не писав жодного
+      запису. Тейк-профіту в бектесті немає (він є лише в paper-терміналі), тому
+      окремого `TAKE_PROFIT` запису не існує: вихід за сигналом іде як `EXIT`/
+      `FLATTEN_REGIME_CHANGE`, за ratchet — як `EXIT`.
+
+  - statement: >
       `blocked_by` — це закритий словник, спільний для paper і backtest: ризикові
       запобіжники мають префікс `risk.<code>` (`risk.max_daily_loss`,
       `risk.max_drawdown`, …), стан виконання — `execution.order_working`, а нульовий
@@ -79,13 +92,13 @@ invariants_enforced:
 notes: >
   Механізм працює для одноногих роботів, які може збудувати і термінал, і бектест.
   Свідомо лишається відкритим (docs/28 §«Що далі»):
-  (1) `intrabar`-записи в бектесті — protective stop/TP закривають позицію, але
-  окремого `STOP_LOSS`/`TAKE_PROFIT` запису в журнал рішень бектесту поки немає,
-  тож реконструкція угоди може прочитати стоп як розворот;
-  (2) `meta_label` не запускається в live-paper, тому trace для нього не додано;
-  (3) `scripts/trace_diff.py` (порівняння paper ↔ backtest) не існує.
-  Статус `active`, а не `partial`, бо саме барний запис — головна частина
-  механізму — тепер однакова в обох контурах і за нею стоїть тест.
+  (1) `meta_label` не запускається в live-paper, тому trace для нього не додано;
+  (2) `scripts/trace_diff.py` (порівняння paper ↔ backtest) не існує;
+  (3) тейк-профіту в бектесті немає (він є лише в paper-терміналі), тож окремого
+  `TAKE_PROFIT` запису не буває — вихід за сигналом іде як `EXIT`/`FLATTEN_REGIME_CHANGE`,
+  за ratchet — як `EXIT`.
+  Статус `active`, а не `partial`, бо барний запис і стоп-вихід — головні частини
+  механізму — тепер однакові в обох контурах і за ними стоять тести.
 
 references:
   - docs/28-zhurnal-rishen-decision-trace.md

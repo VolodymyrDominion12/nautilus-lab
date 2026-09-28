@@ -349,10 +349,10 @@ def _intrabar(step: Mapping[str, Any]) -> str:
     component = step.get("component")
     if component in ("stop_loss", "take_profit"):
         name = "Стоп-лос" if component == "stop_loss" else "Тейк-профіт"
-        return (
-            f"{name} {fmt(_v(step, 'level'))} зачеплено (high {fmt(_v(step, 'high'))}, "
-            f"low {fmt(_v(step, 'low'))})."
-        )
+        high, low = _v(step, "high"), _v(step, "low")
+        if high is None and low is None:
+            return f"{name} {fmt(_v(step, 'level'))} зачеплено."
+        return f"{name} {fmt(_v(step, 'level'))} зачеплено (high {fmt(high)}, low {fmt(low)})."
     if component == "manual_close":
         return "Позицію закрито вручну з терміналу."
     if component == "update_stops":

@@ -35,6 +35,7 @@ from nautilus_lab.domain.bars import OhlcvBar, validate_bar
 from nautilus_lab.domain.decision_log import DecisionRecord
 from nautilus_lab.domain.decision_trace import (
     Outcome,
+    RecordKind,
     Stage,
     TraceStep,
     TraceValue,
@@ -359,6 +360,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         if self._stop_order_id is not None and client_order_id == self._stop_order_id:
             self._stop_order_id = None
             self.log.info("Protective stop filled; position closed at the stop")
+            self._record_stop_fill(client_order_id, event)
             return
         if self._entry_order_id is None or client_order_id != self._entry_order_id:
             return
@@ -367,6 +369,58 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return  # partial fill: wait for the rest, then protect the whole size
         self._entry_order_id = None
         self._place_protective_stop(order)
+
+    def _record_stop_fill(self, client_order_id: object, event: object) -> None:
+        """The protective stop filled: record it as an intrabar `STOP_LOSS` decision.
+
+        The stop is a resting reduce-only order the engine triggers mid-bar; without
+        this record a research backtest's decision log never shows the exit, so the
+        reconstructed trade is read as still-open or as a reversal on the next entry.
+        """
+        if self.decision_log is None or self.session_id is None:
+            return
+        order = self.cache.order(client_order_id)
+        if order is None:
+            return
+        price = _as_decimal(getattr(order, "avg_px", 0))
+        qty = getattr(order, "filled_qty", None)
+        if price <= 0:
+            return
+        # The stop closes the side opposite the one it is placed on: SELL exits a LONG.
+        position_side = "LONG" if getattr(order, "side", None) == OrderSide.SELL else "SHORT"
+        ts_ns = getattr(event, "ts_event", None)
+        ts = (
+            datetime.fromtimestamp(int(ts_ns) / 1_000_000_000, tz=UTC)
+            if ts_ns is not None
+            else datetime.now(UTC)
+        )
+        record = DecisionRecord(
+            bar_end_utc=ts,
+            robot=self.config.robot.lower(),
+            instrument_id=str(self.config.instrument_id),
+            close_price=price,
+            regime="",
+            signal=None,
+            signal_reason=None,
+            indicators={},
+            states={},
+            session_id=self.session_id,
+            kind=RecordKind.INTRABAR,
+            account=self._account_snapshot(),
+            steps=(
+                step(
+                    Stage.INTRABAR,
+                    "stop_loss",
+                    Verdict.EMIT,
+                    result="stop_loss",
+                    values={"level": price, "side": position_side, "qty": qty},
+                ),
+            ),
+            outcome=Outcome.STOP_LOSS.value,
+            config_hash=self._config_hash(),
+        )
+        record = replace(record, narrative=render_narrative(record_to_dict(record)))
+        self.decision_log.log(record)
 
     def _warming_up(self, ts_event_ns: int) -> bool:
         start = self.config.trade_start_ns

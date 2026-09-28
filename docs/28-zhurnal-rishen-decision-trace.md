@@ -103,6 +103,7 @@
 * Стрічка рішень і маркери на графіку в `LiveTradingTerminal` (зараз — оновлена вкладка DecisionLogPanel).
 * `scripts/trace_diff.py` для порівняння paper ↔ backtest (сам trace у бектесті тепер пишеться,
   див. `specs/components/decision-trace.yaml`).
-* `intrabar`-записи в бектесті: protective stop/TP закривають позицію, але окремого
-  `STOP_LOSS`/`TAKE_PROFIT` запису в журнал рішень бектесту поки немає.
 * `meta_label` у paper не запускається, тому trace для нього не додано.
+* Тейк-профіту в бектесті немає (він є лише в paper-терміналі), тому окремого `TAKE_PROFIT`
+  запису не буває; вихід за protective stop тепер пишеться як intrabar `STOP_LOSS`
+  (`signal_strategy.py::_record_stop_fill`).

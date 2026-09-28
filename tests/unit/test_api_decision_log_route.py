@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from nautilus_lab.api.app import create_app
 from nautilus_lab.api.paper_streamer import LivePaperConfig, LivePaperSessionManager
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.decision_log import DecisionRecord
 from nautilus_lab.infrastructure.settings import Settings
 
 
@@ -52,6 +53,23 @@ def _bar(ts: datetime, instrument_id: str = "ETHUSDT") -> OhlcvBar:
         low=Decimal("2670"),
         close=Decimal("2685.91"),
         volume=Decimal("10"),
+    )
+
+
+def _record(session_id: str) -> DecisionRecord:
+    """One bar decision as the research backtest writer files it: keyed by run id."""
+    return DecisionRecord(
+        bar_end_utc=datetime(2026, 9, 25, 16, 0, tzinfo=UTC),
+        robot="regime",
+        instrument_id="ETH/USDT.SIM",
+        close_price=Decimal("2685.91"),
+        regime="TREND",
+        signal="FLAT",
+        signal_reason="no entry",
+        indicators={"er": "0.45"},
+        states={"effective_regime": "TREND"},
+        session_id=session_id,
+        narrative="bar closed 2685.91; regime TREND; signal FLAT",
     )
 
 
@@ -95,6 +113,40 @@ def test_decision_log_route_does_not_show_another_session_s_decisions(tmp_path: 
 
     assert [row["instrument"] for row in btc_logs] == ["BTCUSDT"]
     assert [row["instrument"] for row in eth_logs] == ["ETHUSDT"]
+
+
+def test_decision_log_route_reads_a_research_backtest_run(tmp_path: Path) -> None:
+    """Backtest Details asks for a run that was never a live paper session.
+
+    A research run files its decisions under `single_backtest.session_id`
+    (`interfaces/composition.py` stamps `session_id=str(uuid4())`), so the id is a valid log
+    key with no session behind it. The route answered 404 "no live paper session" and the
+    modal showed that raw JSON instead of the run's decisions.
+    """
+    app = create_app(_cfg(), root=tmp_path)
+    run_id = "0d83e156-f6fd-483d-b21a-fe26721e1f8c"
+    writer = app.state.lab.sessions.decision_log_writer
+    writer.log(_record(run_id))
+
+    client = TestClient(app)
+    res = client.get(f"/api/paper/sessions/{run_id}/decision-log")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "ok"
+    assert [row["session_id"] for row in body["logs"]] == [run_id]
+    assert body["logs"][0]["robot"] == "regime"
+
+
+def test_decision_log_route_reports_an_unknown_key_as_empty(tmp_path: Path) -> None:
+    """A key nobody ever logged stays "ok" with no rows, not a 404 or a raw error body."""
+    app = create_app(_cfg(), root=tmp_path)
+
+    client = TestClient(app)
+    res = client.get("/api/paper/sessions/never-ran-000000/decision-log")
+
+    assert res.status_code == 200
+    assert res.json() == {"status": "ok", "logs": []}
 
 
 def test_decision_log_route_reports_a_session_that_has_no_id_yet(tmp_path: Path) -> None:

@@ -199,8 +199,10 @@ invariants_enforced:
   - statement: >
       Вкладка Decision Logs показує рішення саме тієї сесії, яку відкрито в UI:
       роут `/api/paper/sessions/{key}/decision-log` читає журнал за ТИМ САМИМ
-      ключем, яким його записав writer — `session_id`. Сесія без id і вимкнене
-      логування відповідають помилкою, а не порожнім «ok».
+      ключем, яким його записав writer — `session_id`. Ключ без живої сесії за ним
+      (id дослідницького прогону, `single_backtest.session_id`) читається як
+      звичайний ключ журналу, а не як `404`: саме його просить «Backtest Details».
+      Сесія без id і вимкнене логування відповідають помилкою, а не порожнім «ok».
     enforced_by: src/nautilus_lab/api/routes/live.py
     verified_by: tests/unit/test_api_decision_log_route.py::test_decision_log_route_returns_the_session_s_own_records
     note: >
@@ -216,6 +218,29 @@ invariants_enforced:
       ...::test_decision_log_route_reports_logging_being_off. Ключування,
       санітизація імені файлу і retention закриті
       tests/unit/test_decision_log_writer.py.
+      Бектест не має живої сесії, і до 2026-09-28 роут відповідав на його id
+      `404 no live paper session '0d83e156-…'`: модалка «Backtest Details»
+      показувала цей JSON замість рішень прогону. Тепер ключ резолвиться спільно
+      з `decision-digest` (`resolve_decision_log_key`, api/live_sessions.py), і
+      той самий випадок тримає
+      ...::test_decision_log_route_reads_a_research_backtest_run (порожній ключ —
+      «ok» без записів: ...::test_decision_log_route_reports_an_unknown_key_as_empty).
+
+  - statement: >
+      Retention журналу рішень рахує вік файлу за **часом запису**, а не за датою бару
+      в назві: файл старший за `DECISION_LOG_RETENTION_DAYS` видаляється при старті
+      writer'а, свіжий лишається незалежно від того, які дати в його назві.
+      `DECISION_LOG_RETENTION_DAYS=0` не видаляє нічого.
+    enforced_by: src/nautilus_lab/infrastructure/decision_log_writer.py
+    verified_by: tests/unit/test_decision_log_writer.py::test_decision_log_writer_keeps_a_backtest_log_whose_bar_dates_are_history
+    note: >
+      Назва файлу містить дату **бару**: бектест по історії пише `2024-01-01` сьогодні,
+      тож вік за назвою робив свіжий лог «старим». 2026-09-28 перезапуск API з таким
+      правилом зніс ≈62 МБ рішень одного прогону (дати 2024-01-01…2026-09-19) — у
+      модалці «Backtest Details» лишились три симульовані дні. Решта випадків:
+      tests/unit/test_decision_log_writer.py::test_decision_log_writer_pruning (старий
+      за часом запису видаляється, свіжий лишається) і
+      ...::test_decision_log_writer_keeps_everything_when_retention_is_off.
 
   - statement: >
       Слот джоба займається всередині запиту під блокуванням: другий запуск того

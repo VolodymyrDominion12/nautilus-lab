@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from nautilus_lab.api.context import Lab, LabContext
+from nautilus_lab.api.live_sessions import resolve_decision_log_key
 from nautilus_lab.application.decision_analysis import analyze_records, resolve_question
 from nautilus_lab.application.decision_digest import (
     PRESET_QUESTIONS,
@@ -47,8 +48,7 @@ def _session_rows(
     ctx: LabContext, key: str, since: datetime | None, until: datetime | None
 ) -> tuple[str, list[dict[str, Any]]]:
     registry = ctx.sessions
-    manager = registry.find(key)
-    session_id = manager.session_id if manager is not None and manager.session_id else key
+    session_id = resolve_decision_log_key(registry, key)
     writer = registry.decision_log_writer
     read_range = getattr(writer, "read_range", None)
     if read_range is None:

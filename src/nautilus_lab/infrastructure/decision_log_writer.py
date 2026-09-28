@@ -15,7 +15,7 @@ from nautilus_lab.infrastructure.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-#: `<key>_YYYY-MM-DD.jsonl` — the trailing date drives the retention policy.
+#: `<key>_YYYY-MM-DD.jsonl` — the date is the bar's, which is not when the file was written.
 _LOG_NAME_RE = re.compile(r"^(?P<key>.+)_(?P<date>\d{4}-\d{2}-\d{2})\.jsonl$")
 _UNSAFE_KEY_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -60,7 +60,8 @@ class JsonlDecisionLogWriter(DecisionLogPort):
     without a session id (backtests, the CLI, tests) fall back to the robot name as the key,
     which is how files written before the session keying keep being readable.
 
-    Implements a basic retention policy.
+    Implements a basic retention policy: a file older than
+    `DECISION_LOG_RETENTION_DAYS` **of write time** is deleted at start.
     """
 
     def __init__(self, settings: Settings, root: Path | None = None) -> None:
@@ -120,25 +121,28 @@ class JsonlDecisionLogWriter(DecisionLogPort):
         return self._dir / f"{_safe_key(key)}_{date_str}.jsonl"
 
     def _prune_old_logs(self) -> None:
+        """Delete logs nobody may want any more, aged by when they were **written**.
+
+        Not by the date inside the name: that date is the *bar's*, and a research backtest
+        writes bars from history, so a run over 2024 data files `2024-01-01` today and was
+        deleted by the next API restart (2026-09-28: the sweep wiped ~62 MB of one backtest's
+        decisions, leaving three days of it). A live paper session writes bars at wall clock,
+        so for it both rules agree.
+        """
         if self._retention_days <= 0:
             return
 
-        now = datetime.now(UTC)
+        cutoff = datetime.now(UTC).timestamp() - self._retention_days * 86400
         for log_file in self._dir.glob("*.jsonl"):
             if not log_file.is_file():
                 continue
 
             try:
-                # Name format: <session-id>_YYYY-MM-DD.jsonl
-                match = _LOG_NAME_RE.match(log_file.name)
-                if match is None:
+                if log_file.stat().st_mtime > cutoff:
                     continue
-                file_date = datetime.strptime(match.group("date"), "%Y-%m-%d").replace(tzinfo=UTC)
-                age_days = (now - file_date).days
-                if age_days > self._retention_days:
-                    log_file.unlink()
-                    logger.info(f"Pruned old decision log: {log_file.name}")
-            except Exception as e:
+                log_file.unlink()
+                logger.info(f"Pruned old decision log: {log_file.name}")
+            except OSError as e:
                 logger.warning(f"Failed to check/prune log file {log_file.name}: {e}")
 
     @staticmethod

@@ -304,10 +304,34 @@ export interface ResearchLogResponse {
   result?: Record<string, unknown> | null;
 }
 
+/**
+ * What to show a person when a request fails.
+ *
+ * FastAPI answers a refusal with `{"detail": "..."}` and a validation error with a list in
+ * the same field. The panel used to print the whole body, so the Backtest Details modal
+ * showed `{"detail":"no live paper session '0d83e156-…'"}` instead of the sentence. The
+ * body is kept as-is when there is no readable string in it (a validation list, HTML).
+ */
+export function errorText(body: string, status: number): string {
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    parsed = null;
+  }
+  if (parsed && typeof parsed === 'object') {
+    const fields = parsed as { detail?: unknown; message?: unknown };
+    for (const value of [fields.detail, fields.message]) {
+      if (typeof value === 'string' && value.trim()) return value;
+    }
+  }
+  return body || `Request failed (${status})`;
+}
+
 async function parseJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `Request failed (${res.status})`);
+    throw new Error(errorText(text, res.status));
   }
   return res.json();
 }

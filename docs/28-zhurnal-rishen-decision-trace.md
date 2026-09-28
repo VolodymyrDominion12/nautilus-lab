@@ -7,7 +7,9 @@
 заблокував ризик; у робота `regime` блок `indicators` був завжди порожній.
 
 Увімкнення: `DECISION_LOG_ENABLED=true` (файли `data/paper/decisions/<session-id>_YYYY-MM-DD.jsonl`,
-зберігаються `DECISION_LOG_RETENTION_DAYS`, за замовчуванням 7 днів).
+де `YYYY-MM-DD` — дата **бару**, а не запису; зберігаються `DECISION_LOG_RETENTION_DAYS`,
+за замовчуванням 7 днів **від часу запису** — інакше логи бектесту по історії гинули б
+при першому ж перезапуску API).
 
 ## Формат запису
 
@@ -75,6 +77,9 @@
 ## API
 
 * `GET /api/paper/sessions/{key}/decision-log?lines=&outcome=A,B&kind=&since=&until=` — записи з фільтрами.
+  Ключем може бути і `session_id` дослідницького прогону: бектест пише рішення тим самим
+  writer'ом (`single_backtest.session_id`), тож модалка «Backtest Details» читає їх цим самим
+  роутом, без паперової сесії.
 * `GET /api/paper/sessions/{key}/decision-digest?since=&until=` — дайджест (JSON + Markdown).
 * `GET /api/decisions/presets` — готові питання.
 * `POST /api/decisions/analyze` — `{"session": "<id>", "preset": "blocking_filter"}` або `{"records": [...], "question": "..."}`.

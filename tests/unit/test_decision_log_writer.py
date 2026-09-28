@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -188,25 +189,24 @@ def test_decision_log_writer_disables_gracefully_when_all_fail(tmp_path: Path) -
     assert writer.get_recent_logs("regime") == []
 
 
+def _write_log(path: Path, *, age_days: float) -> Path:
+    """A log file written `age_days` ago: the age the retention policy must read."""
+    path.write_text('{"test": 1}\n', encoding="utf-8")
+    stamp = (datetime.now(UTC) - timedelta(days=age_days)).timestamp()
+    os.utime(path, (stamp, stamp))
+    return path
+
+
 def test_decision_log_writer_pruning(tmp_path: Path) -> None:
     log_dir = tmp_path / "data/paper/decisions"
     log_dir.mkdir(parents=True)
 
-    # Create old log file (10 days old)
-    old_date = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%d")
-    old_file = log_dir / f"regime_{old_date}.jsonl"
-    old_file.write_text('{"test": 1}\n', encoding="utf-8")
-
-    # Create recent log file (1 day old)
-    recent_date = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
-    recent_file = log_dir / f"regime_{recent_date}.jsonl"
-    recent_file.write_text('{"test": 2}\n', encoding="utf-8")
-
-    # Session-keyed names age the same way (the date is still the last `_`-separated part).
-    old_session_file = log_dir / f"ema-eth-159a09_{old_date}.jsonl"
-    old_session_file.write_text('{"test": 3}\n', encoding="utf-8")
-    recent_session_file = log_dir / f"ema-eth-159a09_{recent_date}.jsonl"
-    recent_session_file.write_text('{"test": 4}\n', encoding="utf-8")
+    # Written 10 days ago and 1 day ago; both names carry their own bar dates, which are
+    # not the ages: the sweep must go by the write time.
+    old_file = _write_log(log_dir / "regime_2024-01-01.jsonl", age_days=10)
+    recent_file = _write_log(log_dir / "regime_2024-01-02.jsonl", age_days=1)
+    old_session_file = _write_log(log_dir / "ema-eth-159a09_2024-01-01.jsonl", age_days=10)
+    recent_session_file = _write_log(log_dir / "ema-eth-159a09_2024-01-02.jsonl", age_days=1)
 
     settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
@@ -216,10 +216,54 @@ def test_decision_log_writer_pruning(tmp_path: Path) -> None:
     )
     _ = JsonlDecisionLogWriter(settings, root=tmp_path)
 
-    assert not old_file.exists(), "Old log file should have been pruned"
-    assert recent_file.exists(), "Recent log file should be retained"
-    assert not old_session_file.exists(), "Old session-keyed log should have been pruned"
-    assert recent_session_file.exists(), "Recent session-keyed log should be retained"
+    assert not old_file.exists(), "A log written 10 days ago should have been pruned"
+    assert not old_session_file.exists(), "A session-keyed log ages the same way"
+    assert recent_file.exists(), "A log written yesterday should be retained"
+    assert recent_session_file.exists(), "A recent session-keyed log should be retained"
+
+
+def test_decision_log_writer_keeps_a_backtest_log_whose_bar_dates_are_history(
+    tmp_path: Path,
+) -> None:
+    """A research run over 2024 data writes `2024-…` names **today**: keep them.
+
+    On 2026-09-28 the sweep aged files by the date in the name, so an API restart deleted
+    ~62 MB of one backtest's decisions (bar dates 2024-01-01…2026-09-19) and the dashboard's
+    Backtest Details lost everything but the last three simulated days.
+    """
+    log_dir = tmp_path / "data/paper/decisions"
+    log_dir.mkdir(parents=True)
+    backtest_files = [
+        _write_log(log_dir / f"0d83e156-0000-0000-0000-000000000000_{date}.jsonl", age_days=0)
+        for date in ("2024-01-01", "2025-06-15", "2026-09-19")
+    ]
+
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        decision_log_enabled=True,
+        decision_log_dir="data/paper/decisions",
+        decision_log_retention_days=7,
+    )
+    writer = JsonlDecisionLogWriter(settings, root=tmp_path)
+
+    assert all(path.exists() for path in backtest_files), "fresh logs, however old their bars"
+    assert len(writer.get_recent_logs("0d83e156-0000-0000-0000-000000000000")) == 3
+
+
+def test_decision_log_writer_keeps_everything_when_retention_is_off(tmp_path: Path) -> None:
+    log_dir = tmp_path / "data/paper/decisions"
+    log_dir.mkdir(parents=True)
+    ancient = _write_log(log_dir / "regime_2020-01-01.jsonl", age_days=400)
+
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        decision_log_enabled=True,
+        decision_log_dir="data/paper/decisions",
+        decision_log_retention_days=0,
+    )
+    _ = JsonlDecisionLogWriter(settings, root=tmp_path)
+
+    assert ancient.exists(), "retention 0 means keep the logs"
 
 
 def test_null_decision_log_writer() -> None:

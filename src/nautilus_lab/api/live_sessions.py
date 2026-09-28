@@ -69,6 +69,22 @@ def _pct(numerator: float, denominator: float) -> float | None:
     return None if denominator <= 0 else round((numerator / denominator - 1) * 100, 3)
 
 
+def resolve_decision_log_key(registry: SessionRegistry, key: str) -> str:
+    """The key the decision-log files use for `key`.
+
+    The writer files by **session id**. A live session can also be addressed by its
+    `config.name`, so names resolve through the registry first. A key with no live session
+    behind it is used as it stands: a research backtest stamps each run with
+    `session_id=str(uuid.uuid4())` (`interfaces/composition.py`) and the same writer files
+    those records, so a history entry's `single_backtest.session_id` is a valid log key
+    with no paper session behind it (the dashboard's Backtest Details reads exactly that).
+    """
+    manager = registry.find(key)
+    if manager is not None and manager.session_id:
+        return manager.session_id
+    return key
+
+
 class SessionRegistry:
     def __init__(
         self,

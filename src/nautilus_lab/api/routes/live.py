@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 
 from nautilus_lab.api.context import Lab, LabContext
 from nautilus_lab.api.live_paper_boot import live_config_from_settings
+from nautilus_lab.api.live_sessions import resolve_decision_log_key
 from nautilus_lab.api.paper_streamer import LivePaperSessionManager
 from nautilus_lab.api.requests import PaperLiveStartRequest, PaperLiveStopsUpdateRequest
 
@@ -139,8 +140,19 @@ def get_paper_session_decision_log(
     The writer keys its files by **session id** (docs/20, `JsonlDecisionLogWriter`), so the
     lookup must use the same key: reading by `config.name` found nothing and the dashboard
     showed "No decision logs found" while the files were being written all along.
+
+    A research backtest files under its own `single_backtest.session_id` and has no live
+    session, so a key with no session behind it is read as a plain log key instead of a
+    404 — that is what the dashboard's Backtest Details asks for.
     """
-    manager = _session_or_404(ctx, key)
+    manager = ctx.sessions.find(key)
+    if manager is not None and not manager.session_id:
+        return {
+            "status": "error",
+            "message": "Session has no id yet: decision logs are keyed by session id",
+            "logs": [],
+        }
+
     writer = ctx.sessions.decision_log_writer
 
     if writer is None:
@@ -153,13 +165,7 @@ def get_paper_session_decision_log(
     if not hasattr(writer, "get_recent_logs"):
         return {"status": "error", "message": "Log writer does not support reading", "logs": []}
 
-    session_key = manager.session_id
-    if not session_key:
-        return {
-            "status": "error",
-            "message": "Session has no id yet: decision logs are keyed by session id",
-            "logs": [],
-        }
+    session_key = resolve_decision_log_key(ctx.sessions, key)
 
     try:
         outcomes = (

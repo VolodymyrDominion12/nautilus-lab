@@ -292,7 +292,7 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
                           <div className="mt-4 border border-gray-800 rounded-xl overflow-hidden p-2 bg-gray-950/50">
                             <h4 className="text-[10px] font-bold text-gray-400 mb-2 uppercase">Trade Context Chart</h4>
                             <CatalogChart 
-                              instrumentId={instrumentId}
+                              instrumentId={instrumentId || log.instrument}
                               catalogPath={catalogPath}
                               barInterval={barInterval}
                               height={300}

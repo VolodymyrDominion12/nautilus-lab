@@ -359,7 +359,7 @@ def test_trade_page_takes_the_instrument_from_the_trade_itself(tmp_path: Path) -
     draw" next to a trade whose instrument was in the log all along; the interval now falls
     back to the API's configured one and the series check refuses a wrong series by price.
     """
-    app = create_app(_cfg(), root=tmp_path)
+    app = create_app(_cfg(catalog_path=str(tmp_path / "catalog")), root=tmp_path)
     _write_round_trip(app.state.lab.sessions.decision_log_writer, SESSION_ID)
     client = TestClient(app)
 

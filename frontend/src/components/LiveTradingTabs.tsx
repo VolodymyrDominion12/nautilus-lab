@@ -264,7 +264,11 @@ export const LiveTradingTabs: React.FC<LiveTradingTabsProps> = ({
 
         {activeTab === 'decision_logs' &&
           (sessionId ? (
-            <DecisionLogPanel sessionId={sessionId} />
+            <DecisionLogPanel
+              sessionId={sessionId}
+              instrumentId={state?.config?.symbol}
+              barInterval={state?.config?.interval}
+            />
           ) : (
             <div className="py-8 text-center text-xs text-gray-500">
               No active session. Start a session to see decision logs.

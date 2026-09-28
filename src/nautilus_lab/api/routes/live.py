@@ -334,10 +334,11 @@ def _trade_chart(
     if instrument_id:
         from nautilus_lab.api.catalog_service import load_catalog_bars
 
+        resolved_catalog = catalog_path or ctx.settings().catalog_path
         try:
             loaded = load_catalog_bars(
                 instrument_id=instrument_id,
-                catalog_path=catalog_path,
+                catalog_path=resolved_catalog,
                 bar_interval=bar_interval,
                 start=datetime.fromtimestamp(start, UTC).isoformat(),
                 end=datetime.fromtimestamp(end, UTC).isoformat(),

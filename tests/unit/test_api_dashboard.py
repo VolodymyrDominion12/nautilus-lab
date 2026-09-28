@@ -93,3 +93,14 @@ def test_summary_from_structured_multi_window() -> None:
     summary = summary_from_result(result)
     assert summary["multi_window"]["profitable"] == "1/1"
     assert summary["multi_window"]["beats_buy_and_hold"] is True
+
+
+def test_normalize_instrument_id() -> None:
+    from nautilus_lab.api.catalog_service import normalize_instrument_id
+
+    assert normalize_instrument_id("BTCUSDT") == "BTC/USDT.SIM"
+    assert normalize_instrument_id("ETHUSDT") == "ETH/USDT.SIM"
+    assert normalize_instrument_id("BTC/USDT.SIM") == "BTC/USDT.SIM"
+    assert normalize_instrument_id("BTC/USDT") == "BTC/USDT.SIM"
+    assert normalize_instrument_id("ETHUSDT-PERP") == "ETHUSDT-PERP.SIM"
+    assert normalize_instrument_id("ETHUSDT-PERP.SIM") == "ETHUSDT-PERP.SIM"

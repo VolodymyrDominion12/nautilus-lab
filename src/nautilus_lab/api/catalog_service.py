@@ -171,6 +171,20 @@ def describe_catalog_cached(
     return payload
 
 
+def normalize_instrument_id(instrument_id: str) -> str:
+    """Ensure an instrument id ends in .SIM and carries a valid currency-pair slash."""
+    if instrument_id.endswith(".SIM"):
+        return instrument_id
+    if "/" not in instrument_id:
+        from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
+
+        try:
+            return binance_symbol_to_instrument_id(instrument_id)
+        except ValueError:
+            return f"{instrument_id}.SIM"
+    return f"{instrument_id}.SIM"
+
+
 def load_catalog_bars(
     *,
     instrument_id: str | None = None,
@@ -181,10 +195,15 @@ def load_catalog_bars(
     limit: int = 500,
 ) -> dict[str, Any]:
     cfg = settings()
-    resolved_id = instrument_id or cfg.instrument_id
+    raw_id = instrument_id or cfg.instrument_id
+    resolved_id = normalize_instrument_id(raw_id)
     interval = bar_interval or cfg.bar_interval
     bar_type = nautilus_bar_type(resolved_id, interval)
-    catalog = NautilusParquetCatalog(resolve_catalog_path(catalog_path), spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule())
+    catalog = NautilusParquetCatalog(
+        resolve_catalog_path(catalog_path),
+        spot_fees=cfg.spot_fee_schedule(),
+        usdm_fees=cfg.usdm_fee_schedule(),
+    )
     bars = catalog.load(
         bar_type=bar_type,
         start=_parse_utc(start),

@@ -1054,6 +1054,31 @@ export async function fetchDecisionLogs(
   );
 }
 
+/** Counts and key narratives of one session, computed server-side (`decision_digest.py`). */
+export interface DecisionDigest {
+  session_id: string | null;
+  robots: string[];
+  instruments: string[];
+  bars: number;
+  bar_seq_gaps: number;
+  outcomes: Record<string, number>;
+  blocked_by: Record<string, number>;
+  regime_share_pct: Record<string, number>;
+  regime_switches: number;
+  regime_flip_flops: number;
+  signals: Record<string, number>;
+  near_misses: number;
+  intrabar: Record<string, number>;
+  v0_rows: number;
+}
+
+/** Digest of the session's whole log (counts, regimes, blocks) — shown without an LLM call. */
+export async function fetchDecisionDigest(
+  sessionId: string,
+): Promise<{ status: string; digest: DecisionDigest; markdown: string }> {
+  return parseJson(await fetch(sessionPath(sessionId, 'decision-digest'), { method: 'GET' }));
+}
+
 /** Digest of the session's whole log on the server (counts + key narratives). */
 export async function analyzeSessionDecisions(
   sessionId: string,

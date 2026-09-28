@@ -320,8 +320,9 @@ export const describeMissingDetail = (trade: Pick<TradeDetail, 'decisions'>): st
   const withSteps = rows.filter((row) => (row.steps ?? []).length > 0).length;
   if (withSteps === 0) {
     return (
-      'Жоден запис не містить ланцюжка рішень (`steps`): бектест пише лише показники ' +
-      'й outcome, тому нижче видно індикатори, але не покрокові вердикти фільтрів.'
+      'Жоден запис не містить ланцюжка рішень (`steps`): ці записи написано до того, ' +
+      'як бектест почав писати повний ланцюжок, тому нижче видно індикатори й outcome, ' +
+      'але не покрокові вердикти фільтрів.'
     );
   }
   return null;

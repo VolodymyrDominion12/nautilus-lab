@@ -1,7 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw, Brain, Copy } from 'lucide-react';
-import { fetchDecisionLogs, analyzeSessionDecisions } from '../services/api';
+import {
+  fetchDecisionLogs,
+  fetchDecisionDigest,
+  analyzeSessionDecisions,
+  type DecisionDigest,
+} from '../services/api';
 
+import { DecisionSteps } from './DecisionSteps';
+import { DecisionDigestSummary } from './DecisionDigestSummary';
 import { CatalogChart } from './CatalogChart';
 
 interface DecisionLogPanelProps {
@@ -72,6 +79,7 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
   const [preset, setPreset] = useState(PRESETS[0]?.key ?? 'why_no_trades');
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<{ text: string; note?: string } | null>(null);
+  const [digest, setDigest] = useState<DecisionDigest | null>(null);
 
   const loadLogs = async () => {
     setLoading(true);
@@ -88,6 +96,13 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
       setError(err instanceof Error ? err.message : 'Error fetching decision logs');
     } finally {
       setLoading(false);
+    }
+    // The digest counts the whole session (not the row filter); best-effort.
+    try {
+      const digestRes = await fetchDecisionDigest(sessionId);
+      if (digestRes.status === 'ok') setDigest(digestRes.digest);
+    } catch {
+      setDigest(null);
     }
   };
 
@@ -166,6 +181,8 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
         </div>
       </div>
 
+      {digest && <DecisionDigestSummary digest={digest} />}
+
       {analysis && (
         <div className="p-4 bg-purple-950/20 border border-purple-900/40 rounded-lg text-xs text-purple-200/90 whitespace-pre-wrap">
           <div className="font-bold mb-2 flex items-center gap-2 text-purple-300">
@@ -226,22 +243,7 @@ export const DecisionLogPanel: React.FC<DecisionLogPanelProps> = ({
                     </div>
                     {expanded === idx && (
                       <div className="mt-2 space-y-1 text-[10px] text-gray-400">
-                        {(log.steps || []).map((s: any, i: number) => (
-                          <div key={i}>
-                            <span className="text-gray-500">{s.stage}</span>{' '}
-                            <span className="text-gray-300">{s.component}</span>{' '}
-                            <span className="text-purple-300">{s.verdict}</span>
-                            {s.result && <span className="text-amber-200/80"> → {s.result}</span>}
-                            {s.values && (
-                              <span className="opacity-80">
-                                {' '}
-                                {Object.entries(s.values)
-                                  .map(([k, v]) => `${k}=${v}`)
-                                  .join(', ')}
-                              </span>
-                            )}
-                          </div>
-                        ))}
+                        <DecisionSteps steps={log.steps} />
                         {!log.steps?.length && log.indicators && (
                           <div className="opacity-80">
                             {Object.entries(log.indicators)

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, ListTree } from 'lucide-react';
 import type { TradeDecisionRow, TradeDetail } from '../../services/api';
 import { describeDecision, isPivotalDecision, outcomeLabel } from '../../lib/trades';
+import { DecisionSteps } from '../DecisionSteps';
 
 interface TradeDecisionTimelineProps {
   trade: TradeDetail;
@@ -88,21 +89,7 @@ export const TradeDecisionTimeline: React.FC<TradeDecisionTimelineProps> = ({ tr
               <div className="px-3 pb-3 pl-9 space-y-2 text-[10px] text-gray-400 font-mono">
                 {row.kind && <div className="text-gray-500">kind: {row.kind}</div>}
                 {row.blocked_by && <div className="text-amber-300">заблоковано: {row.blocked_by}</div>}
-                {(row.steps ?? []).map((step, stepIndex) => (
-                  <div key={stepIndex} className="flex flex-wrap gap-2">
-                    <span className="text-gray-500">{step.stage}</span>
-                    <span className="text-gray-300">{step.component}</span>
-                    <span className="text-purple-300">{step.verdict}</span>
-                    {step.result && <span className="text-amber-200/80">→ {step.result}</span>}
-                    {step.values && (
-                      <span className="text-gray-500">
-                        {Object.entries(step.values)
-                          .map(([key, value]) => `${key}=${String(value)}`)
-                          .join(', ')}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                <DecisionSteps steps={row.steps} />
                 {row.indicators && Object.keys(row.indicators).length > 0 && (
                   <div>
                     indicators:{' '}

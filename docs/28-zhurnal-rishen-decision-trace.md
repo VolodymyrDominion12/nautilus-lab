@@ -101,9 +101,15 @@
 ## Що далі (не зроблено в цій ітерації)
 
 * Стрічка рішень і маркери на графіку в `LiveTradingTerminal` (зараз — оновлена вкладка DecisionLogPanel).
-* `scripts/trace_diff.py` для порівняння paper ↔ backtest (сам trace у бектесті тепер пишеться,
-  див. `specs/components/decision-trace.yaml`).
 * `meta_label` у paper не запускається, тому trace для нього не додано.
 * Тейк-профіту в бектесті немає (він є лише в paper-терміналі), тому окремого `TAKE_PROFIT`
   запису не буває; вихід за protective stop тепер пишеться як intrabar `STOP_LOSS`
   (`signal_strategy.py::_record_stop_fill`).
+
+## Порівняння paper ↔ backtest
+
+`scripts/trace_diff.py <paper_key> <backtest_key> [--dir ...] [--limit N]` вирівнює два
+журнали рішень за часом бару й показує бари, де термінал і рушій ухвалили різні рішення
+(`outcome`/`signal`), з попередженням про розбіжний `config_hash`. Код виходу 1 = є
+розбіжності або немає спільних барів. Це перевірка «чи термінал відтворює протестовану
+конфігурацію»; ядро порівняння — `tests/unit/test_trace_diff.py`.

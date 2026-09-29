@@ -27,6 +27,57 @@ SPECS = REPO / "specs" / "strategies"
 NA = "n/a"
 
 
+def _example_record(entries: list[dict[str, Any]]) -> list[str]:
+    """Один справжній запис журналу — щоб було видно, як читати решту.
+
+    Береться перший `ENTRY_OPENED` у першому ж журналі, де він є: саме на такому
+    записі видно весь ланцюг (режим → стратегія → план → гейт → виконання).
+    """
+    for entry in entries:
+        path = OUT / "decisions" / f"{entry['key']}.jsonl"
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("outcome") != "ENTRY_OPENED":
+                continue
+            lines = [
+                f"Приклад із `decisions/{entry['key']}.jsonl` "
+                f"(робот `{entry['robot']}`, {entry['symbol']}):",
+                "",
+                "```json",
+                json.dumps(
+                    {
+                        "ts": row.get("ts"),
+                        "outcome": row.get("outcome"),
+                        "blocked_by": row.get("blocked_by"),
+                        "regime": row.get("regime"),
+                        "signal": row.get("signal"),
+                        "account": row.get("account"),
+                        "steps": row.get("steps"),
+                    },
+                    ensure_ascii=False,
+                    indent=1,
+                )[:2600],
+                "```",
+                "",
+                f"Той самий запис словами (`narrative`): *{row.get('narrative')}*",
+                "",
+                "Читати так: `steps` — це ланцюг вердиктів у порядку виконання "
+                "(`regime` → `strategy` → `plan` → `gate` → `execution`); "
+                "`verdict` кожного кроку зі скінченного набору "
+                "(`pass`/`block`/`modify`/`emit`/`skip`/`info`), а `values` і "
+                "`thresholds` — числа, на яких крок ухвалив рішення. "
+                "`outcome` каже, чим бар закінчився, `blocked_by` — що саме зупинило вхід.",
+                "",
+            ]
+            return lines
+    return ["Приклад не наведено: у жодному журналі немає запису `ENTRY_OPENED`.", ""]
+
+
 def _spec(name: str) -> dict[str, Any]:
     path = SPECS / f"{name}.yaml"
     if not path.exists():
@@ -76,9 +127,12 @@ def _numbers_row(entry: dict[str, Any]) -> list[str]:
         verdict_text = label
     else:
         verdict_text = NA
+    # Нуль угод — це не «програв buy&hold», а «не торгував»; різниця принципова.
+    if str(baseline.get("oos_fills")) == "0":
+        verdict_text = "не торгував (0 fills)"
     return [
         entry["robot"],
-        entry["symbol"],
+        f"{entry['symbol']} {entry['interval']}",
         f"{aggregate.get('profitable', NA)}/{aggregate.get('folds', NA)}",
         aggregate.get("mean", NA),
         aggregate.get("median", NA),
@@ -91,6 +145,27 @@ def _numbers_row(entry: dict[str, Any]) -> list[str]:
     ]
 
 
+def _trace_matches(entry: dict[str, Any]) -> str:
+    """Чи відтворив прохід B числа останнього фолда проходу A (fills і доходність).
+
+    Рахується тут, а не читається з `status.json`: у тому полі був баг формату
+    (`+5.29%` замість `5.29%`), через який додатні фолди показувались як `MISMATCH`.
+    Обидва числа беруться з `status.json` без змін — перевірка лише перечитує їх.
+    """
+    folds = (entry.get("numbers") or {}).get("folds") or []
+    oos = (entry.get("trace") or {}).get("oos")
+    equity = entry.get("starting_equity")
+    if not folds or not oos or not equity:
+        return NA
+    last = folds[-1]
+    try:
+        percent = f"{(float(oos['ending']) - float(equity)) / float(equity) * 100:.2f}%"
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return NA
+    same = last.get("fills") == oos.get("fills") and last.get("return") == percent
+    return "match" if same else "MISMATCH"
+
+
 def _journal_row(entry: dict[str, Any]) -> list[str]:
     journal = entry.get("journal") or {}
     failures = entry.get("write_failures") or {}
@@ -99,7 +174,11 @@ def _journal_row(entry: dict[str, Any]) -> list[str]:
     end = str(window.get("out_of_sample_end", ""))[:16].replace("T", " ")
     window_text = f"{start} → {end}" if start and end else NA
     failed = failures.get("failed_writes_total")
-    failed_text = NA if failed is None else f"{failed} (у OOS: {failures.get('failed_writes_in_oos_dates', 0)})"
+    failed_text = (
+        NA
+        if failed is None
+        else f"{failed} (у OOS: {failures.get('failed_writes_in_oos_dates', 0)})"
+    )
     return [
         entry["robot"],
         entry["symbol"],
@@ -110,7 +189,7 @@ def _journal_row(entry: dict[str, Any]) -> list[str]:
         _top(journal.get("outcomes")),
         _top(journal.get("blocked_by")),
         _top(journal.get("regime_share_pct"), 3),
-        str(entry.get("trace_matches_last_fold") or NA),
+        _trace_matches(entry),
     ]
 
 
@@ -131,10 +210,11 @@ def _robot_sections(entries: list[dict[str, Any]]) -> list[str]:
             lines.append(f"- **Гіпотеза:** {_first_sentence(spec['hypothesis'])}")
         impl = spec.get("implementation") or {}
         if impl:
+            minimum = impl.get("minimum_bars", NA)
+            grid = impl.get("grid_source", NA)
             lines.append(
                 f"- **Реалізація:** `{impl.get('domain_module', NA)}` / "
-                f"`{impl.get('strategy_class', NA)}`, мінімум барів {impl.get('minimum_bars', NA)}, "
-                f"сітка `{impl.get('grid_source', NA)}`"
+                f"`{impl.get('strategy_class', NA)}`, мінімум барів {minimum}, сітка `{grid}`"
             )
         lines.append("")
         for entry in rows:
@@ -156,15 +236,24 @@ def _robot_sections(entries: list[dict[str, Any]]) -> list[str]:
                 f"worst {aggregate.get('worst', NA)}, buy&hold {baseline.get('buy_hold', NA)}, "
                 f"fills {baseline.get('oos_fills', NA)}"
             )
+            gaps = journal.get("bar_seq_gaps", NA)
+            hashes = ", ".join(journal.get("config_hashes") or []) or NA
             lines.append(
                 f"  - Журнал: {journal.get('decisions', NA)} записів "
-                f"({journal.get('kinds', {})}), пропусків `bar_seq` {journal.get('bar_seq_gaps', NA)}, "
-                f"config_hash {', '.join(journal.get('config_hashes') or []) or NA}"
+                f"({journal.get('kinds', {})}), пропусків `bar_seq` {gaps}, "
+                f"config_hash {hashes}"
             )
+            if not journal.get("decisions"):
+                lines.append(
+                    "  - Записів немає: цей шлях виконання не пише `decision_trace` "
+                    "(див. обмеження 7) — «як він вирішує» читається лише з коду й чисел"
+                )
             lines.append(f"  - Що робив бар: {_top(journal.get('outcomes'), 5)}")
             lines.append(f"  - Що блокувало вхід: {_top(journal.get('blocked_by'), 5)}")
             lines.append(f"  - Режими: {_top(journal.get('regime_share_pct'), 5)}")
-            lines.append(f"  - Дайджест: `digests/{entry['key']}.md`, журнал: `decisions/{entry['key']}.jsonl`")
+            digest_path = f"digests/{entry['key']}.md"
+            journal_path = f"decisions/{entry['key']}.jsonl"
+            lines.append(f"  - Дайджест: `{digest_path}`, журнал: `{journal_path}`")
             lines.append("")
     return lines
 
@@ -218,6 +307,13 @@ def _build(entries: list[dict[str, Any]], generated_at: datetime) -> str:
         "  це ~100 тис. записів на прогін). Колонка `a↔b` перевіряє, що прохід B справді",
         "  відтворив числа останнього фолда проходу A (`match` = fills і доходність збіглися).",
         f"- **Комісії:** {fee_line or NA}",
+        "- **Ревізії кодів** (рядок `manifest` із кожного прогону): "
+        + "; ".join(f"`{manifest}` ×{count}" for manifest, count in sorted(manifests.items())),
+        "  `+dirty` означає, що на момент прогону в робочому дереві були незакомічені",
+        "  файли. Прогони, позначені `+dirty`, писалися після того, як змінилися",
+        "  **трековані артефакти дослідження** (`research/journal.*`, `research/trials.jsonl`)",
+        "  від прогонів із дашборда — тобто не через зміну коду бектесту. Перевірка:",
+        "  `git diff --stat <rev> <rev> -- src/`.",
         "- **Журнал тріалів** (`TRIALS_LEDGER_PATH`) навмисно виведений у `trials/` цього",
         "  свіпу, щоб розвідувальні прогони не переписували трекований `research/trials.jsonl`.",
         "",
@@ -272,6 +368,11 @@ def _build(entries: list[dict[str, Any]], generated_at: datetime) -> str:
         "письменник журналу ловить помилку серіалізації й лише логує її, тож без цього "
         "стовпця «робот не торгував» і «записи не доїхали» виглядали б однаково.",
         "",
+        "### Як читати ці журнали",
+        "",
+    ]
+    lines += _example_record(ok)
+    lines += [
         "## 4. Робот за роботом",
         "",
     ]
@@ -314,7 +415,18 @@ def _build(entries: list[dict[str, Any]], generated_at: datetime) -> str:
         "не можна (інший інтервал барів і інша пара інструментів: спот + перпетуал).",
         "6. **`ml_obi` не має ні моделі, ні історії книги**: у каталозі по одному дню "
         "L2-знімків на символ, а `ML_OBI_MODEL_PATH` порожній.",
-        "7. **Жоден робот не має статусу `validated`**, і цей свіп його не змінює: "
+        "7. **`pairs` і `funding` не пишуть журнал рішень взагалі.** Це не помилка свіпу: "
+        "їхні адаптери — `infrastructure/nautilus/spread_strategy.py` і "
+        "`funding_strategy.py` — не імпортують `decision_log`/`DecisionRecord` (нуль "
+        "згадок), тож per-bar `decision_trace` для спредових роботів не існує. Їхні "
+        "числа в таблиці справжні, а «чому саме такий вхід» доводиться читати з коду. "
+        "Інструментувати їх — окрема задача.",
+        "8. **`outcome` у бектесті означає «ордер подано», а не «філ підтверджено»**, і "
+        "`account` — це стан **до** виконання цього бару; у бектесті ордер висить "
+        "INFLIGHT до філу (див. коментар у `signal_strategy.py::_has_working_order`), "
+        "тому позиція в сусідньому записі може з'явитися на бар пізніше. Точні суми — "
+        "у звіті прогону, а не в журналі.",
+        "9. **Жоден робот не має статусу `validated`**, і цей свіп його не змінює: "
         "він показує рішення, а не доводить перевагу.",
         "",
     ]

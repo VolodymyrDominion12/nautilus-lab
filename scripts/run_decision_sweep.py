@@ -66,7 +66,10 @@ LAB = REPO / ".venv" / "bin" / "lab"
 FOLDS = 4
 #: Частка історії на підбір параметрів; OOS дістає решту після embargo.
 IS_FRACTION = "0.7"
-#: Таймаут на один прохід (секунди). 1h-сітка на 24 тис. барів іде хвилини.
+#: Таймаут на один прохід (секунди), якщо не задано `--pass-timeout`.
+#: 1h-сітка на 24 тис. барів іде хвилини, але ML-роботи під навантаженням
+#: (LightGBM у кілька потоків + чужі процеси на машині) не вкладалися в годину
+#: — саме так `formulaic_lgbm` і зірвався у свіпі 2026-09-29.
 PASS_TIMEOUT = 3600
 
 
@@ -294,7 +297,9 @@ _OOS_LINE_RE = re.compile(
 )
 
 
-def _run_lab(cmd: list[str], env: dict[str, str], log_path: Path) -> int:
+def _run_lab(
+    cmd: list[str], env: dict[str, str], log_path: Path, timeout: int = PASS_TIMEOUT
+) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as handle:
         handle.write(f"# cmd={' '.join(cmd)}\n")
@@ -325,7 +330,7 @@ def _run_lab(cmd: list[str], env: dict[str, str], log_path: Path) -> int:
             env=env,
             stdout=handle,
             stderr=subprocess.STDOUT,
-            timeout=PASS_TIMEOUT,
+            timeout=timeout,
             check=False,
         )
     return proc.returncode
@@ -360,7 +365,9 @@ def _parse_numbers(text: str) -> dict[str, Any]:
     return numbers
 
 
-def run_numbers_pass(entry: Entry, out_dir: Path) -> tuple[int, dict[str, Any], str]:
+def run_numbers_pass(
+    entry: Entry, out_dir: Path, *, timeout: int = PASS_TIMEOUT
+) -> tuple[int, dict[str, Any], str]:
     """Прохід A: числа walk-forward. Журнал рішень вимкнено — сітка IS не потрібна."""
     env = base_env(entry, out_dir=out_dir)
     env["DECISION_LOG_ENABLED"] = "false"
@@ -376,12 +383,14 @@ def run_numbers_pass(entry: Entry, out_dir: Path) -> tuple[int, dict[str, Any], 
         entry.catalog,
     ]
     log_path = out_dir / "logs" / f"{entry.key}.numbers.log"
-    code = _run_lab(cmd, env, log_path)
+    code = _run_lab(cmd, env, log_path, timeout)
     text = log_path.read_text(encoding="utf-8", errors="replace")
     return code, _parse_numbers(text), text
 
 
-def run_trace_pass(entry: Entry, out_dir: Path, window: dict[str, str]) -> tuple[int, str]:
+def run_trace_pass(
+    entry: Entry, out_dir: Path, window: dict[str, str], *, timeout: int = PASS_TIMEOUT
+) -> tuple[int, str]:
     """Прохід B: той самий walk-forward, але на вікні останнього фолда + журнал рішень."""
     env = base_env(entry, out_dir=out_dir)
     raw_dir = out_dir / "raw" / entry.key
@@ -406,7 +415,7 @@ def run_trace_pass(entry: Entry, out_dir: Path, window: dict[str, str]) -> tuple
         window["out_of_sample_end"],
     ]
     log_path = out_dir / "logs" / f"{entry.key}.trace.log"
-    code = _run_lab(cmd, env, log_path)
+    code = _run_lab(cmd, env, log_path, timeout)
     return code, log_path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -432,8 +441,6 @@ def collect_oos_decisions(
     `outcome`) і Markdown-дайджест. Факти потрібні, щоб **перевірити повноту**:
     журнал, який тихо загубив частину барів, виглядав би як «робот не торгував».
     """
-    from nautilus_lab.application.decision_digest import build_digest, digest_markdown
-
     start = _ts(window["out_of_sample_start"])
     end = _ts(window["out_of_sample_end"])
     raw_dir = out_dir / "raw" / entry.key
@@ -464,30 +471,8 @@ def collect_oos_decisions(
 
     digest_path = out_dir / "digests" / f"{entry.key}.md"
     digest_path.parent.mkdir(parents=True, exist_ok=True)
-    facts: dict[str, Any] = {"decisions": len(rows)}
-    if rows:
-        digest = build_digest(rows, max_narratives=40, no_signal_samples=6)
-        markdown = digest_markdown(digest)
-        facts.update(
-            {
-                "bar_seq_gaps": digest.bar_seq_gaps,
-                "first_ts": digest.first_ts,
-                "last_ts": digest.last_ts,
-                "outcomes": dict(digest.outcomes),
-                "blocked_by": dict(digest.blocked_by),
-                "regime_share_pct": dict(digest.regime_share_pct),
-                "signals": dict(digest.signals),
-                "intrabar": dict(digest.intrabar),
-                "near_misses": digest.near_misses,
-                "config_hashes": list(digest.config_hashes),
-            }
-        )
-    else:
-        markdown = f"# Дайджест рішень: {entry.key}\n\nЗаписів у OOS-вікні немає.\n"
+    facts, markdown = journal_facts(rows, key=entry.key)
     digest_path.write_text(markdown, encoding="utf-8")
-
-    kinds = Counter(str(row.get("kind", "bar_decision")) for row in rows)
-    facts["kinds"] = dict(kinds)
 
     # Сирі файли містять ще й прогін сітки на in-sample; тримати їх нема сенсу.
     if raw_dir.exists():
@@ -532,6 +517,58 @@ def _write_failures(text: str, window: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def journal_facts(rows: list[dict[str, Any]], *, key: str) -> tuple[dict[str, Any], str]:
+    """Факти про журнал і Markdown-дайджест із готових рядків `decision_trace/1`.
+
+    Виділено з `collect_oos_decisions`, щоб те саме можна було порахувати з уже
+    збереженого `decisions/<key>.jsonl` — так `--rebuild-status` відновлює
+    `status.json` з артефактів, не перезапускаючи жодного бектесту.
+    """
+    from collections import Counter
+
+    from nautilus_lab.application.decision_digest import build_digest, digest_markdown
+
+    facts: dict[str, Any] = {"decisions": len(rows)}
+    if rows:
+        digest = build_digest(rows, max_narratives=40, no_signal_samples=6)
+        markdown = digest_markdown(digest)
+        facts.update(
+            {
+                "bar_seq_gaps": digest.bar_seq_gaps,
+                "first_ts": digest.first_ts,
+                "last_ts": digest.last_ts,
+                "outcomes": dict(digest.outcomes),
+                "blocked_by": dict(digest.blocked_by),
+                "regime_share_pct": dict(digest.regime_share_pct),
+                "signals": dict(digest.signals),
+                "intrabar": dict(digest.intrabar),
+                "near_misses": digest.near_misses,
+                "config_hashes": list(digest.config_hashes),
+            }
+        )
+    else:
+        markdown = f"# Дайджест рішень: {key}\n\nЗаписів у OOS-вікні немає.\n"
+    facts["kinds"] = dict(Counter(str(row.get("kind", "bar_decision")) for row in rows))
+    return facts, markdown
+
+
+def read_decisions(out_dir: Path, key: str) -> list[dict[str, Any]]:
+    """Прочитати збережений журнал рішень цього прогону (порожній — теж відповідь)."""
+    path = out_dir / "decisions" / f"{key}.jsonl"
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
 def _drop_raw(raw_dir: Path) -> None:
     """Прибрати сирі журнали, якщо прогону не судилося дійти до фільтра."""
     if not raw_dir.exists():
@@ -544,7 +581,9 @@ def _drop_raw(raw_dir: Path) -> None:
 # ── Оркестрація ───────────────────────────────────────────────────────────────
 
 
-def run_entry(entry: Entry, out_dir: Path, *, keep_raw: bool = False) -> EntryResult:
+def run_entry(
+    entry: Entry, out_dir: Path, *, keep_raw: bool = False, timeout: int = PASS_TIMEOUT
+) -> EntryResult:
     result = EntryResult(
         key=entry.key,
         robot=entry.robot,
@@ -593,14 +632,14 @@ def run_entry(entry: Entry, out_dir: Path, *, keep_raw: bool = False) -> EntryRe
     last = windows[-1]
     result.window = dict(last)
 
-    code_a, numbers, text_a = run_numbers_pass(entry, out_dir)
+    code_a, numbers, text_a = run_numbers_pass(entry, out_dir, timeout=timeout)
     result.numbers = numbers
     if code_a != 0:
         result.status = "numbers_failed"
         result.error = _last_error_line(text_a)
         return result
 
-    code_b, text_b = run_trace_pass(entry, out_dir, last)
+    code_b, text_b = run_trace_pass(entry, out_dir, last, timeout=timeout)
     if code_b != 0:
         result.status = "trace_failed"
         result.error = _last_error_line(text_b)
@@ -624,7 +663,18 @@ def run_entry(entry: Entry, out_dir: Path, *, keep_raw: bool = False) -> EntryRe
 
 
 def _last_error_line(text: str) -> str:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    """Рядок, який справді щось каже про збій.
+
+    `lab` друкує манифест і попередження про брудне дерево **після** повідомлення
+    про помилку (stdout буферизується окремо від stderr), тож «останній рядок»
+    показував манифест замість причини. Тому службові рядки відкидаються, а серед
+    решти перевага віддається тому, що схожий на помилку.
+    """
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.startswith(("manifest", "#", "manifest_warning"))
+    ]
     for line in reversed(lines):
         if line.startswith(("Error", "ERROR", "Traceback")) or "Error:" in line or "error:" in line:
             return line
@@ -648,46 +698,169 @@ def _cross_check(result: EntryResult) -> str:
     ending = Decimal(oos.get("ending", "0"))
     if equity <= 0:
         return "not_checked"
-    percent = f"{(ending - equity) / equity * 100:+.2f}%"
+    # Той самий формат, що `_pct` у CLI: без «+» для додатних значень.
+    percent = f"{(ending - equity) / equity * 100:.2f}%"
     same = a.get("fills") == oos.get("fills") and a.get("return") == percent
     return "match" if same else "MISMATCH"
 
 
-def _dump_status(results: list[EntryResult], out_dir: Path) -> None:
-    payload = [
-        {
-            "key": result.key,
-            "robot": result.robot,
-            "symbol": result.symbol,
-            "catalog": result.catalog,
-            "interval": result.interval,
-            "status": result.status,
-            "error": result.error,
-            "window": result.window,
-            "fold_windows": result.fold_windows,
-            "numbers": result.numbers,
-            "trace": result.trace,
-            "journal": result.journal,
-            "write_failures": _write_failures(
-                (out_dir / "logs" / f"{result.key}.trace.log").read_text(
-                    encoding="utf-8", errors="replace"
-                )
-                if (out_dir / "logs" / f"{result.key}.trace.log").exists()
-                else "",
-                result.window,
-            )
-            if result.window
-            else {},
-            "trace_matches_last_fold": _cross_check(result),
-            "starting_equity": result.starting_equity,
-            "decisions": result.decisions,
-            "decisions_bytes": result.decisions_bytes,
-        }
-        for result in results
-    ]
+def _load_status(out_dir: Path) -> list[dict[str, Any]]:
+    """Попередній `status.json` — щоб догін окремих прогонів не стирав решту."""
+    path = out_dir / "status.json"
+    if not path.exists():
+        return []
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    return loaded if isinstance(loaded, list) else []
+
+
+def _dump_status(
+    results: list[EntryResult],
+    out_dir: Path,
+    *,
+    base: list[dict[str, Any]] | None = None,
+) -> None:
+    fresh = {result.key: _status_row(result, out_dir) for result in results}
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in base or []:
+        key = str(row.get("key"))
+        merged.append(fresh.get(key, row))
+        seen.add(key)
+    merged.extend(row for key, row in fresh.items() if key not in seen)
     (out_dir / "status.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+        json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+
+
+def _status_row(result: EntryResult, out_dir: Path) -> dict[str, Any]:
+    return {
+        "key": result.key,
+        "robot": result.robot,
+        "symbol": result.symbol,
+        "catalog": result.catalog,
+        "interval": result.interval,
+        "status": result.status,
+        "error": result.error,
+        "window": result.window,
+        "fold_windows": result.fold_windows,
+        "numbers": result.numbers,
+        "trace": result.trace,
+        "journal": result.journal,
+        "write_failures": _write_failures(
+            (out_dir / "logs" / f"{result.key}.trace.log").read_text(
+                encoding="utf-8", errors="replace"
+            )
+            if (out_dir / "logs" / f"{result.key}.trace.log").exists()
+            else "",
+            result.window,
+        )
+        if result.window
+        else {},
+        "trace_matches_last_fold": _cross_check(result),
+        "starting_equity": result.starting_equity,
+        "decisions": result.decisions,
+        "decisions_bytes": result.decisions_bytes,
+    }
+
+
+# ── Перебудова status.json з артефактів ───────────────────────────────────────
+
+
+def starting_equity_of(entry: Entry, out_dir: Path) -> str:
+    """Капітал прогону — з тих самих налаштувань, які бачив `lab` (не з константи)."""
+    saved = dict(os.environ)
+    os.environ.update(base_env(entry, out_dir=out_dir))
+    try:
+        from nautilus_lab.infrastructure.settings import Settings
+
+        return str(Settings(_env_file=str(REPO / ".env")).starting_equity)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+def rebuild_entry(entry: Entry, out_dir: Path) -> dict[str, Any] | None:
+    """Один рядок `status.json`, зібраний із логів і журналу на диску.
+
+    Нічого не вигадує: числа перечитуються з `logs/*.numbers.log` і
+    `logs/*.trace.log` тими самими регулярками, що й під час прогону, а факти про
+    журнал — із `decisions/<key>.jsonl`. `None` означає «артефактів немає».
+    """
+    numbers_log = out_dir / "logs" / f"{entry.key}.numbers.log"
+    trace_log = out_dir / "logs" / f"{entry.key}.trace.log"
+    if not numbers_log.exists() and not trace_log.exists():
+        return None
+
+    text_n = (
+        numbers_log.read_text(encoding="utf-8", errors="replace") if numbers_log.exists() else ""
+    )
+    text_t = trace_log.read_text(encoding="utf-8", errors="replace") if trace_log.exists() else ""
+    numbers = _parse_numbers(text_n)
+    trace = _parse_numbers(text_t)
+    folds = numbers.get("folds") or []
+    # Вікна беруться з того самого `plan_multi`, яким їх рахував прогін; якщо він
+    # недоступний (робот без адаптера), лишається те, що видно з рядків звіту.
+    try:
+        planned, _equity = plan_windows(entry, base_env(entry, out_dir=out_dir))
+    except Exception:  # noqa: BLE001 — «немає вікон» не має ламати перебудову
+        planned = []
+    if planned:
+        window = dict(planned[-1])
+        fold_windows = [dict(item) for item in planned]
+    elif folds:
+        window = {
+            "out_of_sample_start": folds[-1]["oos_start"],
+            "out_of_sample_end": folds[-1]["oos_end"],
+        }
+        fold_windows = []
+    else:
+        window, fold_windows = {}, []
+
+    if trace.get("oos"):
+        status = "ok"
+    elif "no backtest adapter" in text_n:
+        status = "fail_closed"
+    elif "needs a trained model" in text_n:
+        status = "numbers_failed"
+    else:
+        status = "unknown"
+    error = "" if status == "ok" else _last_error_line(text_n) or _last_error_line(text_t)
+
+    rows = read_decisions(out_dir, entry.key)
+    facts, _ = journal_facts(rows, key=entry.key) if rows else ({"decisions": 0}, "")
+    decisions_path = out_dir / "decisions" / f"{entry.key}.jsonl"
+
+    result = EntryResult(
+        key=entry.key,
+        robot=entry.robot,
+        symbol=entry.symbol,
+        catalog=entry.catalog,
+        interval=entry.interval,
+        status=status,
+        error=error,
+        window=window,
+        fold_windows=fold_windows,
+        numbers=numbers,
+        trace=trace,
+        journal=facts,
+        starting_equity=starting_equity_of(entry, out_dir),
+        decisions=int(facts.get("decisions", 0)),
+        decisions_bytes=decisions_path.stat().st_size if decisions_path.exists() else 0,
+    )
+    return _status_row(result, out_dir)
+
+
+def rebuild_status(out_dir: Path, entries: tuple[Entry, ...]) -> list[dict[str, Any]]:
+    """Повний `status.json` із наявних артефактів (порядок — як у матриці)."""
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        row = rebuild_entry(entry, out_dir)
+        if row is not None:
+            rows.append(row)
+    return rows
 
 
 def _select(entries: tuple[Entry, ...], only: str | None) -> list[Entry]:
@@ -707,6 +880,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--parallel", type=int, default=1, help="Скільки прогонів одночасно")
     parser.add_argument("--dry-run", action="store_true", help="Показати команди без запуску")
     parser.add_argument("--keep-raw", action="store_true", help="Не видаляти сирі журнали")
+    parser.add_argument(
+        "--rebuild-status",
+        action="store_true",
+        help="Лише перебудувати status.json із наявних логів і журналів (без прогонів)",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="Догін: оновити лише ці ключі в наявному status.json, решту не чіпати",
+    )
+    parser.add_argument(
+        "--pass-timeout",
+        type=int,
+        default=PASS_TIMEOUT,
+        help=f"Таймаут одного проходу в секундах (типово {PASS_TIMEOUT})",
+    )
     args = parser.parse_args(argv)
 
     if not LAB.exists():
@@ -717,6 +906,14 @@ def main(argv: list[str] | None = None) -> int:
     entries = _select(MATRIX, args.only)
     env_note = f"folds={FOLDS} is_fraction={IS_FRACTION} parallel={args.parallel}"
     print(f"decision sweep: {len(entries)} runs, {env_note}, out={out_dir}")
+
+    if args.rebuild_status:
+        rows = rebuild_status(out_dir, tuple(entries))
+        (out_dir / "status.json").write_text(
+            json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"status rebuilt: {len(rows)} rows -> {out_dir / 'status.json'}")
+        return 0
 
     if args.dry_run:
         for entry in entries:
@@ -729,11 +926,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     results: list[EntryResult] = []
+    base = _load_status(out_dir) if args.merge else []
 
     def _settle(entry: Entry) -> EntryResult:
         """Один прогін не має права покласти весь свіп: збій стає рядком у status.json."""
         try:
-            return run_entry(entry, out_dir)
+            return run_entry(entry, out_dir, timeout=args.pass_timeout)
         except Exception as exc:  # noqa: BLE001
             broken = EntryResult(
                 key=entry.key,
@@ -753,16 +951,16 @@ def main(argv: list[str] | None = None) -> int:
                 result = future.result()
                 results.append(result)
                 print(f"  {result.key:22s} {result.status:14s} {result.error[:70]}", flush=True)
-                _dump_status(results, out_dir)
+                _dump_status(results, out_dir, base=base)
     else:
         for entry in entries:
             print(f"  {entry.key} …", end="  ", flush=True)
             result = _settle(entry)
             results.append(result)
             print(f"{result.status} {result.error[:70]}", flush=True)
-            _dump_status(results, out_dir)
+            _dump_status(results, out_dir, base=base)
 
-    _dump_status(results, out_dir)
+    _dump_status(results, out_dir, base=base)
     failed = [r.key for r in results if r.status not in ("ok", "fail_closed")]
     print(f"\ndone: {len(results) - len(failed)}/{len(results)} ok", end="")
     if failed:

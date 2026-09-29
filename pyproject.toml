@@ -151,6 +151,9 @@ select = [
 # коментарі й повідомлення українською (як у run_matrix.py), а `lab` викликається
 # фіксованим argv із `.venv/bin/`, не з користувацького вводу.
 "scripts/run_decision_sweep.py" = ["RUF001", "RUF002", "RUF003", "S603", "S607"]
+# scripts/decision_sweep_summary.py — генератор зведення свіпу: той самий випадок,
+# що й вище, тільки без підпроцесів (RUF001-003 — український текст звіту, не код).
+"scripts/decision_sweep_summary.py" = ["RUF001", "RUF002", "RUF003"]
 # tests/unit/test_regime_router.py -- B2/B3 regression tests, Ukrainian docstrings.
 "tests/unit/test_regime_router.py" = ["RUF001", "RUF002", "RUF003"]
 

@@ -9,6 +9,7 @@ with the live paper terminal (`tests/unit/test_decision_trace.py`).
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -16,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from nautilus_lab.application.decision_trace_codec import record_to_dict
 from nautilus_lab.application.dtos import BacktestRequest
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.decision_log import DecisionRecord
@@ -25,6 +27,7 @@ from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.risk import RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.trading_mode import TradingMode
+from nautilus_lab.infrastructure.decision_log_writer import DecimalEncoder
 from nautilus_lab.infrastructure.nautilus.backtest_runner import NautilusResearchBacktest
 from nautilus_lab.infrastructure.nautilus.synthetic_bars import synthetic_ohlcv
 
@@ -226,3 +229,9 @@ def test_backtest_records_a_protective_stop_as_intrabar(tmp_path: Path) -> None:
         stop_step = record.steps[0]
         assert stop_step.component == "stop_loss"
         assert "level" in stop_step.values
+        # The JSONL writer, not just the in-memory record: `DecimalEncoder` refuses any
+        # value that is not JSON-native, and a refusal means the exit never reaches the
+        # journal at all (2026-09-29: `qty` was a Nautilus `Quantity` and 101 records of
+        # one sweep run were lost to "Object of type Quantity is not JSON serializable").
+        json.dumps(record_to_dict(record), cls=DecimalEncoder)
+        assert isinstance(stop_step.values["qty"], Decimal)

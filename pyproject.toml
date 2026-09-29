@@ -147,6 +147,10 @@ select = [
 "scripts/gen_status.py" = ["RUF001", "RUF002", "RUF003"]
 # scripts/run_matrix.py -- matrix operator, intentional Ukrainian user messages.
 "scripts/run_matrix.py" = ["RUF001", "RUF002", "RUF003", "S603", "S607"]
+# scripts/run_decision_sweep.py — оператор свіпу «бектести + журнали рішень»:
+# коментарі й повідомлення українською (як у run_matrix.py), а `lab` викликається
+# фіксованим argv із `.venv/bin/`, не з користувацького вводу.
+"scripts/run_decision_sweep.py" = ["RUF001", "RUF002", "RUF003", "S603", "S607"]
 # tests/unit/test_regime_router.py -- B2/B3 regression tests, Ukrainian docstrings.
 "tests/unit/test_regime_router.py" = ["RUF001", "RUF002", "RUF003"]
 

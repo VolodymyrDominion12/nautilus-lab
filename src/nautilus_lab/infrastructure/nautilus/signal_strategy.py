@@ -376,6 +376,12 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         The stop is a resting reduce-only order the engine triggers mid-bar; without
         this record a research backtest's decision log never shows the exit, so the
         reconstructed trade is read as still-open or as a reversal on the next entry.
+
+        `qty` is converted to `Decimal` for the same reason `price` is: Nautilus hands
+        back a `Quantity`, and a raw one inside a `TraceStep` is not a `TraceValue` —
+        `json.dumps` then refuses the whole record, so the JSONL writer logged
+        "Object of type Quantity is not JSON serializable" and **dropped the exit**
+        (seen in the 2026-09-29 sweep: 101 lost records across one 1h run).
         """
         if self.decision_log is None or self.session_id is None:
             return
@@ -384,6 +390,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return
         price = _as_decimal(getattr(order, "avg_px", 0))
         qty = getattr(order, "filled_qty", None)
+        qty_value = None if qty is None else _as_decimal(qty)
         if price <= 0:
             return
         # The stop closes the side opposite the one it is placed on: SELL exits a LONG.
@@ -413,7 +420,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
                     "stop_loss",
                     Verdict.EMIT,
                     result="stop_loss",
-                    values={"level": price, "side": position_side, "qty": qty},
+                    values={"level": price, "side": position_side, "qty": qty_value},
                 ),
             ),
             outcome=Outcome.STOP_LOSS.value,

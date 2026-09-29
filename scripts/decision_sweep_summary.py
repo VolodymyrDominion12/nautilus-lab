@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter, OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,37 @@ OUT = REPO / "reports" / "decision-sweep"
 SPECS = REPO / "specs" / "strategies"
 
 NA = "n/a"
+
+
+def _fee_line(entries: list[dict[str, Any]]) -> str:
+    """Комісії прогонів — із тих самих `Settings`, що бачив `lab`.
+
+    Не з логів: walk-forward-звіт рядок `... backtest with fees (...)` не друкує
+    (його друкує лише `--full-sample`), тож шукати його в логах означало б
+    показувати `n/a` там, де відповідь відома точно.
+    """
+    import os
+
+    saved = dict(os.environ)
+    os.environ["CATALOG_PATH"] = "catalog"
+    try:
+        sys.path.insert(0, str(REPO / "src"))
+        from nautilus_lab.infrastructure.settings import Settings
+
+        cfg = Settings(_env_file=str(REPO / ".env"))
+        spot = cfg.spot_fee_schedule()
+        usdm = cfg.usdm_fee_schedule()
+    except Exception:  # noqa: BLE001 — зведення має складатися й без налаштувань
+        return NA
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+    del entries  # аргумент лишається для сумісності виклику: комісії спільні для всіх
+    return (
+        f"spot maker={spot.maker} taker={spot.taker}; "
+        f"usdm maker={usdm.maker} taker={usdm.taker} "
+        "(з `.env`/оточення; роботи ставлять ринкові ордери → платять taker)"
+    )
 
 
 def _example_record(entries: list[dict[str, Any]]) -> list[str]:
@@ -267,17 +299,7 @@ def _build(entries: list[dict[str, Any]], generated_at: datetime) -> str:
         for e in ok
         if (e.get("numbers") or {}).get("manifest")
     )
-    fee_line = ""
-    for entry in ok:
-        log = OUT / "logs" / f"{entry['key']}.numbers.log"
-        if not log.exists():
-            continue
-        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-            if "backtest with fees" in line:
-                fee_line = line
-                break
-        if fee_line:
-            break
+    fee_line = _fee_line(ok)
 
     lines: list[str] = [
         "# Свіп рішень: усі роботи на ETHUSDT і BTCUSDT",

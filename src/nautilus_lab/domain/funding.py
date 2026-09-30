@@ -52,7 +52,7 @@ class FundingParams:
     # ordinary market ever pays — the robot could never open a position.
     holding_periods: int = 60
     basis_max: Decimal = Decimal("0.005")
-    close_on_negative: bool = True
+    close_on_negative: bool = False
     min_exit_apy: Decimal | None = None
     min_holding_periods: int = 15
 

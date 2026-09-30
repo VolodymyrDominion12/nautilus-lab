@@ -68,7 +68,9 @@ def test_funding_names_the_apy_gate_it_fails() -> None:
 
 def test_funding_open_and_close_are_explained() -> None:
     robot = FundingCashAndCarry(
-        spot_id="ETH/USDT.SIM", perp_id="ETHUSDT-PERP.SIM", params=FundingParams()
+        spot_id="ETH/USDT.SIM",
+        perp_id="ETHUSDT-PERP.SIM",
+        params=FundingParams(close_on_negative=True),
     )
     assert robot.on_funding(_snapshot("0.001")) is not None
     assert robot.last_trace[0].verdict is Verdict.EMIT

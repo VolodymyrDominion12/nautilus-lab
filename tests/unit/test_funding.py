@@ -129,6 +129,32 @@ def test_funding_negative_exit() -> None:
     assert carry.periods_held == 0
 
 
+def test_funding_default_holds_through_negative_blip() -> None:
+    # Default close_on_negative is False: position is held through minor negative funding blip
+    params = FundingParams(
+        min_net_apy=Decimal("0.05"),
+        holding_periods=60,
+    )
+    assert not params.close_on_negative
+    carry = FundingCashAndCarry(
+        spot_id="BTC/USDT.SIM",
+        perp_id="BTCUSDT-PERP.SIM",
+        params=params,
+    )
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+
+    # Entry
+    assert carry.on_funding(_snapshot(funding_rate=Decimal("0.0005"), ts=ts)) is not None
+
+    # Next interval: minor negative blip (-0.00001)
+    sig_hold = carry.on_funding(
+        _snapshot(funding_rate=Decimal("-0.00001"), ts=ts + timedelta(hours=8))
+    )
+    assert sig_hold is None
+    assert carry.periods_held == 1
+    assert carry.last_trace[-1].note == "carry still valid: hold"
+
+
 def test_funding_basis_divergence_exit() -> None:
     params = FundingParams(
         min_net_apy=Decimal("0.05"),

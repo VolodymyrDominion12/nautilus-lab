@@ -156,7 +156,7 @@ class Settings(BaseSettings):
     funding_min_net_apy: Decimal = Decimal("0.10")
     funding_holding_periods: int = 60
     funding_basis_max: Decimal = Decimal("0.005")
-    funding_close_on_negative: bool = True
+    funding_close_on_negative: bool = False
     funding_min_exit_apy: Decimal | None = None
     funding_min_holding_periods: int = 15
     funding_spot_id: str = "ETH/USDT.SIM"

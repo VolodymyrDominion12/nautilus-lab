@@ -204,8 +204,7 @@ class RegimeRouter:
         range_signal = self._range.on_bar(bar)
 
         # Direct conflicting reversal: Long vs Downtrend, or Short vs Uptrend
-        if regime_changed:
-            assert changed_from is not None
+        if regime_changed and changed_from is not None:
             if (
                 self._current_side is SignalSide.BUY
                 and self._last_effective_regime is MarketRegime.DOWNTREND

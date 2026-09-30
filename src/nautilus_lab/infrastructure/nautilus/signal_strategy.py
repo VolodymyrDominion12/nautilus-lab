@@ -58,7 +58,7 @@ from nautilus_lab.domain.position_plan import (
 )
 from nautilus_lab.domain.ratchet_stop import RatchetState, initial_ratchet, step_ratchet
 from nautilus_lab.domain.regime import RegimeParams, RobotName, require_backtest_support
-from nautilus_lab.domain.regime_router import RegimeRouter
+from nautilus_lab.domain.regime_router import RegimeRouter, parse_legs
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.signals import Signal, SignalSide
@@ -124,6 +124,8 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     use_tick_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    #: Enabled legs of regime / adaptive_ema / meta_label's primary ("" = all).
+    regime_legs: str = ""
     use_hawkes: bool = False
     hawkes_baseline: Decimal = Decimal("0.1")
     hawkes_alpha: Decimal = Decimal("0.5")
@@ -655,6 +657,26 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         if plan.is_noop:
             return Outcome.HOLD_NOOP, None, steps
 
+        # An order from an earlier bar has not filled yet (in a bar backtest a market order
+        # fills about one bar later). Acting now would stack a second close on the first:
+        # the 2026-09-29 ema BTC log shows a reversal at 15:59, then at 16:59 the same SHORT
+        # "closed" again while the first close was in flight — and `_flatten` also dropped
+        # the pending entry's id, so that entry filled with no protective stop and no
+        # ENTRY_FILLED record. Wait for the fill; the next bar decides on the real book.
+        working = self._working_order_id()
+        if working is not None:
+            steps.append(
+                step(
+                    Stage.GATE,
+                    "execution.order_working",
+                    Verdict.INFO,
+                    result="order in flight: wait",
+                    values={"order_id": str(working)},
+                    note="an earlier order has not filled yet; no exit or entry is stacked on it",
+                )
+            )
+            return Outcome.PENDING_FILL, None, steps
+
         # Gate the entry BEFORE the exit is submitted: the exit's own close order would
         # otherwise count as "an order already working" and block the entry it precedes.
         entry: tuple[Decimal, Decimal] | None = None
@@ -1185,6 +1207,7 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
                 bb_period=config.bb_period,
                 bb_k=config.bb_k,
             ),
+            legs=parse_legs(config.regime_legs),
         )
     if robot is RobotName.META_LABEL:
         model_path = require_model_path(config.meta_label_model_path, robot="meta_label")
@@ -1244,6 +1267,7 @@ def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRout
         ),
         vpin=vpin,
         hawkes=hawkes,
+        legs=parse_legs(config.regime_legs),
     )
 
 

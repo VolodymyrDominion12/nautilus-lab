@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
@@ -11,6 +11,7 @@ from nautilus_lab.domain.funding import FundingParams
 from nautilus_lab.domain.metrics import SelectionMetric
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
+from nautilus_lab.domain.regime_router import parse_legs
 from nautilus_lab.domain.risk import RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.trading_mode import TradingMode
@@ -135,6 +136,8 @@ class Settings(BaseSettings):
     hawkes_toxic_threshold: Decimal = Decimal("2.0")
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    # REGIME_LEGS: enabled legs of regime / adaptive_ema, e.g. "uptrend,range" (docs/31).
+    regime_legs: str = ""
     embargo_bars: int = 10
     exchange_api_key: str | None = None
     exchange_api_secret: str | None = None
@@ -188,6 +191,12 @@ class Settings(BaseSettings):
     # out-of-sample run of each fold, one session `<id>-f<fold>` per fold). Batch
     # backtests use "oos": the in-sample grid is search, not the result being explained.
     decision_log_scope: str = "all"
+
+    @field_validator("regime_legs")
+    @classmethod
+    def _known_regime_legs(cls, value: str) -> str:
+        parse_legs(value)  # fail at startup, not in the middle of a batch cell
+        return value
 
     def all_catalog_paths(self) -> list[str]:
         paths: list[str] = []

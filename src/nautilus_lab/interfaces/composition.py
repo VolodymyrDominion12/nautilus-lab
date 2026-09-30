@@ -369,6 +369,7 @@ def research_request(
         hawkes_toxic_threshold=cfg.hawkes_toxic_threshold,
         vpin_bucket_volume=cfg.vpin_bucket_volume,
         vpin_toxic_threshold=cfg.vpin_toxic_threshold,
+        regime_legs=cfg.regime_legs,
         vpin_momentum_ema_period=cfg.vpin_momentum_ema_period,
         vpin_momentum_atr_multiple=cfg.vpin_momentum_atr_multiple,
         formulaic_model_path=cfg.formulaic_model_path,

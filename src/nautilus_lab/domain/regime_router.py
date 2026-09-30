@@ -24,6 +24,48 @@ from nautilus_lab.domain.regime import (
 from nautilus_lab.domain.signals import Signal, SignalSide
 from nautilus_lab.domain.vpin import VpinModel, VpinState, vpin_threshold
 
+#: Every leg on: the default, and the behaviour before `REGIME_LEGS` existed.
+ALL_LEGS: frozenset[MarketRegime] = frozenset(MarketRegime)
+
+
+def parse_legs(text: str | None) -> frozenset[MarketRegime]:
+    """`"uptrend,range"` -> the enabled legs. Empty or None means all of them."""
+    names = [item.strip().lower() for item in (text or "").split(",") if item.strip()]
+    if not names:
+        return ALL_LEGS
+    try:
+        return frozenset(MarketRegime(name) for name in names)
+    except ValueError as exc:
+        allowed = ", ".join(sorted(regime.value for regime in MarketRegime))
+        raise ValueError(f"unknown regime leg in {text!r}; allowed: {allowed}") from exc
+
+
+def gate_leg(
+    component: str,
+    *,
+    regime: MarketRegime,
+    signal: Signal | None,
+    legs: frozenset[MarketRegime],
+) -> tuple[Signal | None, tuple[TraceStep, ...]]:
+    """Drop the entry of a disabled leg; its exits (FLAT) still pass.
+
+    A research switch (docs/31): "does the short breakout lose on every fold?" is
+    answered by a batch with `REGIME_LEGS=uptrend,range`, not by editing the robot.
+    The leg keeps receiving bars, so re-enabling it changes nothing else.
+    """
+    if regime in legs:
+        return signal, ()
+    blocked = signal is not None and signal.side is not SignalSide.FLAT
+    note = step(
+        Stage.FILTER,
+        "regime_legs",
+        Verdict.BLOCK if blocked else Verdict.INFO,
+        result=f"{regime.value} leg disabled"
+        + (f": {signal.side.value} dropped" if blocked and signal is not None else ""),
+        values={"leg": regime.value, "enabled": ",".join(sorted(leg.value for leg in legs))},
+    )
+    return (None if blocked else signal), (note,)
+
 
 class RegimeRouter:
     """Classify the closed bar, then run the matching strategy. Flatten on regime change."""
@@ -35,8 +77,10 @@ class RegimeRouter:
         params: RegimeParams,
         vpin: VpinModel | None = None,
         hawkes: ExponentialHawkes | None = None,
+        legs: frozenset[MarketRegime] = ALL_LEGS,
     ) -> None:
         self._instrument_id = instrument_id
+        self._legs = legs
         self._params = params
         self._classifier = RegimeClassifier(params)
         self._vpin = vpin
@@ -178,7 +222,10 @@ class RegimeRouter:
         else:
             signal = range_signal
             active_trace = self._range.last_trace
-        self._trace = (regime, *filters, *active_trace)
+        signal, gate = gate_leg(
+            "RegimeRouter", regime=self._last_effective_regime, signal=signal, legs=self._legs
+        )
+        self._trace = (regime, *filters, *active_trace, *gate)
         return signal
 
     def _filter_steps(

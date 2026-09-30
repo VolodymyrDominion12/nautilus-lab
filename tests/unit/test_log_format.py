@@ -119,3 +119,34 @@ def test_margin_distribution_groups_by_component_and_counts_passes() -> None:
     assert vpin["total"] == 4
     assert vpin["passed"] == 1
     assert extra_passes(vpin["values"], 5) == 2
+
+
+def test_exit_on_a_refused_reentry_bar_closes_the_trade() -> None:
+    """ema ETH 2026-09-29: exit executed, entry blocked by max_drawdown -> trade closed."""
+    exit_step = {
+        "stage": "execution",
+        "component": "paper_broker",
+        "verdict": "emit",
+        "result": "exit",
+        "values": {"side": "LONG", "qty": 1.0, "price": 101.0},
+    }
+    rows = [
+        _row(T0, "ENTRY_OPENED", signal="buy"),
+        _row(T0 + timedelta(hours=1), "HOLD_NOOP", signal="buy"),
+        _row(
+            T0 + timedelta(hours=2),
+            "ENTRY_BLOCKED_RISK",
+            signal="sell",
+            blocked_by="risk.max_drawdown",
+            steps=[exit_step],
+        ),
+        _row(T0 + timedelta(hours=3), "ENTRY_BLOCKED_RISK", signal="sell"),
+        _row(T0 + timedelta(hours=9), "ENTRY_OPENED", signal="sell"),
+    ]
+    trades = reconstruct_trades_from_decisions(rows)
+    assert len(trades) == 2
+    first = trades[0]
+    assert first["status"] == "CLOSED"
+    assert first["exit_time"] == (T0 + timedelta(hours=2)).isoformat()
+    assert "max_drawdown" in first["exit_reason"]
+    assert first["duration_bars"] == 3

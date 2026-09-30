@@ -600,6 +600,7 @@ def _single_run(
             use_bar_vpin=request.use_bar_vpin,
             vpin_bucket_volume=request.vpin_bucket_volume,
             vpin_toxic_threshold=request.vpin_toxic_threshold,
+            regime_legs=request.regime_legs,
             vpin_momentum_ema_period=request.vpin_momentum_ema_period,
             vpin_momentum_atr_multiple=request.vpin_momentum_atr_multiple,
             formulaic_model_path=request.formulaic_model_path,

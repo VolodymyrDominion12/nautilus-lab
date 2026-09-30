@@ -325,3 +325,16 @@ def test_backtest_writes_parameters_once_in_a_run_header() -> None:
     assert {r.config_hash for r in records} == {headers[0].config_hash}
     size = sum(len(json.dumps(record_to_dict(r), cls=DecimalEncoder)) for r in records[1:])
     assert size / (len(records) - 1) < 2500, "a record should stay near 2 KB"
+
+
+@pytest.mark.integration
+def test_backtest_never_stacks_orders_on_one_in_flight() -> None:
+    """While an order is in flight no exit or entry is sent (2026-09-29 double-close bug)."""
+    records = _lifecycle_run(use_ratchet=False)
+    pending = [r for r in records if r.outcome == "PENDING_FILL"]
+    for record in pending:
+        assert not [s for s in record.steps if s.stage.value == "execution"]
+    # Every entry the robot sent is answered by its fill record (none lost to a flatten).
+    entries = [r for r in records if r.outcome in ("ENTRY_OPENED", "REVERSE")]
+    fills = [r for r in records if r.outcome == "ENTRY_FILLED"]
+    assert len(fills) >= len(entries) - 1  # the last entry may still be in flight at the end

@@ -256,12 +256,21 @@ def _reconstruct_window(
             if updated_tp is not None:
                 current_trade["take_profit"] = updated_tp
 
-            # Check for Exit
+            # Check for Exit. A bar whose plan was "exit and enter" but whose entry was then
+            # refused (risk breaker, zero size, pending order) still closed the position:
+            # its outcome names the refusal, the exit is in its execution step. Reading
+            # only the outcome kept such trades "open" across the flat stretch until the
+            # next entry — in the 2026-09-29 ema ETH log, 8 phantom trades of -4.4% each.
+            exited_on_refusal = outcome not in EXIT_OUTCOMES and _executed_exit(row)
+            if exited_on_refusal:
+                outcome = "EXIT"
             if outcome in EXIT_OUTCOMES:
                 current_trade["exit_time"] = ts_str
                 current_trade["exit_price"] = price
                 current_trade["exit_outcome"] = outcome
                 reason = outcome
+                if exited_on_refusal:
+                    reason += f" (re-entry refused: {row.get('outcome')}, {row.get('blocked_by')})"
                 if row.get("signal_reason"):
                     reason += f": {row['signal_reason']}"
                 current_trade["exit_reason"] = reason
@@ -298,6 +307,11 @@ def _reconstruct_window(
         trades.append(current_trade)
 
     return trade_counter, trades
+
+
+def _executed_exit(row: dict[str, Any]) -> bool:
+    """True when the row's execution steps closed the position (whatever its outcome)."""
+    return _step_values(row, "execution", "exit") is not None
 
 
 def _step_values(row: dict[str, Any], stage: str, result: str) -> dict[str, Any] | None:

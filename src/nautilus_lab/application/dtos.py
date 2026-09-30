@@ -50,6 +50,7 @@ class BacktestRequest:
     use_tick_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    regime_legs: str = ""
     use_hawkes: bool = False
     hawkes_baseline: Decimal = Decimal("0.1")
     hawkes_alpha: Decimal = Decimal("0.5")

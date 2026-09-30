@@ -27,6 +27,8 @@ from nautilus_lab.domain.errors import InvalidRiskError
 from nautilus_lab.domain.mean_reversion import RangeMeanReversion
 from nautilus_lab.domain.regime import MarketRegime
 from nautilus_lab.domain.regime_router import (
+    ALL_LEGS,
+    gate_leg,
     regime_change_step,
     regime_step,
     regime_warmup_bars,
@@ -205,8 +207,15 @@ class AdaptiveEmaRouter:
     nothing about selectivity.
     """
 
-    def __init__(self, *, instrument_id: str, params: AdaptiveEmaParams) -> None:
+    def __init__(
+        self,
+        *,
+        instrument_id: str,
+        params: AdaptiveEmaParams,
+        legs: frozenset[MarketRegime] = ALL_LEGS,
+    ) -> None:
         self._instrument_id = instrument_id
+        self._legs = legs
         self._classifier = AdaptiveEma(params)
         self._uptrend = UptrendBreakout(
             instrument_id=instrument_id,
@@ -312,7 +321,10 @@ class AdaptiveEmaRouter:
         else:
             leg = self._range
         signal = leg.on_bar(bar)
-        self._trace = (regime, *leg.last_trace)
+        signal, gate = gate_leg(
+            "AdaptiveEmaRouter", regime=self._last_snapshot.regime, signal=signal, legs=self._legs
+        )
+        self._trace = (regime, *leg.last_trace, *gate)
         return signal
 
     def _warm_up(self, bar: OhlcvBar) -> None:

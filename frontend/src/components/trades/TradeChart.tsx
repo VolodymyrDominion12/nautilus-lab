@@ -3,6 +3,9 @@ import {
   CandlestickSeries,
   ColorType,
   HistogramSeries,
+  LineSeries,
+  LineStyle,
+  LineType,
   createChart,
   createSeriesMarkers,
 } from 'lightweight-charts';
@@ -17,12 +20,17 @@ import type {
 import { AlertCircle } from 'lucide-react';
 import type { TradeChart as TradeChartPayload, TradeSummary } from '../../services/api';
 import { tradeMarkers, tradePriceLines } from '../../lib/trades';
+import type { OverlaySeries } from '../../lib/tradeOverlays';
 
 interface TradeChartProps {
   trade: TradeSummary;
   chart: TradeChartPayload;
   height?: number;
+  /** Indicator lines and the stop's path from the decision log (`lib/tradeOverlays.ts`). */
+  overlays?: OverlaySeries[];
 }
+
+const NO_OVERLAYS: OverlaySeries[] = [];
 
 /**
  * The candles around one trade, with the entry, the exit and the protective levels on it.
@@ -33,7 +41,12 @@ interface TradeChartProps {
  * up empty next to a real trade. Markers are snapped onto candles that exist — a decision
  * is stamped with the bar's **end**, so an unsnapped marker is dropped without a word.
  */
-export const TradeChart: React.FC<TradeChartProps> = ({ trade, chart, height = 380 }) => {
+export const TradeChart: React.FC<TradeChartProps> = ({
+  trade,
+  chart,
+  height = 380,
+  overlays = NO_OVERLAYS,
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -42,6 +55,7 @@ export const TradeChart: React.FC<TradeChartProps> = ({ trade, chart, height = 3
   // instead of updating would stack a second set of arrows and levels on each poll.
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const overlayRefs = useRef<ISeriesApi<'Line'>[]>([]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -85,6 +99,7 @@ export const TradeChart: React.FC<TradeChartProps> = ({ trade, chart, height = 3
       window.removeEventListener('resize', handleResize);
       markersRef.current = null;
       priceLinesRef.current = [];
+      overlayRefs.current = [];
       seriesRef.current = null;
       volumeRef.current = null;
       chartRef.current = null;
@@ -135,7 +150,13 @@ export const TradeChart: React.FC<TradeChartProps> = ({ trade, chart, height = 3
     else markersRef.current = createSeriesMarkers(series, markers);
 
     for (const line of priceLinesRef.current) series.removePriceLine(line);
-    priceLinesRef.current = tradePriceLines(trade).map((line) =>
+    // With the stop drawn as its own step line, a flat "final stop" price line would
+    // only repeat its last point; keep it when the log has no stop history to draw.
+    const hasStopPath = overlays.some((overlay) => overlay.key === 'stop_loss');
+    const lines = tradePriceLines(trade).filter(
+      (line) => !(hasStopPath && line.title === 'Стоп-лос'),
+    );
+    priceLinesRef.current = lines.map((line) =>
       series.createPriceLine({
         price: line.price,
         color: line.color,
@@ -146,8 +167,26 @@ export const TradeChart: React.FC<TradeChartProps> = ({ trade, chart, height = 3
       }),
     );
 
+    for (const old of overlayRefs.current) instance.removeSeries(old);
+    overlayRefs.current = overlays.map((overlay) => {
+      const line = instance.addSeries(LineSeries, {
+        color: overlay.color,
+        lineWidth: overlay.key === 'stop_loss' ? 2 : 1,
+        lineStyle: overlay.dashed ? LineStyle.Dashed : LineStyle.Solid,
+        lineType: overlay.step ? LineType.WithSteps : LineType.Simple,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        title: overlay.label,
+      });
+      line.setData(
+        overlay.points.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })),
+      );
+      return line;
+    });
+
     instance.timeScale().fitContent();
-  }, [chart, trade]);
+  }, [chart, trade, overlays]);
 
   return (
     <div className="rounded-xl overflow-hidden border border-gray-800 bg-gray-950">

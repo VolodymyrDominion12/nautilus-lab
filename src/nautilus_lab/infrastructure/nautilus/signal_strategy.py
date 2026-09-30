@@ -240,6 +240,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._entry_decision_price: Decimal | None = None
         self._entry_decision_ts: datetime | None = None
         self._overlay_steps: list[TraceStep] = []
+        self._header_written = False
         # Real per-bar taker split, keyed by bar event timestamp. It travels as a
         # constructor argument rather than a config field because it is data, not a
         # parameter: it must not show up in a strategy config dump, and it is only
@@ -481,7 +482,6 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             steps=tuple(steps),
             outcome=Outcome.ENTRY_FILLED.value,
             config_hash=self._config_hash(),
-            params={k: str(v) for k, v in self.config.dict().items()},
         )
         record = replace(record, narrative=render_narrative(record_to_dict(record)))
         self.decision_log.log(record)
@@ -552,7 +552,6 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             ),
             outcome=Outcome.STOP_LOSS.value,
             config_hash=self._config_hash(),
-            params={k: str(v) for k, v in self.config.dict().items()},
         )
         record = replace(record, narrative=render_narrative(record_to_dict(record)))
         self.decision_log.log(record)
@@ -830,6 +829,34 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         # report; "UNKNOWN" on every bar read as "the classifier failed" in the digest.
         return ""
 
+    def _write_run_header(self, bar: OhlcvBar) -> None:
+        """Once per run, before the first record: the parameters every record used to repeat.
+
+        Dated with the first bar (not the wall clock): the writer files by record date, and
+        a header dated today would sort after a backtest's history as its "newest" row.
+        """
+        if self._header_written or self.decision_log is None or self.session_id is None:
+            return
+        self._header_written = True
+        record = DecisionRecord(
+            bar_end_utc=bar.ts_utc,
+            robot=self.config.robot.lower(),
+            instrument_id=bar.instrument_id,
+            close_price=bar.close,
+            regime="",
+            signal=None,
+            signal_reason=None,
+            indicators={},
+            states={},
+            session_id=self.session_id,
+            kind=RecordKind.RUN_HEADER,
+            outcome=Outcome.RUN_HEADER.value,
+            config_hash=self._config_hash(),
+            params={k: str(v) for k, v in self.config.dict().items()},
+        )
+        record = replace(record, narrative=render_narrative(record_to_dict(record)))
+        self.decision_log.log(record)
+
     def _record_decision_log(
         self,
         bar: OhlcvBar,
@@ -841,6 +868,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     ) -> None:
         if self.decision_log is None or self.session_id is None:
             return
+        self._write_run_header(bar)
 
         all_steps = tuple(steps) + tuple(execution_steps or ())
         regime = self._record_regime(signal, steps)
@@ -871,7 +899,6 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             # Fills are not traced per-bar in backtest decisions: they live in BacktestReport.
             fill_ids=(),
             config_hash=self._config_hash(),
-            params={k: str(v) for k, v in self.config.dict().items()},
         )
         record = replace(record, narrative=render_narrative(record_to_dict(record)))
         self.decision_log.log(record)

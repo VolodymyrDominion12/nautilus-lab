@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Copy } from 'lucide-react';
 import { fetchRunDigest, type DecisionDigest } from '../../services/api';
 import { outcomeLabel } from '../../lib/trades';
+import { RunMarginsPanel } from './RunMarginsPanel';
 
 interface RunAnalysisTabProps {
   batchId: string;
@@ -154,6 +155,10 @@ export const RunAnalysisTab: React.FC<RunAnalysisTabProps> = ({ batchId, cellId,
           </table>
         )}
       </section>
+
+      <div className="xl:col-span-2">
+        <RunMarginsPanel batchId={batchId} cellId={cellId} fold={fold} />
+      </div>
 
       <section className="flex flex-col gap-2">
         <h4 className="text-xs font-bold text-gray-300">Майже-сигнали: {digest.near_misses}</h4>

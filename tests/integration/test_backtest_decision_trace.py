@@ -311,3 +311,17 @@ def test_backtest_names_a_ratchet_exit() -> None:
     for record in records:
         if record.outcome == "EXIT":
             assert not [s for s in record.steps if s.component == "ratchet" and s.result == "exit"]
+
+
+@pytest.mark.integration
+def test_backtest_writes_parameters_once_in_a_run_header() -> None:
+    """One `run_header` first; every later record carries only the config hash (docs/30)."""
+    records = _lifecycle_run(use_ratchet=False)
+    headers = [r for r in records if r.kind.value == "run_header"]
+    assert len(headers) == 1
+    assert records[0] is headers[0]
+    assert headers[0].params
+    assert all(not r.params for r in records[1:])
+    assert {r.config_hash for r in records} == {headers[0].config_hash}
+    size = sum(len(json.dumps(record_to_dict(r), cls=DecimalEncoder)) for r in records[1:])
+    assert size / (len(records) - 1) < 2500, "a record should stay near 2 KB"

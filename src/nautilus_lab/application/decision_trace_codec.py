@@ -94,7 +94,6 @@ def record_to_dict(record: DecisionRecord) -> dict[str, Any]:
         "regime": record.regime,
         "signal": record.signal,
         "signal_reason": record.signal_reason,
-        "indicators": record.indicators,
         "states": record.states,
         "outcome": record.outcome,
         "blocked_by": record.blocked_by,
@@ -107,6 +106,10 @@ def record_to_dict(record: DecisionRecord) -> dict[str, Any]:
     if record.account:
         row["account"] = plain_number(record.account)
     row["steps"] = [step_to_dict(item) for item in record.steps]
+    # `indicators` is the v0 flattening of the steps' numbers: written only when there are no
+    # steps to derive it from on read (`upgrade_row`), so a record does not carry it twice.
+    if record.indicators and not record.steps:
+        row["indicators"] = record.indicators
     if record.config_hash:
         row["config_hash"] = record.config_hash
     if record.params:
@@ -121,10 +124,34 @@ def is_v0(row: Mapping[str, Any]) -> bool:
     return "schema" not in row
 
 
+def indicators_from_step_dicts(steps: object) -> dict[str, str]:
+    """`legacy_indicators` over serialised steps: regime/strategy numbers, first wins."""
+    out: dict[str, str] = {}
+    if not isinstance(steps, list):
+        return out
+    for item in steps:
+        if not isinstance(item, Mapping) or item.get("stage") not in ("regime", "strategy"):
+            continue
+        values = item.get("values")
+        if not isinstance(values, Mapping):
+            continue
+        for key, value in values.items():
+            if value is not None and key not in out:
+                out[str(key)] = str(value)
+    return out
+
+
 def upgrade_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    """A v0 row in the v1 shape, so one reader handles both (outcome unknown for v0)."""
+    """A v0 row in the v1 shape, so one reader handles both (outcome unknown for v0).
+
+    A v1 row written without `indicators` (they are derivable from `steps`, docs/30) gets
+    them back here, so every reader keeps seeing the field it always saw.
+    """
     if not is_v0(row):
-        return dict(row)
+        upgraded_v1 = dict(row)
+        if "indicators" not in upgraded_v1:
+            upgraded_v1["indicators"] = indicators_from_step_dicts(upgraded_v1.get("steps"))
+        return upgraded_v1
     upgraded = dict(row)
     upgraded["schema"] = "decision_trace/0"
     upgraded.setdefault("kind", "bar_decision")

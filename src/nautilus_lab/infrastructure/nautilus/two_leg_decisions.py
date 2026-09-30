@@ -62,6 +62,7 @@ class TwoLegDecisionLog:
         self._params = {k: str(v) for k, v in params.items()}
         payload = json.dumps(self._params, sort_keys=True, default=str)
         self._config_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+        self._header_written = False
 
     @property
     def enabled(self) -> bool:
@@ -83,6 +84,26 @@ class TwoLegDecisionLog:
     ) -> None:
         if self._log is None or self._session_id is None:
             return
+        if not self._header_written:
+            # Parameters once per run (docs/30): later records carry only the config hash.
+            self._header_written = True
+            header = DecisionRecord(
+                bar_end_utc=ts,
+                robot=self._robot,
+                instrument_id=self._instrument_id,
+                close_price=close,
+                regime="",
+                signal=None,
+                signal_reason=None,
+                indicators={},
+                states={},
+                session_id=self._session_id,
+                kind=RecordKind.RUN_HEADER,
+                outcome=Outcome.RUN_HEADER.value,
+                config_hash=self._config_hash,
+                params=self._params,
+            )
+            self._log.log(replace(header, narrative=render_narrative(record_to_dict(header))))
         chain = tuple(steps)
         states: dict[str, Any] = dict(legacy_states(chain))
         record = DecisionRecord(
@@ -103,7 +124,6 @@ class TwoLegDecisionLog:
             outcome=outcome.value,
             blocked_by=blocked_by,
             config_hash=self._config_hash,
-            params=self._params,
         )
         record = replace(record, narrative=render_narrative(record_to_dict(record)))
         self._log.log(record)

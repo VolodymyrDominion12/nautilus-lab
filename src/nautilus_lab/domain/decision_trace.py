@@ -86,11 +86,15 @@ class Outcome(StrEnum):
     PAUSED = "PAUSED"
     RESUMED = "RESUMED"
     ERROR = "ERROR"
+    RUN_HEADER = "RUN_HEADER"
 
 
 class RecordKind(StrEnum):
     BAR_DECISION = "bar_decision"
     INTRABAR = "intrabar"
+    #: Once per run, before its first record: the full parameters and config hash. Every
+    #: later record carries only `config_hash`, which halves a record's size (docs/30).
+    RUN_HEADER = "run_header"
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,6 +23,8 @@ from decimal import Decimal, InvalidOperation
 from itertools import pairwise
 from typing import Any
 
+from nautilus_lab.application.decision_trace_codec import upgrade_row
+
 #: Outcomes that open a position. `REVERSE` closes the old side and opens the new one.
 ENTRY_OUTCOMES = ("ENTRY_OPENED", "REVERSE")
 
@@ -98,6 +100,9 @@ def reconstruct_trades_from_decisions(
     """
     trades: list[dict[str, Any]] = []
     trade_counter = 0
+    # Rows straight from a file lack `indicators` (derived from steps since docs/30) and
+    # the run header is not a decision: normalise once here, whoever the caller is.
+    logs = [upgrade_row(row) for row in logs if row.get("kind") != "run_header"]
     windows = _ordered_windows(logs)
 
     for index, window in enumerate(windows, start=1):

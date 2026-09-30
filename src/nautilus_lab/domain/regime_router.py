@@ -287,7 +287,11 @@ def regime_step(
     else:
         direction = "up" if slope > 0 else "down"
         why = f"ER {efficiency_ratio:.3f} passes {applied}, EMA slope {direction}"
-    values: dict[str, TraceValue] = {"er": efficiency_ratio, "slope": slope}
+    values: dict[str, TraceValue] = {
+        "er": efficiency_ratio,
+        "slope": slope,
+        "er_margin_pct": margin_pct(efficiency_ratio, applied),
+    }
     values.update(extra or {})
     return step(
         Stage.REGIME,

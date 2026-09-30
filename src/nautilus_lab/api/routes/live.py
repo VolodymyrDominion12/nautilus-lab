@@ -262,6 +262,9 @@ def get_paper_session_trade(
         "truncated": truncated,
         "windows": _window_count(trades),
         "trade": trade,
+        # Bars around the trade (steps + stop only), so the chart draws the indicators
+        # leading into the entry and after the exit, not just while the trade was open.
+        "context": _trade_context(logs, trade),
         "chart": _trade_chart(
             ctx,
             key,
@@ -483,6 +486,31 @@ def _trade_instrument(trade: dict[str, Any]) -> str | None:
     if not isinstance(symbol, str) or not symbol or symbol == "UNKNOWN":
         return None
     return symbol
+
+
+def _trade_context(
+    logs: list[dict[str, Any]], trade: dict[str, Any], *, before: int = 60, after: int = 30
+) -> list[dict[str, Any]]:
+    """Up to `before` bar records ahead of the entry and `after` past the exit, slimmed."""
+    bars = [row for row in logs if row.get("kind", "bar_decision") == "bar_decision"]
+    entry = str(trade.get("entry_time") or "")
+    exit_ = str(trade.get("exit_time") or "")
+    if not bars or not entry:
+        return []
+    start = next((i for i, row in enumerate(bars) if str(row.get("ts", "")) >= entry), len(bars))
+    end = len(bars)
+    if exit_:
+        end = next((i for i, row in enumerate(bars) if str(row.get("ts", "")) > exit_), len(bars))
+    picked = bars[max(0, start - before) : start] + bars[end : end + after]
+    return [
+        {
+            "ts": row.get("ts"),
+            "close": row.get("close"),
+            "steps": row.get("steps") or [],
+            "states": row.get("states") or {},
+        }
+        for row in picked
+    ]
 
 
 def _window_count(trades: list[dict[str, Any]]) -> int:

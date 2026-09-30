@@ -1010,6 +1010,8 @@ export interface TradeDetailResponse {
   windows: number;
   trade: TradeDetail;
   chart: TradeChart;
+  /** Bar records before the entry and after the exit (steps + states), for the chart. */
+  context?: Pick<TradeDecisionRow, 'ts' | 'close' | 'steps' | 'states'>[];
 }
 
 /**
@@ -1315,4 +1317,22 @@ export async function fetchRunDigest(
 ): Promise<{ digest: DecisionDigest; markdown: string }> {
   const query = fold != null ? `?fold=${fold}` : '';
   return parseJson(await fetch(runPath(batchId, cellId, `/digest${query}`)));
+}
+
+export interface MarginBucket {
+  component: string;
+  key: string;
+  unit: string;
+  values: number[];
+  passed: number;
+  total: number;
+}
+
+export async function fetchRunMargins(
+  batchId: string,
+  cellId: string,
+  fold?: number,
+): Promise<{ margins: Record<string, MarginBucket> }> {
+  const query = fold != null ? `?fold=${fold}` : '';
+  return parseJson(await fetch(runPath(batchId, cellId, `/margins${query}`)));
 }

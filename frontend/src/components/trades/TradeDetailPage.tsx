@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ArrowLeft, Copy, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import type { TradeRoute } from '../../lib/trades';
 import { buildTradeHash, describeMissingDetail } from '../../lib/trades';
@@ -7,6 +7,7 @@ import { TradeChart } from './TradeChart';
 import { TradeSummaryGrid } from './TradeSummaryGrid';
 import { TradeIndicatorTable } from './TradeIndicatorTable';
 import { TradeDecisionTimeline } from './TradeDecisionTimeline';
+import { overlaySeries } from '../../lib/tradeOverlays';
 
 interface TradeDetailPageProps {
   route: TradeRoute;
@@ -37,6 +38,14 @@ export const TradeDetailPage: React.FC<TradeDetailPageProps> = ({ route, onClose
 
   const trade = data?.trade;
   const missingDetail = trade ? describeMissingDetail(trade) : null;
+  // Context bars before the entry and after the exit, then the trade's own records.
+  const overlays = useMemo(
+    () =>
+      data && trade
+        ? overlaySeries([...(data.context ?? []), ...trade.decisions], data.chart.bars ?? [])
+        : [],
+    [data, trade],
+  );
 
   const copyLink = async () => {
     const url = `${window.location.origin}${window.location.pathname}${buildTradeHash(route)}`;
@@ -148,7 +157,7 @@ export const TradeDetailPage: React.FC<TradeDetailPageProps> = ({ route, onClose
 
           <TradeSummaryGrid trade={trade} />
 
-          <TradeChart trade={trade} chart={data!.chart} />
+          <TradeChart trade={trade} chart={data!.chart} overlays={overlays} />
 
           <TradeIndicatorTable trade={trade} />
 

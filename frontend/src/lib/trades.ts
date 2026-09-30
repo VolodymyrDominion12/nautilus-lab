@@ -285,6 +285,7 @@ const OUTCOME_LABELS: Record<string, string> = {
   ENTRY_FILLED: 'Ордер виконано',
   PENDING_FILL: 'Чекаємо виконання',
   SIGNAL_VETOED: 'Сигнал відхилено фільтром',
+  RUN_HEADER: 'Початок прогону (параметри)',
   TAKE_PROFIT: 'Тейк-профіт',
   FLATTEN_REGIME_CHANGE: 'Закриття: зміна режиму',
   MANUAL_CLOSE: 'Ручне закриття',
@@ -319,7 +320,8 @@ export const isPivotalDecision = (row: TradeDecisionRow): boolean =>
     row.outcome &&
     row.outcome !== 'HOLD_NOOP' &&
     row.outcome !== 'NO_SIGNAL' &&
-    row.outcome !== 'PENDING_FILL',
+    row.outcome !== 'PENDING_FILL' &&
+    row.outcome !== 'RUN_HEADER',
   );
 
 /** A backtest log carries no `bar`/`narrative` and no `steps`: the page says so instead of

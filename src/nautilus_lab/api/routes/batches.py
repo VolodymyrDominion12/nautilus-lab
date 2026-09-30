@@ -47,6 +47,7 @@ from nautilus_lab.application.batch_plan import (
     plan_cells,
 )
 from nautilus_lab.application.decision_digest import build_digest, digest_markdown
+from nautilus_lab.application.decision_margins import margin_distribution
 from nautilus_lab.application.trade_history import (
     reconstruct_trades_from_decisions,
     trade_summary,
@@ -293,3 +294,16 @@ def get_run_digest(
         logs.extend(reader.get_recent_logs(session, lines=200_000))
     digest = build_digest(logs)
     return {"status": "ok", "digest": digest.as_dict(), "markdown": digest_markdown(digest)}
+
+
+@router.get("/api/batches/{batch_id}/runs/{cell_id}/margins")
+def get_run_margins(
+    ctx: Lab, batch_id: str, cell_id: str, fold: int | None = Query(None, ge=0)
+) -> dict[str, Any]:
+    """Distance to threshold of every logged condition, for the "threshold ±X%" slider."""
+    path = _cell_path(ctx, batch_id, cell_id)
+    reader = decision_reader(path, ctx.settings())
+    logs: list[dict[str, Any]] = []
+    for session in _fold_session(path, fold):
+        logs.extend(reader.get_recent_logs(session, lines=200_000))
+    return {"status": "ok", "margins": margin_distribution(logs)}

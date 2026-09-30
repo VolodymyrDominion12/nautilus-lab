@@ -3,7 +3,14 @@ from __future__ import annotations
 from decimal import Decimal
 
 from nautilus_lab.domain.bars import OhlcvBar
-from nautilus_lab.domain.decision_trace import Stage, TraceStep, Verdict, step, warmup_step
+from nautilus_lab.domain.decision_trace import (
+    Stage,
+    TraceStep,
+    Verdict,
+    margin_pct,
+    step,
+    warmup_step,
+)
 from nautilus_lab.domain.formulaic_alphas import FormulaicAlphaEngine
 from nautilus_lab.domain.ml_classifier import DirectionClassifier, DirectionProbabilities
 from nautilus_lab.domain.signals import Signal, SignalSide
@@ -47,6 +54,8 @@ class FormulaicLgbmStrategy:
                     "p_down": probs.down,
                     "p_flat": probs.flat,
                     "holding": None if self._position is None else self._position.value,
+                    # The stronger direction against the entry threshold (-5% = 5% short).
+                    "margin_pct": margin_pct(max(probs.up, probs.down), self._threshold),
                 },
                 thresholds={"threshold": self._threshold},
                 note=note,

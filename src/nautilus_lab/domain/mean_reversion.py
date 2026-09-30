@@ -8,6 +8,7 @@ from nautilus_lab.domain.decision_trace import (
     TraceStep,
     TraceValue,
     Verdict,
+    margin_pct,
     step,
     warmup_step,
 )
@@ -70,6 +71,8 @@ class RangeMeanReversion:
             "lower": lower,
             "stdev": stdev,
             "z": (bar.close - mean) / stdev,
+            # |z| against the band width: 0 = on the band, -20% = 20% inside it.
+            "margin_pct": margin_pct(abs((bar.close - mean) / stdev), self._band_k),
         }
         thresholds["exit_band_z"] = Decimal("0.5") * self._band_k
         if bar.close <= lower:

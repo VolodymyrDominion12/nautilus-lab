@@ -173,7 +173,10 @@ def build_digest(
     no_signal_samples: int = 8,
 ) -> DecisionDigest:
     """Count what the robot did and why over the given rows (any order, any schema)."""
-    upgraded = [upgrade_row(row) for row in rows]
+    everything = [upgrade_row(row) for row in rows]
+    # The run header carries the parameters once; it is not a decision to count.
+    headers = [r for r in everything if r.get("kind") == "run_header"]
+    upgraded = [r for r in everything if r.get("kind") != "run_header"]
     upgraded.sort(key=lambda r: (str(r.get("ts", "")), 0 if r.get("kind") == "intrabar" else 1))
     bars = [r for r in upgraded if r.get("kind", "bar_decision") == "bar_decision"]
     intrabar = [r for r in upgraded if r.get("kind") == "intrabar"]
@@ -260,7 +263,11 @@ def build_digest(
         intrabar=dict(Counter(str(r.get("outcome")) for r in intrabar).most_common()),
         config_hashes=sorted({str(r["config_hash"]) for r in upgraded if r.get("config_hash")}),
         params=next(
-            (p for r in reversed(upgraded) if isinstance((p := r.get("params")), dict)),
+            (
+                p
+                for r in [*reversed(headers), *reversed(upgraded)]
+                if isinstance((p := r.get("params")), dict) and p
+            ),
             {},
         ),
         v0_rows=sum(1 for r in upgraded if r.get("schema") == "decision_trace/0"),

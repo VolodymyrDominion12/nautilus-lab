@@ -108,3 +108,30 @@ def test_funding_run_writes_a_record_per_settlement() -> None:
     assert all("net_apy" in s.values for s in carry)
     assert all(s.thresholds.get("min_net_apy") == Decimal("0.10") for s in carry)
     _serialisable(log.records)
+
+
+@pytest.mark.integration
+def test_funding_warmup_does_not_poison_oos() -> None:
+    bars, funding = synthetic_funding_pair(
+        spot_id="ETH/USDT.SIM", perp_id="ETHUSDT-PERP.SIM", count=200, seed=42
+    )
+    log = _Memory()
+    trade_start = bars["ETH/USDT.SIM"][30].ts_utc
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=200,
+        starting_equity=Decimal("100000"),
+        risk=_limits(),
+        robot=RobotName.FUNDING,
+        source=BarOrigin.SYNTHETIC,
+        funding=FundingParams(min_net_apy=Decimal("0.05")),
+        funding_spot_id="ETH/USDT.SIM",
+        funding_perp_id="ETHUSDT-PERP.SIM",
+        session_id="funding-warmup-test",
+        trade_start=trade_start,
+    )
+    report = NautilusResearchBacktest(decision_log=log).run_spread(request, bars, funding=funding)
+    warmup_records = [r for r in log.records if r.outcome == "WARMUP"]
+    assert warmup_records, "should have warmup records before trade_start"
+    assert report.fills > 0, "robot must trade in OOS after warmup without phantom position lock"

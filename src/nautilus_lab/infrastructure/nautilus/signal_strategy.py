@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Protocol, cast
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar, BarType, OrderBookDepth10, TradeTick
@@ -1080,7 +1080,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         stop_id = self._stop_order_id
         for order in self.cache.orders_open(instrument_id=instrument_id):
             if order.client_order_id != stop_id:
-                return order.client_order_id
+                return cast(object, order.client_order_id)
         inflight = self.cache.client_order_ids_inflight(instrument_id=instrument_id)
         return next((oid for oid in inflight if oid != stop_id), None)
 

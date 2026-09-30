@@ -11,10 +11,15 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from nautilus_lab.application.decision_narrative import render_narrative
-from nautilus_lab.application.dtos import BacktestReport, BacktestRequest, WalkForwardRequest
+from nautilus_lab.application.dtos import (
+    BacktestReport,
+    BacktestRequest,
+    MultiWindowReport,
+    WalkForwardRequest,
+)
 from nautilus_lab.application.run_walk_forward import RunWalkForward
 from nautilus_lab.domain.bars import OhlcvBar
-from nautilus_lab.domain.decision_trace import Stage, Verdict
+from nautilus_lab.domain.decision_trace import Stage, TraceStep, Verdict
 from nautilus_lab.domain.funding import FundingCashAndCarry, FundingParams, FundingSnapshot
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.pairs.pairs_trading import PairsTrading
@@ -61,8 +66,14 @@ def test_funding_names_the_apy_gate_it_fails() -> None:
     (item,) = robot.last_trace
     assert item.component == "FundingCarry"
     assert item.verdict is Verdict.INFO
-    assert item.values["net_apy"] < item.thresholds["min_net_apy"]
-    assert item.values["apy_margin_pct"] < 0
+    net_apy = item.values["net_apy"]
+    min_net_apy = item.thresholds["min_net_apy"]
+    assert isinstance(net_apy, Decimal)
+    assert isinstance(min_net_apy, Decimal)
+    assert net_apy < min_net_apy
+    margin = item.values["apy_margin_pct"]
+    assert isinstance(margin, (Decimal, int, float))
+    assert margin < 0
     assert "min_net_apy" in (item.note or "")
 
 
@@ -91,7 +102,7 @@ def test_funding_without_index_is_a_skip_not_a_zero_basis() -> None:
 # --- pairs --------------------------------------------------------------------------
 
 
-def _pairs(count: int, *, lookback: int = 30) -> tuple[PairsTrading, list]:
+def _pairs(count: int, *, lookback: int = 30) -> tuple[PairsTrading, list[tuple[TraceStep, ...]]]:
     robot = PairsTrading(
         leg_a="ETH/USDT.SIM",
         leg_b="BTC/USDT.SIM",
@@ -218,7 +229,7 @@ class _Feed:
         return {request.instrument_id: self._bars}
 
 
-def _wf(scope: str) -> tuple[_SessionEngine, object]:
+def _wf(scope: str) -> tuple[_SessionEngine, MultiWindowReport]:
     bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=800, seed=5)
     engine = _SessionEngine()
     request = BacktestRequest(

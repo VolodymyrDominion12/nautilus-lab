@@ -257,3 +257,72 @@ def test_holding_periods_amortisation_math() -> None:
     fee_per_interval_15 = carry_15._round_trip_fee_per_interval()
     annual_fee_drag_15 = fee_per_interval_15 * Decimal("3") * Decimal("365")
     assert annual_fee_drag_15 == Decimal("0.1825")
+
+
+def test_funding_max_holding_periods_exit() -> None:
+    params = FundingParams(
+        min_net_apy=Decimal("0.05"),
+        holding_periods=60,
+        max_holding_periods=3,
+    )
+    carry = FundingCashAndCarry(
+        spot_id="BTC/USDT.SIM",
+        perp_id="BTCUSDT-PERP.SIM",
+        params=params,
+    )
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+
+    # Entry
+    assert carry.on_funding(_snapshot(funding_rate=Decimal("0.0005"), ts=ts)) is not None
+    assert carry.is_open
+    assert carry.periods_held == 0
+
+    # Interval 1: held = 1 < 3
+    sig1 = carry.on_funding(_snapshot(funding_rate=Decimal("0.0005"), ts=ts + timedelta(hours=8)))
+    assert sig1 is None
+    assert carry.periods_held == 1
+
+    # Interval 2: held = 2 < 3
+    sig2 = carry.on_funding(_snapshot(funding_rate=Decimal("0.0005"), ts=ts + timedelta(hours=16)))
+    assert sig2 is None
+    assert carry.periods_held == 2
+
+    # Interval 3: held = 3 >= max_holding_periods (3) -> timeout exit!
+    sig3 = carry.on_funding(_snapshot(funding_rate=Decimal("0.0005"), ts=ts + timedelta(hours=24)))
+    assert sig3 is not None
+    assert sig3.leg_a.side == SignalSide.FLAT
+    assert sig3.leg_b.side == SignalSide.FLAT
+    assert sig3.reason == "max holding periods reached"
+    assert not carry.is_open
+    assert carry.periods_held == 0
+
+
+def test_funding_abort_entry_and_is_open_sync() -> None:
+    params = FundingParams(
+        min_net_apy=Decimal("0.05"),
+        holding_periods=60,
+    )
+    carry = FundingCashAndCarry(
+        spot_id="BTC/USDT.SIM",
+        perp_id="BTCUSDT-PERP.SIM",
+        params=params,
+    )
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+
+    # 1. Emit entry
+    assert carry.on_funding(_snapshot(funding_rate=Decimal("0.0005"), ts=ts)) is not None
+    assert carry.is_open
+
+    # 2. Entry aborted (e.g. warmup, risk refusal, sizing skip)
+    carry.abort_entry()
+    assert not carry.is_open
+    assert carry.periods_held == 0
+
+    # 3. Next settlement receives is_open=False explicitly from execution layer
+    # If conditions still pass, it can emit entry again rather than saying "carry still valid: hold"
+    sig_retry = carry.on_funding(
+        _snapshot(funding_rate=Decimal("0.0005"), ts=ts + timedelta(hours=8)),
+        is_open=False,
+    )
+    assert sig_retry is not None
+    assert sig_retry.leg_a.side == SignalSide.BUY

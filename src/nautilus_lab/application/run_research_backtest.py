@@ -76,4 +76,6 @@ def minimum_bars(robot: RobotName) -> int:
         return 200
     if robot is RobotName.FORMULAIC_LGBM:
         return 80
+    if robot is RobotName.FUNDING:
+        return 15
     return 50

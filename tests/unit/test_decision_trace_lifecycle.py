@@ -80,7 +80,7 @@ class _Fixed:
         return self._p
 
 
-def _run_meta(probability: Decimal, *, at: int = 60) -> list[tuple[Signal | None, tuple]]:
+def _run_meta(probability: Decimal, *, at: int = 60) -> list[tuple[Signal | None, tuple[Any, ...]]]:
     strategy = MetaLabelStrategy(
         instrument_id="ETH/USDT.SIM",
         primary=_BuyAt(at),

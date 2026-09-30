@@ -211,16 +211,20 @@ class FundingRobot(Strategy):  # type: ignore[misc]
             ts_utc=ts,
         )
 
+        held = self._holding_spot()
+        is_currently_open = held is not Holding.FLAT
+
         start = self.config.trade_start_ns
         if start is not None and int(funding_rate.ts_event) < start:
             # Warm-up settlement: like every other robot, nothing is traded before the
-            # window's trade start. Before 2026-09-30 this path traded anyway, so an
-            # out-of-sample run could begin already holding a carry opened in-sample.
-            self._robot.on_funding(snapshot)
+            # window's trade start. We evaluate the snapshot for the decision log, but
+            # abort unfulfilled entry so the robot begins trading completely cold.
+            self._robot.on_funding(snapshot, is_open=False)
+            self._robot.abort_entry()
             self._decide(Outcome.WARMUP, [*steps, *self._robot.last_trace])
             return
 
-        signal = self._robot.on_funding(snapshot)
+        signal = self._robot.on_funding(snapshot, is_open=is_currently_open)
         steps.extend(self._robot.last_trace)
         if signal is None:
             self._decide(Outcome.NO_SIGNAL, steps)
@@ -228,7 +232,6 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         side_spot = signal.leg_a.side.value
 
         equity = self._equity()
-        held = self._holding_spot()
         plan = plan_for_signal(held, signal.leg_a.side)
         steps.append(plan_step(held, plan.exit_position, plan.wants_entry))
         if plan.is_noop:
@@ -244,6 +247,7 @@ class FundingRobot(Strategy):  # type: ignore[misc]
                 self._decide(Outcome.EXIT, steps, signal=side_spot, reason=signal.reason)
                 return
         if refusal is not None or equity is None:
+            self._robot.abort_entry()
             gate, label = refusal_step(*(refusal or ("equity", "no account equity", None, None)))
             steps.append(gate)
             self._decide(
@@ -277,6 +281,7 @@ class FundingRobot(Strategy):  # type: ignore[misc]
             qty_step_b=self.config.qty_step_perp,
         )
         if qty_spot <= 0 or qty_perp <= 0:
+            self._robot.abort_entry()
             gate, label = refusal_step("sizing", "a leg sized to 0", None, None)
             steps.append(gate)
             self._decide(
@@ -369,6 +374,7 @@ class FundingRobot(Strategy):  # type: ignore[misc]
 
     def on_stop(self) -> None:
         self._flatten_both(self._equity())
+        self._robot.abort_entry()
 
     @property
     def accumulated_funding(self) -> Decimal:

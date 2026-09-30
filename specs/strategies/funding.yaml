@@ -59,7 +59,7 @@ implementation:
   strategy_class: FundingCashAndCarry
   backtest_adapter: funding_strategy
   wired_in_backtest: true
-  minimum_bars: 50
+  minimum_bars: 15
   grid_source: explicit
 
 params:
@@ -89,6 +89,13 @@ params:
       Мінімальний строк утримання для захисту від передчасного закриття до амортизації комісії.
     description: >
       Кількість 8-годинних інтервалів, які позиція обов'язково утримується перед перевіркою min_exit_apy.
+  - env: FUNDING_MAX_HOLDING_PERIODS
+    default: null
+    tuned: false
+    note: >
+      Максимальний строк утримання позиції в 8-годинних інтервалах; null — без примусового тайм-ауту.
+    description: >
+      Максимальна кількість 8-годинних періодів утримання позиції перед примусовим закриттям (тайм-аут).
   - env: FUNDING_BASIS_MAX
     default: 0.005
     tuned: false

@@ -506,6 +506,8 @@ def _require_warmup(robot: RobotName, bar_count: int, fold: str) -> None:
         minimum = 150
     elif robot is RobotName.FORMULAIC_LGBM:
         minimum = 80
+    elif robot is RobotName.FUNDING:
+        minimum = 15
     else:
         minimum = 50
     if bar_count < minimum:

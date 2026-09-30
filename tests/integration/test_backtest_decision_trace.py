@@ -277,7 +277,9 @@ def test_backtest_logs_the_entry_fill_with_its_stop_level() -> None:
     for record in fills:
         assert record.kind.value == "intrabar"
         fill = next(s for s in record.steps if s.result == "entry_filled")
-        assert fill.values["fill_price"] > 0
+        price = fill.values["fill_price"]
+        assert isinstance(price, (Decimal, int, float))
+        assert price > 0
         assert isinstance(fill.values["qty"], Decimal)
         assert "stop_loss" in record.states
         json.dumps(record_to_dict(record), cls=DecimalEncoder)

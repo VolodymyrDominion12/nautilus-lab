@@ -55,6 +55,7 @@ class FundingParams:
     close_on_negative: bool = False
     min_exit_apy: Decimal | None = None
     min_holding_periods: int = 15
+    max_holding_periods: int | None = None
 
     def __post_init__(self) -> None:
         if self.taker_fee < 0:
@@ -63,6 +64,8 @@ class FundingParams:
             raise ValueError("holding_periods must be >= 1")
         if self.min_holding_periods < 0:
             raise ValueError("min_holding_periods must be >= 0")
+        if self.max_holding_periods is not None and self.max_holding_periods < 1:
+            raise ValueError("max_holding_periods must be >= 1")
         if self.basis_max < 0:
             raise ValueError("basis_max must be >= 0")
 
@@ -85,6 +88,10 @@ class FundingCashAndCarry:
         self._trace: tuple[TraceStep, ...] = ()
 
     @property
+    def is_open(self) -> bool:
+        return self._open
+
+    @property
     def periods_held(self) -> int:
         return self._periods_held
 
@@ -93,7 +100,24 @@ class FundingCashAndCarry:
         """Why the last settlement did (not) open or close the carry: APY and basis gates."""
         return self._trace
 
-    def on_funding(self, snapshot: FundingSnapshot) -> SpreadSignal | None:
+    def abort_entry(self) -> None:
+        """Cancel an unfulfilled entry signal (e.g. blocked by risk, sizing, or warm-up)."""
+        self._open = False
+        self._periods_held = 0
+
+    def on_funding(
+        self,
+        snapshot: FundingSnapshot,
+        *,
+        is_open: bool | None = None,
+    ) -> SpreadSignal | None:
+        if is_open is not None:
+            if not is_open:
+                self._open = False
+                self._periods_held = 0
+            else:
+                self._open = True
+
         ts = snapshot.ts_utc
         basis = snapshot.basis()
         fee = self._round_trip_fee_per_interval()
@@ -115,6 +139,7 @@ class FundingCashAndCarry:
             "min_net_apy": self._params.min_net_apy,
             "min_exit_apy": self._params.min_exit_apy,
             "min_holding_periods": self._params.min_holding_periods,
+            "max_holding_periods": self._params.max_holding_periods,
             "basis_max": self._params.basis_max,
             "holding_periods": self._params.holding_periods,
         }
@@ -165,6 +190,14 @@ class FundingCashAndCarry:
                 self._periods_held = 0
                 explain(Verdict.EMIT, "flat", "funding decayed below min_exit_apy")
                 return self._flat(ts, "funding decayed below min_exit_apy")
+            if (
+                self._params.max_holding_periods is not None
+                and self._periods_held >= self._params.max_holding_periods
+            ):
+                self._open = False
+                self._periods_held = 0
+                explain(Verdict.EMIT, "flat", "maximum holding periods reached")
+                return self._flat(ts, "max holding periods reached")
             explain(Verdict.INFO, None, "carry still valid: hold")
             return None
 

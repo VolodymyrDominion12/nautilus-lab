@@ -216,7 +216,7 @@ class PairsTrading:
     def _fit_step(self, note: str | None = None) -> TraceStep:
         """The cointegration gate: PASS while a fit is held, INFO (no trading) otherwise."""
         fit = self._last_fit
-        thresholds = {
+        thresholds: dict[str, TraceValue] = {
             "adf_pvalue_max": self._params.adf_pvalue_max,
             "max_half_life_bars": self._params.max_half_life_bars,
             "lookback": self._params.lookback,

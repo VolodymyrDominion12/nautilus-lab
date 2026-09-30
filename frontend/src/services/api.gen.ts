@@ -223,6 +223,7 @@ export interface ResearchRunRequest {
   bars?: number;
   folds?: number;
   is_fraction?: number;
+  days?: number | null;
   embargo_bars?: number | null;
   use_optuna?: boolean;
   optuna_trials?: number;

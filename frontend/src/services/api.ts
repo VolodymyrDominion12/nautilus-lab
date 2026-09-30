@@ -1,5 +1,6 @@
 import { apiUrl } from '../config';
 import { withWsToken } from '../lib/apiAuth';
+import type { BatchDetail, BatchListRow, BatchRow, FoldRef, PlannedCell } from '../lib/batch';
 import type {
   ActionResult,
   CatalogBarPoint,
@@ -1081,6 +1082,12 @@ export interface DecisionDigest {
   near_misses: number;
   intrabar: Record<string, number>;
   v0_rows: number;
+  /** Forward returns (% of price, signed by side) per group (executed/blocked/vetoed). */
+  forward?: Record<
+    string,
+    Record<string, { n: number; mean_pct: number | null; median_pct: number | null; hit_rate: number | null }>
+  >;
+  near_miss_examples?: string[];
 }
 
 /** Digest of the session's whole log (counts, regimes, blocks) — shown without an LLM call. */
@@ -1217,4 +1224,95 @@ export async function fetchHypotheses(): Promise<{ hypotheses: HypothesisEntry[]
 
 export async function fetchHypothesisDetail(file: string): Promise<HypothesisRunDetail> {
   return parseJson(await fetch(apiUrl(`/api/hypotheses/${encodeURIComponent(file)}`)));
+}
+
+// ---- batch backtests (docs/30) ------------------------------------------------------------
+
+export interface BatchLaunchParams {
+  robots: string[];
+  symbols: string[];
+  interval?: string;
+  catalog?: string;
+  folds?: number;
+  is_fraction?: string;
+  parallel?: number;
+  label?: string;
+  env?: Record<string, string>;
+  dry_run?: boolean;
+}
+
+export interface BatchLaunchResult {
+  status: string;
+  batch_id?: string;
+  dry_run?: boolean;
+  cells: PlannedCell[];
+}
+
+export interface RunPayload {
+  batch_id: string;
+  batch_label?: string;
+  cell: BatchRow & { env?: Record<string, string>; started_at?: string | null; finished_at?: string | null };
+  result: Record<string, unknown> | null;
+  summary: BatchRow | null;
+  folds: FoldRef[];
+  log_tail: string;
+}
+
+export interface BatchTradeSummary extends TradeSummary {
+  fold: number;
+  fold_session: string;
+}
+
+const batchPath = (batchId: string, rest = '') =>
+  apiUrl(`/api/batches/${encodeURIComponent(batchId)}${rest}`);
+
+export async function launchBatch(params: BatchLaunchParams): Promise<BatchLaunchResult> {
+  return parseJson(
+    await fetch(apiUrl('/api/batches'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    }),
+  );
+}
+
+export async function fetchBatches(): Promise<{ batches: BatchListRow[] }> {
+  return parseJson(await fetch(apiUrl('/api/batches')));
+}
+
+export async function fetchBatch(batchId: string): Promise<{ batch: BatchDetail }> {
+  return parseJson(await fetch(batchPath(batchId)));
+}
+
+export async function cancelBatch(batchId: string): Promise<ActionResult> {
+  return parseJson(await fetch(batchPath(batchId, '/cancel'), { method: 'POST' }));
+}
+
+export async function importDecisionSweep(): Promise<{ batch_id: string }> {
+  return parseJson(await fetch(apiUrl('/api/batches/import-sweep'), { method: 'POST' }));
+}
+
+const runPath = (batchId: string, cellId: string, rest = '') =>
+  batchPath(batchId, `/runs/${encodeURIComponent(cellId)}${rest}`);
+
+export async function fetchRun(batchId: string, cellId: string): Promise<{ run: RunPayload }> {
+  return parseJson(await fetch(runPath(batchId, cellId)));
+}
+
+export async function fetchRunTrades(
+  batchId: string,
+  cellId: string,
+  fold?: number,
+): Promise<{ trades: BatchTradeSummary[] }> {
+  const query = fold != null ? `?fold=${fold}` : '';
+  return parseJson(await fetch(runPath(batchId, cellId, `/trades${query}`)));
+}
+
+export async function fetchRunDigest(
+  batchId: string,
+  cellId: string,
+  fold?: number,
+): Promise<{ digest: DecisionDigest; markdown: string }> {
+  const query = fold != null ? `?fold=${fold}` : '';
+  return parseJson(await fetch(runPath(batchId, cellId, `/digest${query}`)));
 }

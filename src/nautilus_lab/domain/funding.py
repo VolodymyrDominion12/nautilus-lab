@@ -4,6 +4,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+from nautilus_lab.domain.decision_trace import (
+    Stage,
+    TraceStep,
+    TraceValue,
+    Verdict,
+    margin_pct,
+    step,
+)
 from nautilus_lab.domain.signals import LegIntent, SignalSide, SpreadSignal
 
 
@@ -69,31 +77,78 @@ class FundingCashAndCarry:
         self._perp_id = perp_id
         self._params = params
         self._open = False
+        self._trace: tuple[TraceStep, ...] = ()
+
+    @property
+    def last_trace(self) -> tuple[TraceStep, ...]:
+        """Why the last settlement did (not) open or close the carry: APY and basis gates."""
+        return self._trace
 
     def on_funding(self, snapshot: FundingSnapshot) -> SpreadSignal | None:
         ts = snapshot.ts_utc
         basis = snapshot.basis()
+        fee = self._round_trip_fee_per_interval()
+        net = snapshot.funding_rate - fee
+        annualized = net * Decimal("3") * Decimal("365")
+        values: dict[str, TraceValue] = {
+            "funding_rate": snapshot.funding_rate,
+            "fee_per_interval": fee,
+            "net_per_interval": net,
+            "net_apy": annualized,
+            "apy_margin_pct": margin_pct(annualized, self._params.min_net_apy),
+            "basis": basis,
+            "mark_price": snapshot.mark_price,
+            "index_price": snapshot.index_price,
+            "holding": "open" if self._open else "flat",
+        }
+        thresholds: dict[str, TraceValue] = {
+            "min_net_apy": self._params.min_net_apy,
+            "basis_max": self._params.basis_max,
+            "holding_periods": self._params.holding_periods,
+        }
+
+        def explain(verdict: Verdict, result: str | None, note: str) -> None:
+            self._trace = (
+                step(
+                    Stage.STRATEGY,
+                    "FundingCarry",
+                    verdict,
+                    result=result,
+                    values=values,
+                    thresholds=thresholds,
+                    note=note,
+                ),
+            )
+
         if basis is None:
             # An unusable snapshot must not crash the run, and must not be read as a
             # flat basis (0/0 is not "no divergence", it is "we do not know").
-            return self._flat(ts, "missing index price") if self._open else None
-        net = snapshot.funding_rate - self._round_trip_fee_per_interval()
-        annualized = net * Decimal("3") * Decimal("365")
+            if self._open:
+                explain(Verdict.EMIT, "flat", "index price unknown: close the carry")
+                return self._flat(ts, "missing index price")
+            explain(Verdict.SKIP, None, "index price unknown: basis cannot be judged")
+            return None
 
         if self._open:
             if self._params.close_on_negative and snapshot.funding_rate < 0:
                 self._open = False
+                explain(Verdict.EMIT, "flat", "funding turned negative")
                 return self._flat(ts, "negative funding")
             if abs(basis) > self._params.basis_max:
                 self._open = False
+                explain(Verdict.EMIT, "flat", "|basis| above basis_max")
                 return self._flat(ts, "basis divergence")
+            explain(Verdict.INFO, None, "carry still valid: hold")
             return None
 
         if annualized < self._params.min_net_apy:
+            explain(Verdict.INFO, None, "net APY after fees below min_net_apy")
             return None
         if abs(basis) > self._params.basis_max:
+            explain(Verdict.INFO, None, "APY passes but |basis| above basis_max")
             return None
         self._open = True
+        explain(Verdict.EMIT, "buy", "net APY passes and basis is tight: open the carry")
         return SpreadSignal(
             leg_a=LegIntent(self._spot_id, SignalSide.BUY),
             leg_b=LegIntent(self._perp_id, SignalSide.SELL),

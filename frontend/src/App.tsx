@@ -23,6 +23,8 @@ import { useToast } from './components/toastContext';
 import { Sidebar } from './components/Sidebar';
 import { parseTradeHash, buildTradeHash } from './lib/trades';
 import type { TradeRoute } from './lib/trades';
+import { buildBatchHash, parseBatchHash, type BatchRoute } from './lib/batch';
+import { BatchSection } from './components/batch/BatchSection';
 
 const SettingsTab = () => <SettingsPanel />;
 
@@ -62,6 +64,19 @@ function useTradeRoute(): [TradeRoute | null, (route: TradeRoute | null) => void
   return [route, navigate];
 }
 
+/** The batch pages' route (`#/batch…`, `#/run…`), kept in sync with the browser. */
+function useBatchRoute(): BatchRoute | null {
+  const [route, setRoute] = useState<BatchRoute | null>(() =>
+    parseBatchHash(window.location.hash),
+  );
+  useEffect(() => {
+    const onHashChange = () => setRoute(parseBatchHash(window.location.hash));
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+  return route;
+}
+
 /** The banner text when the API cannot be read; null while it answers. */
 function describeFailure(statusError: Error | null, strategiesError: Error | null): string | null {
   if (statusError) {
@@ -79,6 +94,7 @@ function AppContent() {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [tradeRoute, navigateToTrade] = useTradeRoute();
+  const batchRoute = useBatchRoute();
   const [selectedCatalogPath, setSelectedCatalogPathState] = useState(
     () => getSelectedCatalogPath() || 'catalog',
   );
@@ -184,8 +200,13 @@ function AppContent() {
       />
 
       <Sidebar
-        activeTab={activeTab}
-        onNavigate={setActiveTab}
+        activeTab={batchRoute ? 'batch' : activeTab}
+        onNavigate={(tab) => {
+          // The batch pages live in the address; leaving them clears it, entering sets it.
+          if (tab === 'batch') window.location.hash = buildBatchHash({ page: 'list' });
+          else if (batchRoute || tradeRoute) window.location.hash = '';
+          setActiveTab(tab);
+        }}
         status={status}
         catalog={catalog}
         onOpenPalette={() => setIsPaletteOpen(true)}
@@ -221,7 +242,17 @@ function AppContent() {
         )}
 
         {tradeRoute ? (
-          <TradeDetailPage route={tradeRoute} onClose={() => navigateToTrade(null)} />
+          <TradeDetailPage
+            route={tradeRoute}
+            onClose={() =>
+              // A trade opened from a batch run goes back to that run, not to a tab.
+              tradeRoute.origin === 'backtest' && window.history.length > 1
+                ? window.history.back()
+                : navigateToTrade(null)
+            }
+          />
+        ) : batchRoute || activeTab === 'batch' ? (
+          <BatchSection route={batchRoute ?? { page: 'list' }} />
         ) : (
           <>
             {activeTab === 'home' && <CommandCenter />}

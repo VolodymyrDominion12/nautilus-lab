@@ -192,6 +192,9 @@ class WalkForwardRequest:
     # Bars fed to the indicators right before each out-of-sample window (never traded).
     # None = the robot's own warm-up minimum; 0 = start every OOS window cold.
     oos_warmup_bars: int | None = None
+    # "all": every run writes decisions (legacy). "oos": in-sample grid runs write none,
+    # each fold's out-of-sample run writes under `<session_id>-f<fold>` (docs/30).
+    decision_log_scope: str = "all"
 
 
 _LABEL_EXTRAS_DEFAULTS: tuple[tuple[str, object], ...] = (

@@ -167,9 +167,14 @@ def serialize_fold(fold: WalkForwardFold) -> dict[str, Any]:
         ),
         "oos_metrics": serialize_metrics(fold.out_of_sample.metrics),
         "window": {
+            "in_sample_start": window.in_sample_start.isoformat(),
+            "in_sample_end": window.in_sample_end.isoformat(),
             "out_of_sample_start": window.out_of_sample_start.isoformat(),
             "out_of_sample_end": window.out_of_sample_end.isoformat(),
         },
+        # The decision-log key of this fold's OOS run (`<id>-f<index>` with
+        # DECISION_LOG_SCOPE=oos): the batch page links each fold's decisions by it.
+        "session_id": fold.out_of_sample.session_id,
     }
 
 

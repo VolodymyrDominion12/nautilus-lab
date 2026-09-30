@@ -5,6 +5,15 @@ from datetime import datetime
 from decimal import Decimal
 
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.decision_trace import (
+    Stage,
+    TraceStep,
+    TraceValue,
+    Verdict,
+    margin_pct,
+    step,
+    warmup_step,
+)
 from nautilus_lab.domain.pairs.cointegration import CointegrationResult, fit_cointegration
 from nautilus_lab.domain.pairs.ou import OuFit, fit_ou_half_life, z_score
 from nautilus_lab.domain.pairs.params import PairsParams
@@ -35,11 +44,32 @@ class PairsTrading:
         self._state: _PairState | None = None
         self._bars_since_refit = 0
         self._bars_until_retry = 0
+        self._seen = 0
+        self._trace: tuple[TraceStep, ...] = ()
+        #: Diagnostics of the last cointegration fit, kept even when the fit failed the
+        #: gate: "not cointegrated, p=0.31 > 0.05" is the answer to "why no trades".
+        self._last_fit: dict[str, Decimal] = {}
+
+    @property
+    def last_trace(self) -> tuple[TraceStep, ...]:
+        """Why the last `on_bars` call did (not) trade: the fit gate, then the z-score leg."""
+        return self._trace
 
     def on_bars(self, bar_a: OhlcvBar, bar_b: OhlcvBar) -> SpreadSignal | None:
+        self._seen += 1
+        self._trace = ()
+        signal = self._decide(bar_a, bar_b)
+        if not self._trace:
+            self._trace = (self._fit_step(),)
+        return signal
+
+    def _decide(self, bar_a: OhlcvBar, bar_b: OhlcvBar) -> SpreadSignal | None:
         self._closes_a.push(bar_a.close)
         self._closes_b.push(bar_b.close)
         if not self._closes_a.full:
+            self._trace = (
+                warmup_step("PairsTrading", seen=self._seen, required=self._params.lookback),
+            )
             return None
         if self._state is None:
             # `refit_every_bars` governs how often cointegration is re-evaluated, in both
@@ -51,6 +81,12 @@ class PairsTrading:
             # the legacy per-bar probe.
             if self._bars_until_retry > 0:
                 self._bars_until_retry -= 1
+                self._trace = (
+                    self._fit_step(
+                        note=f"not cointegrated at the last fit; next fit in "
+                        f"{self._bars_until_retry + 1} bars"
+                    ),
+                )
                 return None
             self._state = self._fit_state()
             if self._state is None:
@@ -61,6 +97,16 @@ class PairsTrading:
 
         refit_signal = self._maybe_refit(bar_a.ts_utc)
         if refit_signal is not None:
+            self._trace = (
+                self._fit_step(),
+                step(
+                    Stage.STRATEGY,
+                    "PairsTrading",
+                    Verdict.EMIT,
+                    result="flat",
+                    note=refit_signal.reason,
+                ),
+            )
             return refit_signal
         if self._state is None:
             # A periodic refit that fails the gate clears the state and asks the robot to
@@ -77,32 +123,134 @@ class PairsTrading:
         if self._state.in_position:
             self._state.open_bars += 1
             time_stop = int(self._state.ou.half_life_bars * 2)
+            held: dict[str, TraceValue] = {
+                "spread": spread,
+                "z": z,
+                "open_bars": self._state.open_bars,
+                "time_stop_bars": time_stop,
+                "direction": "long_spread" if self._state.direction > 0 else "short_spread",
+                "z_exit_margin_pct": margin_pct(self._params.z_exit, abs(z)),
+            }
+            limits: dict[str, TraceValue] = {"z_exit": self._params.z_exit}
             if self._state.open_bars >= time_stop:
                 self._state.in_position = False
                 self._state.open_bars = 0
+                self._trace = (
+                    self._fit_step(),
+                    self._z_step(Verdict.EMIT, "flat", held, limits, "time stop: 2x half-life"),
+                )
                 return self._flat_signal(ts, "pairs time stop")
             if abs(z) <= self._params.z_exit:
                 self._state.in_position = False
                 self._state.open_bars = 0
+                self._trace = (
+                    self._fit_step(),
+                    self._z_step(Verdict.EMIT, "flat", held, limits, "|z| back inside z_exit"),
+                )
                 return self._flat_signal(ts, "pairs z exit")
+            self._trace = (
+                self._fit_step(),
+                self._z_step(Verdict.INFO, None, held, limits, "spread not reverted yet: hold"),
+            )
             return None
 
         # Only the entry path needs the thresholds, so they are resolved there
         # rather than on every bar: a position already open exits on `z_exit` or
         # the time stop, never on the entry gate.
         z_low, z_high = self._entry_thresholds()
+        # How far the nearer entry threshold is: -20% = |z| is 20% short of the trigger.
+        nearest = z_high if z >= 0 else z_low
+        entry_values: dict[str, TraceValue] = {
+            "spread": spread,
+            "z": z,
+            "z_margin_pct": margin_pct(abs(z), abs(nearest)),
+        }
+        entry_limits: dict[str, TraceValue] = {
+            "z_low": z_low,
+            "z_high": z_high,
+            "z_exit": self._params.z_exit,
+        }
 
         if z >= z_high:
             self._state.in_position = True
             self._state.direction = -1
             self._state.open_bars = 0
+            self._trace = (
+                self._fit_step(),
+                self._z_step(Verdict.EMIT, "sell", entry_values, entry_limits, "z above z_high"),
+            )
             return self._entry_signal(ts, z, short_a=True, reason="pairs z high short spread")
         if z <= z_low:
             self._state.in_position = True
             self._state.direction = 1
             self._state.open_bars = 0
+            self._trace = (
+                self._fit_step(),
+                self._z_step(Verdict.EMIT, "buy", entry_values, entry_limits, "z below z_low"),
+            )
             return self._entry_signal(ts, z, short_a=False, reason="pairs z low long spread")
+        self._trace = (
+            self._fit_step(),
+            self._z_step(Verdict.INFO, None, entry_values, entry_limits, "z inside the band"),
+        )
         return None
+
+    def _z_step(
+        self,
+        verdict: Verdict,
+        result: str | None,
+        values: dict[str, TraceValue],
+        thresholds: dict[str, TraceValue],
+        note: str,
+    ) -> TraceStep:
+        return step(
+            Stage.STRATEGY,
+            "PairsTrading",
+            verdict,
+            result=result,
+            values=values,
+            thresholds=thresholds,
+            note=note,
+        )
+
+    def _fit_step(self, note: str | None = None) -> TraceStep:
+        """The cointegration gate: PASS while a fit is held, INFO (no trading) otherwise."""
+        fit = self._last_fit
+        thresholds = {
+            "adf_pvalue_max": self._params.adf_pvalue_max,
+            "max_half_life_bars": self._params.max_half_life_bars,
+            "lookback": self._params.lookback,
+        }
+        if self._state is not None:
+            return step(
+                Stage.FILTER,
+                "cointegration",
+                Verdict.PASS,
+                result="cointegrated",
+                values={
+                    "hedge_ratio": self._state.coint.hedge_ratio,
+                    "adf_pvalue": self._state.coint.adf_pvalue,
+                    "half_life_bars": self._state.ou.half_life_bars,
+                    "spread_mean": self._state.ou.mean,
+                    "spread_sigma": self._state.ou.sigma,
+                },
+                thresholds=thresholds,
+                note=note,
+            )
+        return step(
+            Stage.FILTER,
+            "cointegration",
+            Verdict.INFO,
+            result="not_cointegrated" if fit else "no_fit",
+            values={
+                "adf_pvalue": fit.get("adf_pvalue"),
+                "hedge_ratio": fit.get("hedge_ratio"),
+                "half_life_bars": fit.get("half_life_bars"),
+                "adf_margin_pct": margin_pct(self._params.adf_pvalue_max, fit.get("adf_pvalue")),
+            },
+            thresholds=thresholds,
+            note=note or "the pair fails the cointegration gate: no entries",
+        )
 
     def _entry_thresholds(self) -> tuple[Decimal, Decimal]:
         """(long, short) entry thresholds in z units for the current fit.
@@ -175,6 +323,7 @@ class PairsTrading:
         y = self._closes_a.values()
         x = self._closes_b.values()
         coint = fit_cointegration(y, x)
+        self._last_fit = {"adf_pvalue": coint.adf_pvalue, "hedge_ratio": coint.hedge_ratio}
         if coint.adf_pvalue > self._params.adf_pvalue_max:
             return None
         spread = tuple(
@@ -182,6 +331,7 @@ class PairsTrading:
             for item_y, item_x in zip(y, x, strict=True)
         )
         ou = fit_ou_half_life(spread)
+        self._last_fit["half_life_bars"] = ou.half_life_bars
         if ou.half_life_bars > Decimal(self._params.max_half_life_bars):
             return None
         return _PairState(coint=coint, ou=ou, spreads=spread)

@@ -4,6 +4,7 @@ import type { JobKey } from './services/api';
 export type TabId =
   | 'home'
   | 'research'
+  | 'batch'
   | 'catalog'
   | 'strategies'
   | 'ml'

@@ -347,8 +347,10 @@ class RunWalkForward:
         run_oos: Callable[[BacktestRequest], BacktestReport],
         oos_reference: Sequence[OhlcvBar],
     ) -> WalkForwardFold:
-        best_params, best_is_report, tried = self._select(request, run_is)
-        selected_request = apply_selected(request.backtest, best_params)
+        best_params, best_is_report, tried = self._select(request, _scoped_is(request, run_is))
+        selected_request = _scoped_oos(
+            request, apply_selected(request.backtest, best_params), index
+        )
         # Only the final fold owns the tearsheet path, otherwise every fold would
         # overwrite the same file and the last one would look like the only result.
         if request.tearsheet_path and index == request.folds - 1:
@@ -378,9 +380,9 @@ class RunWalkForward:
         run_is: Callable[[BacktestRequest], BacktestReport],
         run_oos: Callable[[BacktestRequest], BacktestReport],
     ) -> WalkForwardReport:
-        best_params, best_is_report, tried = self._select(request, run_is)
+        best_params, best_is_report, tried = self._select(request, _scoped_is(request, run_is))
 
-        selected_request = apply_selected(request.backtest, best_params)
+        selected_request = _scoped_oos(request, apply_selected(request.backtest, best_params), None)
         if request.tearsheet_path:
             selected_request = replace(selected_request, tearsheet_path=request.tearsheet_path)
 
@@ -524,3 +526,38 @@ def _notes(
         f"IS=[{window.in_sample_start.isoformat()}, {window.in_sample_end.isoformat()}) "
         f"OOS=[{window.out_of_sample_start.isoformat()}, {window.out_of_sample_end.isoformat()})"
     )
+
+
+#: `WalkForwardRequest.decision_log_scope` values.
+DECISION_LOG_SCOPES = ("all", "oos")
+
+
+def _scoped_is(
+    request: WalkForwardRequest, run_is: Callable[[BacktestRequest], BacktestReport]
+) -> Callable[[BacktestRequest], BacktestReport]:
+    """In-sample runs without a session id write no decisions when the scope is "oos".
+
+    `SignalRobot`/`SpreadRobot`/`FundingRobot` skip the log when `session_id` is None, so
+    the grid search (every candidate x every in-sample bar) stays out of the journal.
+    """
+    if request.decision_log_scope != "oos":
+        return run_is
+    return lambda candidate: run_is(replace(candidate, session_id=None))
+
+
+def _scoped_oos(
+    request: WalkForwardRequest, selected: BacktestRequest, fold: int | None
+) -> BacktestRequest:
+    """The out-of-sample run of fold `fold` logs under its own session `<id>-f<fold>`.
+
+    One file per fold, so a reader never has to split four OOS passes out of one file,
+    and the dashboard can link each fold's decisions separately.
+    """
+    if request.decision_log_scope not in DECISION_LOG_SCOPES:
+        raise ValueError(
+            f"decision_log_scope must be one of {DECISION_LOG_SCOPES}, "
+            f"not {request.decision_log_scope!r}"
+        )
+    if request.decision_log_scope != "oos" or fold is None or not selected.session_id:
+        return selected
+    return replace(selected, session_id=f"{selected.session_id}-f{fold}")

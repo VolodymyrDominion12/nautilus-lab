@@ -19,10 +19,12 @@ from nautilus_lab.application.risk import (
 )
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
+from nautilus_lab.domain.decision_trace import Outcome, TraceStep, is_warmup
 from nautilus_lab.domain.drawdown_cooldown import PeakState, advance, on_refusal
 from nautilus_lab.domain.marking import OpenLot, marked_equity
 from nautilus_lab.domain.pairs.pairs_trading import PairsTrading
 from nautilus_lab.domain.pairs.params import PairsParams
+from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.position_plan import (
     Holding,
     holding_from_signed_qty,
@@ -31,6 +33,13 @@ from nautilus_lab.domain.position_plan import (
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.signals import SignalSide
+from nautilus_lab.infrastructure.nautilus.two_leg_decisions import (
+    TwoLegDecisionLog,
+    account_marks,
+    leg_step,
+    plan_step,
+    refusal_step,
+)
 
 
 class SpreadRobotConfig(StrategyConfig, frozen=True):
@@ -62,8 +71,21 @@ class SpreadRobotConfig(StrategyConfig, frozen=True):
 class SpreadRobot(Strategy):  # type: ignore[misc]
     """Thin adapter: spread signal -> risk -> dual-leg market orders."""
 
-    def __init__(self, config: SpreadRobotConfig) -> None:
+    def __init__(
+        self,
+        config: SpreadRobotConfig,
+        *,
+        decision_log: DecisionLogPort | None = None,
+        session_id: str | None = None,
+    ) -> None:
         super().__init__(config)
+        self._decisions = TwoLegDecisionLog(
+            decision_log=decision_log,
+            session_id=session_id,
+            robot="pairs",
+            instrument_id=str(config.leg_a_id),
+            params=config.dict(),
+        )
         self._robot = PairsTrading(
             leg_a=str(config.leg_a_id),
             leg_b=str(config.leg_b_id),
@@ -130,9 +152,12 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             return
 
         signal = self._robot.on_bars(self._last_a, self._last_b)
+        steps = list(self._robot.last_trace)
         start = self.config.trade_start_ns
         if start is not None and int(bar.ts_event) < start:
-            return  # warm-up bar: the spread model learns, nothing is traded or recorded
+            # Warm-up bar: the spread model learns, nothing is traded.
+            self._decide(Outcome.WARMUP, steps, signal=None)
+            return
         equity = self._equity()
         if equity is not None:
             self._update_equity_path(self._last_a.ts_utc, equity)
@@ -144,19 +169,37 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
                 self._exposure_bars += 1
 
         if signal is None:
+            self._decide(Outcome.WARMUP if is_warmup(tuple(steps)) else Outcome.NO_SIGNAL, steps)
             return
+        side_a = signal.leg_a.side.value
         # Leg A's direction is the spread's direction; leg B always takes the other side.
         # Exit is decided before — and independently of — the risk gate: a refused
         # entry must not keep the opposite spread open (see domain/position_plan.py).
-        plan = plan_for_signal(self._holding_a(), signal.leg_a.side)
+        held = self._holding_a()
+        plan = plan_for_signal(held, signal.leg_a.side)
+        steps.append(plan_step(held, plan.exit_position, plan.wants_entry))
         if plan.is_noop:
+            self._decide(Outcome.HOLD_NOOP, steps, signal=side_a, reason=signal.reason)
             return
-        entry_allowed = plan.wants_entry and self._entry_allowed(
-            equity, reversing=plan.exit_position
+        refusal = (
+            self._entry_refusal(equity, reversing=plan.exit_position) if plan.wants_entry else None
         )
         if plan.exit_position:
+            steps.extend(self._exit_steps())
             self._flatten_both(equity)
-        if not entry_allowed or equity is None:
+            if not plan.wants_entry:
+                self._decide(Outcome.EXIT, steps, signal=side_a, reason=signal.reason)
+                return
+        if refusal is not None or equity is None:
+            gate, label = refusal_step(*(refusal or ("equity", "no account equity", None, None)))
+            steps.append(gate)
+            self._decide(
+                Outcome.ENTRY_BLOCKED_RISK,
+                steps,
+                signal=side_a,
+                reason=signal.reason,
+                blocked_by=label,
+            )
             return
 
         risk_fraction = resolve_risk_fraction(
@@ -175,18 +218,111 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             qty_step_b=self.config.qty_step_b,
         )
         if qty_a <= 0 or qty_b <= 0:
-            return  # an unhedged half of a spread is a directional bet, not the robot
+            # An unhedged half of a spread is a directional bet, not the robot.
+            gate, label = refusal_step("sizing", "a leg sized to 0", None, None)
+            steps.append(gate)
+            self._decide(
+                Outcome.ENTRY_SKIPPED_SIZE,
+                steps,
+                signal=side_a,
+                reason=signal.reason,
+                blocked_by=label,
+            )
+            return
         self._submit_leg(self.config.leg_a_id, signal.leg_a.side, self._last_a.close, qty_a)
         self._submit_leg(self.config.leg_b_id, signal.leg_b.side, self._last_b.close, qty_b)
         self._entry_equity = equity
+        steps.append(
+            leg_step(
+                "entry",
+                leg="A",
+                side="LONG" if signal.leg_a.side is SignalSide.BUY else "SHORT",
+                qty=qty_a,
+                price=self._last_a.close,
+            )
+        )
+        steps.append(
+            leg_step(
+                "entry",
+                leg="B",
+                side="LONG" if signal.leg_b.side is SignalSide.BUY else "SHORT",
+                qty=qty_b,
+                price=self._last_b.close,
+            )
+        )
+        self._decide(
+            Outcome.REVERSE if plan.exit_position else Outcome.ENTRY_OPENED,
+            steps,
+            signal=side_a,
+            reason=signal.reason,
+        )
+
+    def _decide(
+        self,
+        outcome: Outcome,
+        steps: list[TraceStep],
+        *,
+        signal: str | None = None,
+        reason: str | None = None,
+        blocked_by: str | None = None,
+    ) -> None:
+        """Write this bar's decision record (no-op when the run has no decision log)."""
+        if not self._decisions.enabled or self._last_a is None:
+            return
+        bar_a = self._last_a
+        self._decisions.write(
+            ts=bar_a.ts_utc,
+            close=bar_a.close,
+            outcome=outcome,
+            steps=steps,
+            account=account_marks(
+                holding=self._holding_a(),
+                equity=self._equity(),
+                day_start=self._day_start_equity,
+                peak=self._peak_equity,
+                legs_open=self._open_legs(),
+            ),
+            signal=signal,
+            signal_reason=reason,
+            blocked_by=blocked_by,
+            bar={
+                "o": bar_a.open,
+                "h": bar_a.high,
+                "l": bar_a.low,
+                "c": bar_a.close,
+                "v": bar_a.volume,
+            },
+        )
+
+    def _exit_steps(self) -> list[TraceStep]:
+        marks = {
+            str(self.config.leg_a_id): ("A", self._last_a),
+            str(self.config.leg_b_id): ("B", self._last_b),
+        }
+        out: list[TraceStep] = []
+        for lot in self._open_lots():
+            leg, last = marks.get(lot.instrument_id, ("?", None))
+            out.append(
+                leg_step(
+                    "exit",
+                    leg=leg,
+                    side="LONG" if lot.signed_qty > 0 else "SHORT",
+                    qty=abs(lot.signed_qty),
+                    price=last.close if last is not None else lot.avg_price,
+                )
+            )
+        return out
 
     def on_stop(self) -> None:
         self._flatten_both(self._equity())
 
-    def _entry_allowed(self, equity: Decimal | None, *, reversing: bool) -> bool:
+    def _entry_refusal(
+        self, equity: Decimal | None, *, reversing: bool
+    ) -> tuple[str, str, Decimal | None, Decimal | None] | None:
+        """None when the entry may go ahead, else (code, reason, value, limit)."""
         if equity is None:
             self.log.error("No account equity; skip spread order")
-            return False
+            return ("equity", "no account equity", None, None)
         snapshot = AccountSnapshot(
             equity=equity,
             peak_equity=self._peak_equity or equity,
@@ -198,8 +334,8 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         if not decision.allowed:
             self._note_refusal(decision.reason)
             self.log.warning(f"Risk blocked spread entry: {decision.reason}")
-            return False
-        return True
+            return (decision.code or "unknown", decision.reason, decision.value, decision.limit)
+        return None
 
     def _holding_a(self) -> Holding:
         signed = sum(

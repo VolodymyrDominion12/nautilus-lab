@@ -163,6 +163,8 @@ def _filter(step: Mapping[str, Any]) -> str:
         return f"{name}: ще немає даних."
     if step.get("component") == "meta_label":
         return _meta_label(step)
+    if step.get("component") == "cointegration":
+        return _cointegration(step)
     reading = _v(step, "vpin")
     threshold = _t(step, "toxic_threshold")
     if reading is not None and threshold is not None:
@@ -177,6 +179,66 @@ def _filter(step: Mapping[str, Any]) -> str:
     if verdict == "modify":
         text += f"; фільтр змінив маршрут ({step.get('note')})"
     return text + "."
+
+
+def _cointegration(step: Mapping[str, Any]) -> str:
+    p, limit = fmt(_v(step, "adf_pvalue")), fmt(_t(step, "adf_pvalue_max"))
+    if step.get("verdict") == "pass":
+        return (
+            f"Коінтеграція: ADF p={p} ≤ {limit}, β={fmt(_v(step, 'hedge_ratio'))}, "
+            f"half-life {fmt(_v(step, 'half_life_bars'))} бар."
+        )
+    if step.get("result") == "no_fit":
+        return "Коінтеграція: ще не оцінювалась."
+    return (
+        f"Коінтеграція НЕ пройдена: ADF p={p} (поріг {limit}), half-life "
+        f"{fmt(_v(step, 'half_life_bars'))} (макс {fmt(_t(step, 'max_half_life_bars'))})"
+        " — входів немає."
+    )
+
+
+def _pairs(step: Mapping[str, Any]) -> str:
+    z = fmt(_v(step, "z"), signed=True)
+    result = step.get("result")
+    if result in ("buy", "sell"):
+        side = "LONG спред" if result == "buy" else "SHORT спред"
+        return (
+            f"Pairs: z {z} за межею [{fmt(_t(step, 'z_low'))}; {fmt(_t(step, 'z_high'))}] → {side}."
+        )
+    if result == "flat":
+        return f"Pairs: вихід ({step.get('note')}), z {z}."
+    if _v(step, "open_bars") is not None:
+        return (
+            f"Pairs: у позиції {_v(step, 'open_bars')} з {_v(step, 'time_stop_bars')} барів, "
+            f"z {z}, вихід при |z| ≤ {fmt(_t(step, 'z_exit'))}."
+        )
+    return (
+        f"Pairs: z {z} всередині [{fmt(_t(step, 'z_low'))}; {fmt(_t(step, 'z_high'))}] "
+        f"(запас {fmt(_v(step, 'z_margin_pct'), signed=True)}%) — входу немає."
+    )
+
+
+def _share(value: object) -> str:
+    """A fraction (0.10) as a percent (10.00%); anything else as it is."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{float(value) * 100:.2f}%"
+    return str(value)
+
+
+def _funding(step: Mapping[str, Any]) -> str:
+    apy, gate = _share(_v(step, "net_apy")), _share(_t(step, "min_net_apy"))
+    basis = _v(step, "basis")
+    basis_text = "невідомий" if basis is None else _share(basis)
+    head = (
+        f"Funding: ставка {fmt(_v(step, 'funding_rate'))}, net APY після комісій {apy} "
+        f"(поріг {gate}), basis {basis_text}"
+    )
+    result = step.get("result")
+    if result == "buy":
+        return head + " → відкрити cash-and-carry."
+    if result == "flat":
+        return head + f" → закрити ({step.get('note')})."
+    return head + f" — {step.get('note')}."
 
 
 def _meta_label(step: Mapping[str, Any]) -> str:
@@ -297,6 +359,10 @@ def _strategy(step: Mapping[str, Any]) -> str:
         return _vpin_momentum(step)
     if component == "FormulaicLgbm":
         return _formulaic(step)
+    if component == "PairsTrading":
+        return _pairs(step)
+    if component == "FundingCarry":
+        return _funding(step)
     if component == "BuyAndHold":
         return "Бенчмарк buy&hold: завжди ціль LONG → BUY."
     if _v(step, "from_regime") is not None:
@@ -367,6 +433,18 @@ def _gate(step: Mapping[str, Any]) -> str:
 
 def _execution(step: Mapping[str, Any]) -> str:
     result = step.get("result")
+    if step.get("component") == "funding_settlement":
+        return (
+            f"Funding-виплата {fmt(_v(step, 'payment'), signed=True)} "
+            f"(разом {fmt(_v(step, 'accumulated'), signed=True)})."
+        )
+    leg = _v(step, "leg")
+    if leg is not None and result in ("entry", "exit"):
+        verb = "відкрито" if result == "entry" else "закрито"
+        return (
+            f"Виконано (нога {leg}): {verb} {_v(step, 'side')} {fmt(_v(step, 'qty'))} @ "
+            f"{fmt(_v(step, 'price'))}."
+        )
     if result == "exit":
         pnl = _v(step, "realized_pnl")
         pnl_text = f", PnL {fmt(pnl, signed=True)}" if pnl is not None else ""

@@ -613,4 +613,5 @@ def walk_forward_request(
         optuna_trials=optuna_trials,
         tearsheet_path=tearsheet_path,
         folds=folds,
+        decision_log_scope=cfg.decision_log_scope,
     )

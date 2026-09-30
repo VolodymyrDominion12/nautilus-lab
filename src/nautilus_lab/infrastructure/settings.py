@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     drawdown_cooldown_days: int = 0
     research_drawdown_cooldown_days: int = 7
     pairs_refit_every: int = 0
+    # The two legs of `pairs` (A is traded in the spread's direction, B hedges it).
+    pairs_leg_a: str = "ETH/USDT.SIM"
+    pairs_leg_b: str = "BTC/USDT.SIM"
     # 0 disables the quantile gate and leaves the fixed `PairsParams.z_entry` in
     # charge, which is how every documented `pairs` run was measured. A plain
     # Decimal with a sentinel is used instead of `Decimal | None` so that an unset
@@ -180,6 +183,11 @@ class Settings(BaseSettings):
     decision_log_enabled: bool = False
     decision_log_dir: str = "data/paper/decisions"
     decision_log_retention_days: int = 7
+    # Which walk-forward runs write decisions: "all" (every grid candidate on in-sample
+    # too — ~100k records per regime run) or "oos" (only the selected configuration's
+    # out-of-sample run of each fold, one session `<id>-f<fold>` per fold). Batch
+    # backtests use "oos": the in-sample grid is search, not the result being explained.
+    decision_log_scope: str = "all"
 
     def all_catalog_paths(self) -> list[str]:
         paths: list[str] = []
@@ -260,6 +268,8 @@ class Settings(BaseSettings):
     def pairs_params(self) -> PairsParams:
         quantile = self.pairs_z_entry_quantile
         return PairsParams(
+            leg_a=self.pairs_leg_a,
+            leg_b=self.pairs_leg_b,
             refit_every_bars=self.pairs_refit_every,
             z_entry_quantile=quantile if quantile > 0 else None,
         )

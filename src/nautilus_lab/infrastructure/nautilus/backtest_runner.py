@@ -124,9 +124,11 @@ class NautilusResearchBacktest:
         funding: list[FundingSnapshot] | None = None,
     ) -> BacktestReport:
         spec = (
-            _funding_run(request, bars_by_instrument, funding=funding)
+            _funding_run(
+                request, bars_by_instrument, funding=funding, decision_log=self.decision_log
+            )
             if request.robot is RobotName.FUNDING
-            else _spread_run(request, bars_by_instrument)
+            else _spread_run(request, bars_by_instrument, decision_log=self.decision_log)
         )
         report, _ = self._execute(spec)
         return report
@@ -138,9 +140,11 @@ class NautilusResearchBacktest:
         funding: list[FundingSnapshot] | None = None,
     ) -> PaperSessionReport:
         spec = (
-            _funding_run(request, bars_by_instrument, funding=funding)
+            _funding_run(
+                request, bars_by_instrument, funding=funding, decision_log=self.decision_log
+            )
             if request.robot is RobotName.FUNDING
-            else _spread_run(request, bars_by_instrument)
+            else _spread_run(request, bars_by_instrument, decision_log=self.decision_log)
         )
         report, ledger = self._execute(spec)
         primary_id = (
@@ -664,6 +668,8 @@ def _single_run(
 def _spread_run(
     request: BacktestRequest,
     bars_by_instrument: dict[str, list[OhlcvBar]],
+    *,
+    decision_log: DecisionLogPort | None = None,
 ) -> _RunSpec:
     """Everything `_execute` needs for the two-leg pairs run."""
     leg_a = request.pairs.leg_a
@@ -706,6 +712,8 @@ def _spread_run(
             trade_start_ns=_trade_start_ns(request),
             drawdown_cooldown_days=request.risk_overlay.drawdown_cooldown_days,
         ),
+        decision_log=decision_log,
+        session_id=request.session_id,
     )
     return _RunSpec(
         request=request,
@@ -721,6 +729,7 @@ def _funding_run(
     bars_by_instrument: dict[str, list[OhlcvBar]],
     *,
     funding: list[FundingSnapshot] | None = None,
+    decision_log: DecisionLogPort | None = None,
 ) -> _RunSpec:
     """Everything `_execute` needs for the funding cash-and-carry run."""
     spot_id = request.funding_spot_id or "ETH/USDT.SIM"
@@ -796,6 +805,8 @@ def _funding_run(
             drawdown_cooldown_days=request.risk_overlay.drawdown_cooldown_days,
             quote_currency="USDT",
         ),
+        decision_log=decision_log,
+        session_id=request.session_id,
     )
     return _RunSpec(
         request=request,

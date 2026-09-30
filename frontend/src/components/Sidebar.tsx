@@ -7,6 +7,7 @@ import {
   Cpu,
   Database,
   HelpCircle,
+  Table,
   Layers,
   LayoutDashboard,
   Search,
@@ -98,6 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
           ) : undefined,
         )}
+        {navButton('batch', 'Пакетний бектест', <Table className="w-4 h-4" />)}
         {navButton(
           'catalog',
           'Parquet Catalog',

@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 
 from nautilus_lab.api.context import Lab, LabContext
 from nautilus_lab.api.live_paper_boot import live_config_from_settings
+from nautilus_lab.api.batch_store import decision_reader, find_session_cell
 from nautilus_lab.api.live_sessions import resolve_decision_log_key
 from nautilus_lab.api.paper_streamer import LivePaperSessionManager
 from nautilus_lab.api.requests import PaperLiveStartRequest, PaperLiveStopsUpdateRequest
@@ -162,7 +163,8 @@ def get_paper_session_decision_log(
             "logs": [],
         }
 
-    writer = ctx.sessions.decision_log_writer
+    session_key = resolve_decision_log_key(ctx.sessions, key)
+    writer = _decision_reader(ctx, session_key)
 
     if writer is None:
         return {
@@ -173,8 +175,6 @@ def get_paper_session_decision_log(
 
     if not hasattr(writer, "get_recent_logs"):
         return {"status": "error", "message": "Log writer does not support reading", "logs": []}
-
-    session_key = resolve_decision_log_key(ctx.sessions, key)
 
     try:
         outcomes = (
@@ -500,7 +500,7 @@ def _session_log_rows(
 ) -> tuple[str, list[dict[str, Any]], bool]:
     """The session's decision records, oldest first, and whether older ones were cut off."""
     session_key = resolve_decision_log_key(ctx.sessions, key)
-    writer = ctx.sessions.decision_log_writer
+    writer = _decision_reader(ctx, session_key)
     logs: list[dict[str, Any]] = []
     if writer is not None and hasattr(writer, "get_recent_logs"):
         try:
@@ -508,6 +508,28 @@ def _session_log_rows(
         except Exception:
             logs = []
     return session_key, logs, len(logs) >= limit
+
+
+def _decision_reader(ctx: LabContext, session_key: str) -> Any:  # noqa: ANN401
+    """The paper writer, or the batch cell holding `session_key` when the writer has none.
+
+    A batch fold writes into `reports/batches/<id>/cells/<cell>/decisions/`, not into the
+    paper decision directory, so its trades would 404 on this router without the fallback
+    (and with decision logging off for paper, there is no paper writer at all).
+    """
+    writer = ctx.sessions.decision_log_writer
+    has_rows = False
+    if writer is not None and hasattr(writer, "get_recent_logs"):
+        try:
+            has_rows = bool(writer.get_recent_logs(session_key, lines=1))
+        except Exception:
+            has_rows = False
+    if has_rows:
+        return writer
+    cell = find_session_cell(ctx.reports_dir, session_key)
+    if cell is not None:
+        return decision_reader(cell, ctx.settings())
+    return writer
 
 
 def _reconstruct(ctx: LabContext, key: str, logs: list[dict[str, Any]]) -> list[dict[str, Any]]:

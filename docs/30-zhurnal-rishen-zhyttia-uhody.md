@@ -70,8 +70,69 @@ SL і бачить, як вона рухалась. `STOP_LOSS` тепер не�
 затримка систематична, це кандидат на першу «дрібницю»: вхід фактично відбувається за
 ціною наступного бару, а не того, на якому з’явився сигнал.
 
+## Pairs і funding (30.09, друга частина)
+
+Обидва двоногі роботи тепер пишуть той самий `decision_trace/1`
+(`infrastructure/nautilus/two_leg_decisions.py`). Запис прив’язаний до ноги A (pairs: A,
+funding: спот): її close, її напрям у `signal`; друга нога — у кроках виконання з `leg`.
+
+- **pairs**: запис на кожен вирівняний бар. `filter / cointegration` — ADF p, β, half-life
+  проти `adf_pvalue_max` / `max_half_life_bars` (PASS, або INFO з причиною «не коінтегровано»);
+  `strategy / PairsTrading` — spread, z, `z_margin_pct` до ближчого порогу, `z_low/z_high/z_exit`;
+  у позиції — `open_bars`, time stop (2 × half-life).
+- **funding**: запис на кожне funding-нарахування (не на бар). `strategy / FundingCarry` —
+  ставка, комісія на інтервал, net APY і `apy_margin_pct` проти `min_net_apy`, basis проти
+  `basis_max`; `execution / funding_settlement` — сума виплати. Так видно, чому funding не
+  торгував у свіпі: net APY після комісій нижче порогу.
+- **Виправлення**: `FundingRobot.on_funding_rate` раніше торгував і на нарахуваннях до
+  `trade_start` (прогрів), тож OOS-прогін міг стартувати з позицією, відкритою на IS.
+  Тепер прогрів лише пишеться як `WARMUP`, як у решти роботів.
+- Нові налаштування `PAIRS_LEG_A` / `PAIRS_LEG_B` (раніше ноги були зашиті в `PairsParams`).
+
+## DECISION_LOG_SCOPE
+
+`DECISION_LOG_SCOPE=oos` (у `Settings` і `WalkForwardRequest.decision_log_scope`): прогони
+сітки на in-sample йдуть без `session_id` і нічого не пишуть; OOS-прогін кожного фолду пише
+під `<session>-f<fold>` — окремий файл на фолд. Номер сесії фолду є в
+`multi_window.folds[i].session_id` результату. Це прибирає другий прохід свіпу.
+
+## Пакетний бектест
+
+Етап 3–4 плану. Запуск матриці роботів × інструментів з дашборда, таблиця прогонів і
+сторінка кожного прогону.
+
+```
+reports/batches/<batch_id>/
+  batch.json                  запит, стан кожної клітинки, pid
+  batch.log
+  cells/<robot>_<BASE>/
+    config.json               payload для run_research_job
+    last_run.json / .log      результат (формат вкладки Research)
+    stdout.log
+    decisions/<session>-f<n>_<дата>.jsonl
+    summary.json              рядок таблиці (кеш)
+  trials/<cell>.jsonl         trial ledger пакету (не research/trials.jsonl)
+```
+
+- `application/batch_plan.py` — план: клітинки, env кожної (інструмент, каталог, модель,
+  perp для funding), і що не запуститься та чому — ще до старту.
+- `api/run_batch_job.py` — процес пакету: кожна клітинка = окремий `run_research_job` зі
+  своїм env, `DECISION_LOG_SCOPE=oos`, паралельно (`parallel`), SIGTERM зупиняє дітей.
+- `api/batch_store.py` — файли, рядки таблиці (числа + дайджест + статистика угод),
+  імпорт свіпу 29.09 (`POST /api/batches/import-sweep`).
+- API: `POST /api/batches` (з `dry_run` — лише план), `GET /api/batches`,
+  `GET /api/batches/{id}`, `POST /api/batches/{id}/cancel`,
+  `GET /api/batches/{id}/runs/{cell}` (+ `/decisions`, `/trades`, `/digest`, `?fold=`).
+  Існуючі `/api/paper/sessions/{key}/…` (угоди, журнал, дайджест) знаходять сесію фолду в
+  теці пакету, тож сторінка угоди працює без змін.
+- Фронт: вкладка «Пакетний бектест»; адреси `#/batch`, `#/batch/<id>`,
+  `#/run/<id>/<cell>?fold=&tab=` (`lib/batch.ts`). Таблиця сортується, кожен рядок —
+  посилання; на сторінці прогону — фолди, «Угоди» (посилання на сторінку угоди з графіком),
+  «Рішення по барах», «Аналіз причин» (воронка барів, блоки, доходність після виконаних /
+  заблокованих / відхилених сигналів, майже-сигнали), «Лог прогону».
+
 ## Ще не зроблено
 
-- pairs (`spread_strategy.py`) і funding (`funding_strategy.py`) досі не пишуть журнал.
 - Лінії індикаторів і сходинка SL на графіку угоди — етап 6 плану.
 - `run_header` замість `params` у кожному записі — етап 5 (`decision_trace/2`).
+- `conditions` з `margin_pct` у всіх роботах (зараз: VPIN, meta-label, pairs, funding).

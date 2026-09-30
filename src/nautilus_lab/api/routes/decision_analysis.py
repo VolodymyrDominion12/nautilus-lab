@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from nautilus_lab.api.batch_store import decision_reader, find_session_cell
 from nautilus_lab.api.context import Lab, LabContext
 from nautilus_lab.api.live_sessions import resolve_decision_log_key
 from nautilus_lab.application.decision_analysis import analyze_records, resolve_question
@@ -50,6 +51,14 @@ def _session_rows(
     registry = ctx.sessions
     session_id = resolve_decision_log_key(registry, key)
     writer = registry.decision_log_writer
+    has_rows = False
+    if writer is not None and hasattr(writer, "get_recent_logs"):
+        has_rows = bool(writer.get_recent_logs(session_id, lines=1))
+    if not has_rows:
+        # A batch fold's decisions live in its batch cell (api/batch_store.py).
+        cell = find_session_cell(ctx.reports_dir, session_id)
+        if cell is not None:
+            writer = decision_reader(cell, ctx.settings())
     read_range = getattr(writer, "read_range", None)
     if read_range is None:
         raise HTTPException(status_code=409, detail="Decision logging is disabled")

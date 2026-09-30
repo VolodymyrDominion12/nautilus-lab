@@ -19,9 +19,11 @@ from nautilus_lab.application.risk import (
 )
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
+from nautilus_lab.domain.decision_trace import Outcome, Stage, TraceStep, Verdict, step
 from nautilus_lab.domain.drawdown_cooldown import PeakState, advance, on_refusal
 from nautilus_lab.domain.funding import FundingCashAndCarry, FundingParams, FundingSnapshot
 from nautilus_lab.domain.marking import OpenLot, marked_equity
+from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.position_plan import (
     Holding,
     holding_from_signed_qty,
@@ -30,6 +32,13 @@ from nautilus_lab.domain.position_plan import (
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.signals import SignalSide
+from nautilus_lab.infrastructure.nautilus.two_leg_decisions import (
+    TwoLegDecisionLog,
+    account_marks,
+    leg_step,
+    plan_step,
+    refusal_step,
+)
 
 
 class FundingRobotConfig(StrategyConfig, frozen=True):
@@ -61,8 +70,22 @@ class FundingRobotConfig(StrategyConfig, frozen=True):
 class FundingRobot(Strategy):  # type: ignore[misc]
     """Delta-neutral cash-and-carry adapter: spot long + perp short on funding rate."""
 
-    def __init__(self, config: FundingRobotConfig) -> None:
+    def __init__(
+        self,
+        config: FundingRobotConfig,
+        *,
+        decision_log: DecisionLogPort | None = None,
+        session_id: str | None = None,
+    ) -> None:
         super().__init__(config)
+        self._decisions = TwoLegDecisionLog(
+            decision_log=decision_log,
+            session_id=session_id,
+            robot="funding",
+            instrument_id=str(config.leg_spot_id),
+            params=config.dict(),
+        )
+        self._decision_ts: datetime | None = None
         self._robot = FundingCashAndCarry(
             spot_id=str(config.leg_spot_id),
             perp_id=str(config.leg_perp_id),
@@ -152,6 +175,7 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         signed_perp_qty = sum((lot.signed_qty for lot in perp_lots), Decimal("0"))
 
         mark_price = self._last_perp.close if self._last_perp is not None else Decimal("0")
+        steps: list[TraceStep] = []
         if signed_perp_qty != 0 and mark_price > 0:
             payment = -signed_perp_qty * mark_price * rate
             self._accumulated_funding += payment
@@ -160,9 +184,24 @@ class FundingRobot(Strategy):  # type: ignore[misc]
                 f"Funding payment: rate={rate} qty={signed_perp_qty} mark={mark_price} "
                 f"-> delta={payment:+f} USDT"
             )
+            steps.append(
+                step(
+                    Stage.EXECUTION,
+                    "funding_settlement",
+                    Verdict.INFO,
+                    result="accrued",
+                    values={
+                        "rate": rate,
+                        "perp_qty": signed_perp_qty,
+                        "payment": payment,
+                        "accumulated": self._accumulated_funding,
+                    },
+                )
+            )
 
         # 2. Form snapshot for strategy signal evaluation
         ts = datetime.fromtimestamp(funding_rate.ts_event / 1_000_000_000, tz=UTC)
+        self._decision_ts = ts
         index_price = self._last_spot.close if self._last_spot is not None else None
         snapshot = FundingSnapshot(
             instrument=str(self.config.leg_perp_id),
@@ -172,20 +211,48 @@ class FundingRobot(Strategy):  # type: ignore[misc]
             ts_utc=ts,
         )
 
-        signal = self._robot.on_funding(snapshot)
-        if signal is None:
+        start = self.config.trade_start_ns
+        if start is not None and int(funding_rate.ts_event) < start:
+            # Warm-up settlement: like every other robot, nothing is traded before the
+            # window's trade start. Before 2026-09-30 this path traded anyway, so an
+            # out-of-sample run could begin already holding a carry opened in-sample.
+            self._robot.on_funding(snapshot)
+            self._decide(Outcome.WARMUP, [*steps, *self._robot.last_trace])
             return
 
-        equity = self._equity()
-        plan = plan_for_signal(self._holding_spot(), signal.leg_a.side)
-        if plan.is_noop:
+        signal = self._robot.on_funding(snapshot)
+        steps.extend(self._robot.last_trace)
+        if signal is None:
+            self._decide(Outcome.NO_SIGNAL, steps)
             return
-        entry_allowed = plan.wants_entry and self._entry_allowed(
-            equity, reversing=plan.exit_position
+        side_spot = signal.leg_a.side.value
+
+        equity = self._equity()
+        held = self._holding_spot()
+        plan = plan_for_signal(held, signal.leg_a.side)
+        steps.append(plan_step(held, plan.exit_position, plan.wants_entry))
+        if plan.is_noop:
+            self._decide(Outcome.HOLD_NOOP, steps, signal=side_spot, reason=signal.reason)
+            return
+        refusal = (
+            self._entry_refusal(equity, reversing=plan.exit_position) if plan.wants_entry else None
         )
         if plan.exit_position:
+            steps.extend(self._exit_steps())
             self._flatten_both(equity)
-        if not entry_allowed or equity is None:
+            if not plan.wants_entry:
+                self._decide(Outcome.EXIT, steps, signal=side_spot, reason=signal.reason)
+                return
+        if refusal is not None or equity is None:
+            gate, label = refusal_step(*(refusal or ("equity", "no account equity", None, None)))
+            steps.append(gate)
+            self._decide(
+                Outcome.ENTRY_BLOCKED_RISK,
+                steps,
+                signal=side_spot,
+                reason=signal.reason,
+                blocked_by=label,
+            )
             return
 
         risk_fraction = resolve_risk_fraction(
@@ -210,6 +277,15 @@ class FundingRobot(Strategy):  # type: ignore[misc]
             qty_step_b=self.config.qty_step_perp,
         )
         if qty_spot <= 0 or qty_perp <= 0:
+            gate, label = refusal_step("sizing", "a leg sized to 0", None, None)
+            steps.append(gate)
+            self._decide(
+                Outcome.ENTRY_SKIPPED_SIZE,
+                steps,
+                signal=side_spot,
+                reason=signal.reason,
+                blocked_by=label,
+            )
             return
         self._submit_leg(
             self.config.leg_spot_id, signal.leg_a.side, self._last_spot.close, qty_spot
@@ -218,6 +294,78 @@ class FundingRobot(Strategy):  # type: ignore[misc]
             self.config.leg_perp_id, signal.leg_b.side, self._last_perp.close, qty_perp
         )
         self._entry_equity = equity
+        steps.append(
+            leg_step(
+                "entry",
+                leg="spot",
+                side="LONG" if signal.leg_a.side is SignalSide.BUY else "SHORT",
+                qty=qty_spot,
+                price=self._last_spot.close,
+            )
+        )
+        steps.append(
+            leg_step(
+                "entry",
+                leg="perp",
+                side="LONG" if signal.leg_b.side is SignalSide.BUY else "SHORT",
+                qty=qty_perp,
+                price=self._last_perp.close,
+            )
+        )
+        self._decide(
+            Outcome.REVERSE if plan.exit_position else Outcome.ENTRY_OPENED,
+            steps,
+            signal=side_spot,
+            reason=signal.reason,
+        )
+
+    def _decide(
+        self,
+        outcome: Outcome,
+        steps: list[TraceStep],
+        *,
+        signal: str | None = None,
+        reason: str | None = None,
+        blocked_by: str | None = None,
+    ) -> None:
+        """One record per funding settlement: the carry decides on settlements, not bars."""
+        if not self._decisions.enabled or self._last_spot is None or self._decision_ts is None:
+            return
+        self._decisions.write(
+            ts=self._decision_ts,
+            close=self._last_spot.close,
+            outcome=outcome,
+            steps=steps,
+            account=account_marks(
+                holding=self._holding_spot(),
+                equity=self._equity(),
+                day_start=self._day_start_equity,
+                peak=self._peak_equity,
+                legs_open=self._open_legs(),
+            ),
+            signal=signal,
+            signal_reason=reason,
+            blocked_by=blocked_by,
+        )
+
+    def _exit_steps(self) -> list[TraceStep]:
+        marks = {
+            str(self.config.leg_spot_id): ("spot", self._last_spot),
+            str(self.config.leg_perp_id): ("perp", self._last_perp),
+        }
+        out: list[TraceStep] = []
+        for lot in self._open_lots():
+            leg, last = marks.get(lot.instrument_id, ("?", None))
+            out.append(
+                leg_step(
+                    "exit",
+                    leg=leg,
+                    side="LONG" if lot.signed_qty > 0 else "SHORT",
+                    qty=abs(lot.signed_qty),
+                    price=last.close if last is not None else lot.avg_price,
+                )
+            )
+        return out
 
     def on_stop(self) -> None:
         self._flatten_both(self._equity())
@@ -242,10 +390,13 @@ class FundingRobot(Strategy):  # type: ignore[misc]
     def risk_breaches(self) -> tuple[tuple[str, int], ...]:
         return tuple(sorted(self._refusal_reasons.items()))
 
-    def _entry_allowed(self, equity: Decimal | None, *, reversing: bool) -> bool:
+    def _entry_refusal(
+        self, equity: Decimal | None, *, reversing: bool
+    ) -> tuple[str, str, Decimal | None, Decimal | None] | None:
+        """None when the entry may go ahead, else (code, reason, value, limit)."""
         if equity is None:
             self.log.error("No account equity; skip funding spread entry")
-            return False
+            return ("equity", "no account equity", None, None)
         snapshot = AccountSnapshot(
             equity=equity,
             peak_equity=self._peak_equity or equity,
@@ -257,8 +408,8 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         if not decision.allowed:
             self._note_refusal(decision.reason)
             self.log.warning(f"Risk blocked funding entry: {decision.reason}")
-            return False
-        return True
+            return (decision.code or "unknown", decision.reason, decision.value, decision.limit)
+        return None
 
     def _holding_spot(self) -> Holding:
         signed = sum(

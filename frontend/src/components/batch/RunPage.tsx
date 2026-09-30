@@ -58,6 +58,23 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
   const summary = run.summary;
   const numbers = summary?.numbers;
   const folds = run.folds;
+  const firstFold = folds[0];
+  const lastFold = folds[folds.length - 1];
+  const totalStart = firstFold?.window?.in_sample_start;
+  const totalEnd = lastFold?.window?.out_of_sample_end;
+  const isDays =
+    totalStart && firstFold?.window?.in_sample_end
+      ? Math.round(
+          (new Date(firstFold.window.in_sample_end).getTime() - new Date(totalStart).getTime()) /
+            (1000 * 86400),
+        )
+      : null;
+  const totalDays =
+    totalStart && totalEnd
+      ? Math.round(
+          (new Date(totalEnd).getTime() - new Date(totalStart).getTime()) / (1000 * 86400),
+        )
+      : null;
   // Decisions need one fold's session; default to the last (most recent) fold.
   const decisionFold = folds.find((f) => f.index === fold) ?? folds[folds.length - 1];
   const warnings = summary ? rowWarnings(summary) : [];
@@ -75,6 +92,11 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
         <span className="text-xs text-gray-400 font-mono">
           {cell.instrument_id} · {cell.interval} · {cell.catalog}
         </span>
+        {totalStart && totalEnd && (
+          <span className="text-xs text-cyan-300 font-mono bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800/60">
+            Дані: {formatDateTime(totalStart)} → {formatDateTime(totalEnd)} ({totalDays} дн.) · IS: ~{isDays} дн.
+          </span>
+        )}
         <span className={`text-xs font-mono ${STATUS_CLASS[cell.status] ?? ''}`}>{cell.status}</span>
       </header>
 
@@ -121,7 +143,8 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
           <thead className="text-gray-500 text-[10px] uppercase">
             <tr>
               <th className="text-left py-1.5 pr-3">Фолд</th>
-              <th className="text-left pr-3">OOS-вікно</th>
+              <th className="text-left pr-3">IS-вікно (підбір)</th>
+              <th className="text-left pr-3">OOS-вікно (звіт)</th>
               <th className="text-left pr-3">Доходність</th>
               <th className="text-left pr-3">Buy&hold</th>
               <th className="text-left pr-3">Fills</th>
@@ -133,8 +156,10 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
               className={`border-t border-gray-800 cursor-pointer ${fold == null ? 'bg-blue-600/10' : ''}`}
               onClick={() => go({ fold: undefined })}
             >
-              <td className="py-1.5 pr-3 font-mono text-gray-300" colSpan={6}>
-                усі фолди
+              <td className="py-1.5 pr-3 font-mono text-gray-300" colSpan={7}>
+                усі фолди (загальний OOS:{' '}
+                {firstFold?.window ? formatDateTime(firstFold.window.out_of_sample_start) : '—'} →{' '}
+                {lastFold?.window ? formatDateTime(lastFold.window.out_of_sample_end) : '—'})
               </td>
             </tr>
             {folds.map((item) => {
@@ -148,7 +173,11 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
                   onClick={() => go({ fold: item.index })}
                 >
                   <td className="py-1.5 pr-3 font-mono text-gray-300">{item.index}</td>
-                  <td className="pr-3 font-mono text-gray-400">
+                  <td className="pr-3 font-mono text-gray-500 text-[11px]">
+                    {formatDateTime(item.window.in_sample_start)} →{' '}
+                    {formatDateTime(item.window.in_sample_end)}
+                  </td>
+                  <td className="pr-3 font-mono text-gray-300 font-medium">
                     {formatDateTime(item.window.out_of_sample_start)} →{' '}
                     {formatDateTime(item.window.out_of_sample_end)}
                   </td>

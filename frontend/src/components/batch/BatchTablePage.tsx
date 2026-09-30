@@ -93,6 +93,12 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
           </span>
         )}
         <span className="text-xs text-gray-500">{formatDateTime(batch?.created_at)}</span>
+        {batch?.request && (
+          <span className="text-xs text-gray-400 font-mono bg-gray-900/80 px-2 py-0.5 rounded border border-gray-800">
+            {String(batch.request.interval ?? '1h')} · фолди: {String(batch.request.folds ?? '—')}
+            {batch.request.days != null ? ` · ${String(batch.request.days)} дн.` : ' · вся історія'}
+          </span>
+        )}
         <div className="ml-auto flex gap-2">
           {running && (
             <button

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowLeft, RefreshCw, Square } from 'lucide-react';
-import { cancelBatch, fetchBatch } from '../../services/api';
+import { AlertTriangle, ArrowLeft, RefreshCw, Square, Trash2 } from 'lucide-react';
+import { cancelBatch, deleteBatch, fetchBatch } from '../../services/api';
 import {
   blockedShare,
   buildBatchHash,
@@ -38,6 +38,7 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
   const [batch, setBatch] = useState<BatchDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('mean_oos');
   const [descending, setDescending] = useState(true);
 
@@ -77,6 +78,21 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
     }
   };
 
+  const onDelete = async () => {
+    const name = batch?.label || batchId;
+    if (!window.confirm(`Видалити пакет "${name}" та всі результати його прогонів, угод і логів?`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deleteBatch(batchId);
+      window.location.hash = buildBatchHash({ page: 'list' });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-5">
       <header className="flex flex-wrap items-center gap-3 border-b border-gray-800 pb-3">
@@ -109,6 +125,15 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
               <Square className="w-3 h-3" /> Зупинити
             </button>
           )}
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={() => void onDelete()}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-950/30 hover:bg-red-950/60 border border-red-800/60 rounded-lg text-red-300 transition-colors disabled:opacity-50"
+            title="Видалити цей пакет і всі його результати бектестів, угод і логів"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Видалити
+          </button>
           <button
             type="button"
             onClick={() => void load()}

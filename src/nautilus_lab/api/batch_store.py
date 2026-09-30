@@ -17,9 +17,13 @@ so a reader never sees half a file.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
+import shutil
+import signal
+import time
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import asdict
@@ -202,6 +206,30 @@ def effective_status(batch: dict[str, Any]) -> str:
     if status in (RUNNING, QUEUED) and batch.get("pid") and not pid_alive(batch.get("pid")):
         return "lost"
     return status
+
+
+def delete_batch(reports_dir: Path, batch_id: str) -> bool:
+    """Permanently delete a batch directory and all its runs, decisions, logs and artifacts.
+
+    If a process is still running for this batch, its process group is killed first.
+    Returns True if the batch directory was found and deleted, False if it did not exist.
+    """
+    path = batch_dir(reports_dir, batch_id)
+    if not path.exists():
+        return False
+    batch = load_batch(reports_dir, batch_id) or {}
+    pid = batch.get("pid")
+    if isinstance(pid, int) and pid_alive(pid):
+        with contextlib.suppress(OSError):
+            os.killpg(pid, signal.SIGKILL)
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+        for _ in range(10):
+            if not pid_alive(pid):
+                break
+            time.sleep(0.05)
+    shutil.rmtree(path)
+    return True
 
 
 # --- decisions of one cell ------------------------------------------------------------

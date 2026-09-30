@@ -1292,6 +1292,10 @@ export async function cancelBatch(batchId: string): Promise<ActionResult> {
   return parseJson(await fetch(batchPath(batchId, '/cancel'), { method: 'POST' }));
 }
 
+export async function deleteBatch(batchId: string): Promise<{ status: string; deleted: string }> {
+  return parseJson(await fetch(batchPath(batchId), { method: 'DELETE' }));
+}
+
 export async function importDecisionSweep(): Promise<{ batch_id: string }> {
   return parseJson(await fetch(apiUrl('/api/batches/import-sweep'), { method: 'POST' }));
 }

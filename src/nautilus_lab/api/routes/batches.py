@@ -12,6 +12,7 @@ research run and a live paper session.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -30,6 +31,7 @@ from nautilus_lab.api.batch_store import (
     cell_dir,
     create_batch,
     decision_reader,
+    delete_batch,
     effective_status,
     fold_sessions,
     import_sweep,
@@ -209,6 +211,22 @@ def cancel_batch(ctx: Lab, batch_id: str) -> dict[str, Any]:
         return {"status": "idle", "message": "batch is not running"}
     os.kill(pid, signal.SIGTERM)
     return {"status": "cancelling", "message": f"sent SIGTERM to batch {batch_id}"}
+
+
+@router.delete("/api/batches/{batch_id}")
+def delete_batch_route(ctx: Lab, batch_id: str) -> dict[str, Any]:
+    proc = _PROCESSES.pop(batch_id, None)
+    if proc is not None:
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            proc.kill()
+            proc.wait(timeout=2)
+    try:
+        deleted = delete_batch(ctx.reports_dir, batch_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"batch {batch_id!r} not found")
+    return {"status": "ok", "deleted": batch_id}
 
 
 # --- one run (cell) of a batch --------------------------------------------------------

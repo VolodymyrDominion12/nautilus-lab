@@ -10,7 +10,9 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from nautilus_lab.api.app import create_app
 from nautilus_lab.api.batch_store import (
     BLOCKED,
     FAILED,
@@ -20,6 +22,7 @@ from nautilus_lab.api.batch_store import (
     cell_dir,
     create_batch,
     decisions_dir,
+    delete_batch,
     find_session_cell,
     list_batches,
     load_batch,
@@ -171,7 +174,9 @@ def test_batch_run_fills_the_table(tmp_path: Path) -> None:
     request = BatchRequest(robots=("ema", "regime", "glft"), symbols=("ETHUSDT",), parallel=2)
     cells = plan_cells(request, exists=_all_exist, wired=["ema", "regime"])
     batch_id, path = create_batch(reports, request, cells)
-    assert {c["cell_id"]: c["status"] for c in load_batch(reports, batch_id)["cells"]} == {
+    initial = load_batch(reports, batch_id)
+    assert initial is not None
+    assert {c["cell_id"]: c["status"] for c in initial["cells"]} == {
         "ema_ETH": QUEUED,
         "regime_ETH": QUEUED,
         "glft_ETH": BLOCKED,
@@ -180,6 +185,7 @@ def test_batch_run_fills_the_table(tmp_path: Path) -> None:
     assert BatchRun(path, python=_fake_python(tmp_path)).run() == 0
 
     batch = load_batch(reports, batch_id)
+    assert batch is not None
     status = {c["cell_id"]: c["status"] for c in batch["cells"]}
     assert status == {"ema_ETH": OK, "regime_ETH": FAILED, "glft_ETH": BLOCKED}
     assert batch["status"] == OK
@@ -263,3 +269,44 @@ def test_import_sweep_makes_a_batch(tmp_path: Path) -> None:
     assert cell["decisions"]["untraced_bars"] == 1
     assert decisions_dir(cell_dir(reports / "batches" / batch_id, "ema_BTC")).exists()
     assert Decimal("0.0076") == Decimal(str(cell["numbers"]["mean_oos"]))
+
+
+def test_delete_batch_removes_directory_and_endpoint(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",), folds=2)
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, path = create_batch(reports, request, cells)
+    assert path.exists()
+    assert (path / "batch.json").exists()
+
+    # Create dummy cell artifact
+    c_dir = cell_dir(path, "ema_ETH")
+    decisions_dir(c_dir).mkdir(parents=True, exist_ok=True)
+    (c_dir / "last_run.json").write_text("{}", encoding="utf-8")
+    assert (c_dir / "last_run.json").exists()
+
+    # Invalid batch id raises ValueError
+    with pytest.raises(ValueError, match="invalid batch id"):
+        delete_batch(reports, "../evil_batch")
+
+    # App endpoint test
+    app = create_app(Settings(), root=tmp_path)
+    client = TestClient(app)
+
+    # 404 for nonexistent batch
+    resp_404 = client.delete("/api/batches/nonexistent_batch_123")
+    assert resp_404.status_code == 404
+
+    # 400 for bad id
+    resp_400 = client.delete("/api/batches/bad..id!!")
+    assert resp_400.status_code == 400
+
+    # Successful delete via API
+    resp = client.delete(f"/api/batches/{batch_id}")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok", "deleted": batch_id}
+
+    # Everything is deleted
+    assert not path.exists()
+    assert load_batch(reports, batch_id) is None
+    assert delete_batch(reports, batch_id) is False

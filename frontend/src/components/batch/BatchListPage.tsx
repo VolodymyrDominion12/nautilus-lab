@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Download, Layers, RefreshCw } from 'lucide-react';
-import { fetchBatches, importDecisionSweep } from '../../services/api';
+import { Download, Layers, RefreshCw, Trash2 } from 'lucide-react';
+import { deleteBatch, fetchBatches, importDecisionSweep } from '../../services/api';
 import { buildBatchHash, STATUS_CLASS, type BatchListRow } from '../../lib/batch';
 import { formatDateTime } from '../../lib/format';
 import { BatchLaunchForm } from './BatchLaunchForm';
@@ -14,6 +14,7 @@ import { BatchLaunchForm } from './BatchLaunchForm';
 export const BatchListPage: React.FC = () => {
   const [batches, setBatches] = useState<BatchListRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -27,6 +28,23 @@ export const BatchListPage: React.FC = () => {
       setLoading(false);
     }
   }, []);
+
+  const handleDelete = async (batchId: string, label?: string) => {
+    const name = label || batchId;
+    if (!window.confirm(`Видалити пакет "${name}" та всі результати його прогонів, угод і логів?`)) {
+      return;
+    }
+    setDeletingId(batchId);
+    setError(null);
+    try {
+      await deleteBatch(batchId);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -94,6 +112,7 @@ export const BatchListPage: React.FC = () => {
                 <th className="text-left">Стан</th>
                 <th className="text-left">Прогони</th>
                 <th className="text-left">Роботи</th>
+                <th className="text-right py-1.5 pr-2">Дія</th>
               </tr>
             </thead>
             <tbody>
@@ -123,6 +142,18 @@ export const BatchListPage: React.FC = () => {
                     </span>
                   </td>
                   <td className="text-gray-400 font-mono">{batch.robots.join(', ')}</td>
+                  <td className="text-right py-1.5 pr-2">
+                    <button
+                      type="button"
+                      disabled={deletingId === batch.id}
+                      onClick={() => void handleDelete(batch.id, batch.label)}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-950/40 border border-transparent hover:border-red-800/60 rounded transition-colors disabled:opacity-50"
+                      title="Видалити цей пакет і всі його результати бектестів, угод і логів"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Видалити</span>
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

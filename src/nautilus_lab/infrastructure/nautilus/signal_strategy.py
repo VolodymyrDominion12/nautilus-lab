@@ -111,6 +111,7 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     donchian_period: int = 20
     bb_period: int = 20
     bb_k: Decimal = Decimal("2")
+    regime_confirmation_bars: int = 1
     risk_per_trade: Decimal = Decimal("0.005")
     stop_pct: Decimal = Decimal("0.01")
     max_daily_loss: Decimal = Decimal("0.02")
@@ -1264,6 +1265,7 @@ def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRout
             donchian_period=config.donchian_period,
             bb_period=config.bb_period,
             bb_k=config.bb_k,
+            confirmation_bars=config.regime_confirmation_bars,
         ),
         vpin=vpin,
         hawkes=hawkes,

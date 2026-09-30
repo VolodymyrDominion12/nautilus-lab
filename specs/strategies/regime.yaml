@@ -29,8 +29,16 @@ edge_conditions:
       достатньо руху, щоб покрити комісію.
   - name: switching_costs_do_not_eat_the_edge
     description: >
-      Перемикання режимів (закриття позиції при зміні режиму) не з'їдає перевагу
-      через надмірний turnover.
+      Перемикання режимів не з'їдає перевагу: позиція не ліквідується, якщо новий
+      режим сумісний з напрямком або якщо трендовий трейлінг-стоп ще не спрацював.
+  - name: compatible_regime_transition
+    description: >
+      Позиція не скидається у FLAT, якщо новий режим відповідає напрямку поточної
+      позиції (наприклад, SHORT зберігається при переході RANGE -> DOWNTREND).
+  - name: trend_pullback_tolerance
+    description: >
+      Трендова позиція при переході в RANGE не ліквідується миттєво, якщо ціна
+      не пробила трейлінг-рівень EMA, захищаючи угоду від випадкових шумів ER.
 
 implementation:
   domain_module: src/nautilus_lab/domain/regime_router.py
@@ -84,6 +92,11 @@ params:
     note: >
       Поріг виходу з тренду (нижчий за ENTER — це і є гістерезис, який не дає
       режиму «блимати» на межі).
+  - env: REGIME_CONFIRMATION_BARS
+    default: 1
+    tuned: false
+    note: >
+      Кількість барів поспіль для підтвердження зміни режиму (фільтр пилки).
 
 invariants:
   no_lookahead: true

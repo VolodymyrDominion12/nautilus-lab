@@ -106,8 +106,11 @@ class RegimeParams:
     donchian_period: int = 20
     bb_period: int = 20
     bb_k: Decimal = Decimal("2")
+    confirmation_bars: int = 1
 
     def __post_init__(self) -> None:
+        if self.confirmation_bars < 1:
+            raise InvalidRiskError("confirmation_bars must be >= 1")
         if self.er_period < 2:
             raise InvalidRiskError("er_period must be >= 2")
         if self.trend_ema_period < 2:
@@ -142,6 +145,8 @@ class RegimeClassifier:
         self._ema = ExponentialMovingAverage(params.trend_ema_period)
         self._ema_history = RollingWindow(params.slope_lookback + 1)
         self._regime: MarketRegime = MarketRegime.RANGE
+        self._pending_regime: MarketRegime | None = None
+        self._pending_count: int = 0
 
     @property
     def initialized(self) -> bool:
@@ -163,7 +168,22 @@ class RegimeClassifier:
             return None
         er = _efficiency_ratio(self._closes.values())
         slope = _slope(self._ema_history.values())
-        self._regime = self._next_regime(er, slope)
+        candidate = self._next_regime(er, slope)
+        if self._params.confirmation_bars <= 1:
+            self._regime = candidate
+        else:
+            if candidate is self._regime:
+                self._pending_regime = None
+                self._pending_count = 0
+            elif candidate is self._pending_regime:
+                self._pending_count += 1
+                if self._pending_count >= self._params.confirmation_bars:
+                    self._regime = candidate
+                    self._pending_regime = None
+                    self._pending_count = 0
+            else:
+                self._pending_regime = candidate
+                self._pending_count = 1
         return RegimeSnapshot(regime=self._regime, efficiency_ratio=er, slope=slope)
 
     def _next_regime(self, er: Decimal, slope: Decimal) -> MarketRegime:

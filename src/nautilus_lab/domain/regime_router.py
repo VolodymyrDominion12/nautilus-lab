@@ -105,8 +105,13 @@ class RegimeRouter:
         self._last_vpin_state: VpinState | None = None
         self._last_hawkes_state: HawkesIntensity | None = None
         self._last_effective_regime: MarketRegime | None = None
+        self._current_side: SignalSide = SignalSide.FLAT
         self._seen = 0
         self._trace: tuple[TraceStep, ...] = ()
+
+    @property
+    def current_side(self) -> SignalSide:
+        return self._current_side
 
     @property
     def last_trace(self) -> tuple[TraceStep, ...]:
@@ -181,38 +186,65 @@ class RegimeRouter:
             enter_trend_er=self._params.enter_trend_er,
             exit_trend_er=self._params.exit_trend_er,
         )
-        if self._last_regime is not None and self._last_snapshot.regime is not self._last_regime:
-            changed_from = self._last_regime
-            self._last_regime = self._last_snapshot.regime
-            self._last_effective_regime = self._last_snapshot.regime
-            self._uptrend.on_bar(bar)
-            self._downtrend.on_bar(bar)
-            self._range.on_bar(bar)
-            self._trace = (
-                regime,
-                regime_change_step(
-                    "RegimeRouter", old=changed_from, new=self._last_snapshot.regime
-                ),
-            )
-            return Signal(
-                instrument_id=self._instrument_id,
-                side=SignalSide.FLAT,
-                bar_ts_utc=bar.ts_utc,
-                reason=f"regime change to {self._last_snapshot.regime.value}",
-                regime=self._last_snapshot.regime,
-            )
+
+        regime_changed = (
+            self._last_regime is not None and self._last_snapshot.regime is not self._last_regime
+        )
+        changed_from = self._last_regime
         self._last_regime = self._last_snapshot.regime
         self._last_effective_regime = self._effective_regime(
             self._last_snapshot, self._last_vpin_state, self._last_hawkes_state
         )
         filters = self._filter_steps(self._last_snapshot, self._last_effective_regime)
+
         # B2 fix: all three legs must receive every bar so their rolling windows and
-        # EMAs stay warm. Without this, a leg that has not traded for N bars wakes up
-        # with stale indicators when the regime switches to it, producing a phantom
-        # signal or a missed entry on the very first bar of the new regime.
+        # EMAs stay warm.
         up_signal = self._uptrend.on_bar(bar)
         down_signal = self._downtrend.on_bar(bar)
         range_signal = self._range.on_bar(bar)
+
+        # Direct conflicting reversal: Long vs Downtrend, or Short vs Uptrend
+        if regime_changed:
+            assert changed_from is not None
+            if (
+                self._current_side is SignalSide.BUY
+                and self._last_effective_regime is MarketRegime.DOWNTREND
+            ):
+                self._current_side = SignalSide.FLAT
+                self._trace = (
+                    regime,
+                    *filters,
+                    regime_change_step(
+                        "RegimeRouter", old=changed_from, new=self._last_snapshot.regime
+                    ),
+                )
+                return Signal(
+                    instrument_id=self._instrument_id,
+                    side=SignalSide.FLAT,
+                    bar_ts_utc=bar.ts_utc,
+                    reason=f"regime change to {self._last_snapshot.regime.value}",
+                    regime=self._last_snapshot.regime,
+                )
+            if (
+                self._current_side is SignalSide.SELL
+                and self._last_effective_regime is MarketRegime.UPTREND
+            ):
+                self._current_side = SignalSide.FLAT
+                self._trace = (
+                    regime,
+                    *filters,
+                    regime_change_step(
+                        "RegimeRouter", old=changed_from, new=self._last_snapshot.regime
+                    ),
+                )
+                return Signal(
+                    instrument_id=self._instrument_id,
+                    side=SignalSide.FLAT,
+                    bar_ts_utc=bar.ts_utc,
+                    reason=f"regime change to {self._last_snapshot.regime.value}",
+                    regime=self._last_snapshot.regime,
+                )
+
         if self._last_effective_regime is MarketRegime.UPTREND:
             signal = up_signal
             active_trace = self._uptrend.last_trace
@@ -220,12 +252,62 @@ class RegimeRouter:
             signal = down_signal
             active_trace = self._downtrend.last_trace
         else:
-            signal = range_signal
-            active_trace = self._range.last_trace
+            # MarketRegime.RANGE
+            if self._current_side is SignalSide.BUY:
+                # In range while holding trend long: exit only if trailing stop (close < EMA) is hit
+                if up_signal is not None and up_signal.side is SignalSide.FLAT:
+                    signal = up_signal
+                    active_trace = self._uptrend.last_trace
+                else:
+                    signal = None
+                    active_trace = (
+                        step(
+                            Stage.STRATEGY,
+                            "RegimeRouter",
+                            Verdict.INFO,
+                            note="in range: holding trend long above EMA",
+                        ),
+                    )
+            elif self._current_side is SignalSide.SELL:
+                # In range holding trend short: exit only if trailing stop (close > EMA) is hit
+                if down_signal is not None and down_signal.side is SignalSide.FLAT:
+                    signal = down_signal
+                    active_trace = self._downtrend.last_trace
+                else:
+                    signal = None
+                    active_trace = (
+                        step(
+                            Stage.STRATEGY,
+                            "RegimeRouter",
+                            Verdict.INFO,
+                            note="in range: holding trend short below EMA",
+                        ),
+                    )
+            else:
+                signal = range_signal
+                active_trace = self._range.last_trace
+
         signal, gate = gate_leg(
             "RegimeRouter", regime=self._last_effective_regime, signal=signal, legs=self._legs
         )
-        self._trace = (regime, *filters, *active_trace, *gate)
+        if signal is not None:
+            self._current_side = signal.side
+
+        if regime_changed and changed_from is not None:
+            transition_step = step(
+                Stage.STRATEGY,
+                "RegimeRouter",
+                Verdict.INFO,
+                result=self._last_effective_regime.value,
+                values={
+                    "from_regime": changed_from.value,
+                    "to_regime": self._last_effective_regime.value,
+                },
+                note=f"regime changed {changed_from.value} -> {self._last_effective_regime.value}",
+            )
+            self._trace = (regime, *filters, transition_step, *active_trace, *gate)
+        else:
+            self._trace = (regime, *filters, *active_trace, *gate)
         return signal
 
     def _filter_steps(

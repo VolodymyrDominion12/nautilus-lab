@@ -590,6 +590,7 @@ def _single_run(
             donchian_period=request.regime.donchian_period,
             bb_period=request.regime.bb_period,
             bb_k=request.regime.bb_k,
+            regime_confirmation_bars=request.regime.confirmation_bars,
             risk_per_trade=request.risk.risk_per_trade,
             stop_pct=request.risk.stop_pct,
             max_daily_loss=request.risk.max_daily_loss,

@@ -120,6 +120,7 @@ class Settings(BaseSettings):
     donchian_period: int = 20
     bb_period: int = 20
     bb_k: Decimal = Decimal("2")
+    regime_confirmation_bars: int = 1
     # adaptive_ema: the filter regime leg gets a step that depends on the efficiency
     # ratio (selectivity). 0 reproduces the fixed-alpha EMA exactly - the null
     # hypothesis lives inside the grid, see specs/strategies/adaptive_ema.yaml.
@@ -236,6 +237,7 @@ class Settings(BaseSettings):
             donchian_period=self.donchian_period,
             bb_period=self.bb_period,
             bb_k=self.bb_k,
+            confirmation_bars=self.regime_confirmation_bars,
         )
 
     def adaptive_ema_params(self) -> AdaptiveEmaParams:

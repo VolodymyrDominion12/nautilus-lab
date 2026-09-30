@@ -136,3 +136,111 @@ def test_b3_range_leg_is_warm_after_uptrend() -> None:
     assert not warmup_steps, (
         f"B3 regression: RangeMeanReversion у warmup після 25+ барів. Trace: {router.last_trace}"
     )
+
+
+def test_router_preserves_short_when_transitioning_to_downtrend() -> None:
+    """SHORT, відкритий у RANGE (Bollinger upper band), не скидається при переході в DOWNTREND."""
+    params = RegimeParams(
+        er_period=5,
+        trend_ema_period=5,
+        slope_lookback=3,
+        enter_trend_er=Decimal("0.40"),
+        exit_trend_er=Decimal("0.20"),
+        donchian_period=4,
+        bb_period=5,
+        bb_k=Decimal("1.2"),
+    )
+    router = RegimeRouter(instrument_id="ETH/USDT.SIM", params=params)
+
+    # Прогрів у флеті навколо 100
+    for i in range(15):
+        val = Decimal("100") + (Decimal("1") if i % 2 == 0 else Decimal("-1"))
+        router.on_bar(_bar(val, i))
+
+    # Сплеск вгору для торкання верхньої смуги Боллінджера у RANGE -> сигнал SELL
+    sell_sig = router.on_bar(_bar(Decimal("105"), 15))
+    assert sell_sig is not None
+    assert sell_sig.side is SignalSide.SELL
+    assert router.current_side is SignalSide.SELL
+
+    # Тепер різке падіння -> перехід у DOWNTREND (ER зростає, нахил від'ємний)
+    signals = []
+    for offset, close in enumerate((Decimal("95"), Decimal("85"), Decimal("75"), Decimal("65"))):
+        signals.append(router.on_bar(_bar(close, 16 + offset)))
+
+    # Жоден сигнал не повинен бути FLAT через зміну режиму
+    flats = [s for s in signals if s is not None and s.side is SignalSide.FLAT]
+    assert not flats, f"Очікувалось збереження SHORT, але отримано FLAT: {flats}"
+    assert router.last_effective_regime is not None
+    assert router.last_effective_regime.value == "downtrend"
+    assert router.current_side == SignalSide.SELL
+
+
+def test_router_holding_trend_long_in_range_until_ema_violated() -> None:
+    """LONG з UPTREND не ліквідується у RANGE, доки ціна залишається вище EMA."""
+    params = RegimeParams(
+        er_period=5,
+        trend_ema_period=5,
+        slope_lookback=3,
+        enter_trend_er=Decimal("0.50"),
+        exit_trend_er=Decimal("0.30"),
+        donchian_period=3,
+        bb_period=5,
+        bb_k=Decimal("2.0"),
+    )
+    router = RegimeRouter(instrument_id="ETH/USDT.SIM", params=params)
+
+    # Прогрів і вхід у лонг на аптренді
+    for i in range(20):
+        router.on_bar(_bar(Decimal(100 + i * 5), i))
+    side_at_trend: SignalSide = router.current_side
+    assert side_at_trend is SignalSide.BUY
+
+    # Тепер консолідація (ER падає нижче 0.30 -> перехід у RANGE), але ціна тримається вище EMA
+    # Ціна останнього бару була ~195, EMA ~180. Консолідуємось навколо 195:
+    range_signals = []
+    for j in range(5):
+        close = Decimal("195") + (Decimal("0.5") if j % 2 == 0 else Decimal("-0.5"))
+        range_signals.append(router.on_bar(_bar(close, 20 + j)))
+
+    # У RANGE позиція не скидається в FLAT
+    flats = [s for s in range_signals if s is not None and s.side is SignalSide.FLAT]
+    assert not flats, "Позиція була передчасно закрита у RANGE, хоча EMA не пробита"
+    side_at_range: SignalSide = router.current_side
+    assert side_at_range is SignalSide.BUY
+
+    # Тепер ціна пробиває EMA вниз (падає до 120), що генерує FLAT
+    drop_sig = router.on_bar(_bar(Decimal("120"), 25))
+    assert drop_sig is not None
+    assert drop_sig.side is SignalSide.FLAT
+    assert "EMA exit" in drop_sig.reason or "regime change" in drop_sig.reason
+    side_after_drop: SignalSide = router.current_side
+    assert side_after_drop is SignalSide.FLAT
+
+
+def test_router_confirmation_bars_filters_one_bar_spike() -> None:
+    """confirmation_bars=2 запобігає перемиканню режиму на 1-барному шумі."""
+    params = RegimeParams(
+        er_period=5,
+        trend_ema_period=5,
+        slope_lookback=3,
+        enter_trend_er=Decimal("0.50"),
+        exit_trend_er=Decimal("0.30"),
+        donchian_period=3,
+        bb_period=5,
+        bb_k=Decimal("2.0"),
+        confirmation_bars=2,
+    )
+    router = RegimeRouter(instrument_id="ETH/USDT.SIM", params=params)
+
+    # Прогрів у стійкому UPTREND
+    for i in range(20):
+        router.on_bar(_bar(Decimal(100 + i * 5), i))
+    assert router.last_effective_regime is not None
+    assert router.last_effective_regime.value == "uptrend"
+
+    # Один бар із різким відкатом (ER впаде), але confirmation_bars=2 не дасть перемкнутись одразу
+    router.on_bar(_bar(Decimal("170"), 20))
+    # Режим залишається uptrend
+    assert router.last_effective_regime is not None
+    assert router.last_effective_regime.value == "uptrend"

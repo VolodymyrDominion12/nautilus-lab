@@ -131,6 +131,7 @@ const EXIT_COLORS: Record<string, string> = {
   STOP_LOSS: '#ef4444',
   TAKE_PROFIT: '#10b981',
   EXIT: '#38bdf8',
+  RATCHET_EXIT: '#f472b6',
   FLATTEN_REGIME_CHANGE: '#a78bfa',
   MANUAL_CLOSE: '#f59e0b',
 };
@@ -280,6 +281,10 @@ const OUTCOME_LABELS: Record<string, string> = {
   REVERSE: 'Розворот',
   EXIT: 'Вихід за сигналом',
   STOP_LOSS: 'Стоп-лос',
+  RATCHET_EXIT: 'Ратчет-стоп',
+  ENTRY_FILLED: 'Ордер виконано',
+  PENDING_FILL: 'Чекаємо виконання',
+  SIGNAL_VETOED: 'Сигнал відхилено фільтром',
   TAKE_PROFIT: 'Тейк-профіт',
   FLATTEN_REGIME_CHANGE: 'Закриття: зміна режиму',
   MANUAL_CLOSE: 'Ручне закриття',
@@ -310,7 +315,12 @@ export const describeDecision = (row: TradeDecisionRow): string => {
 
 /** Decisions whose outcome changed the position, i.e. the rows worth highlighting. */
 export const isPivotalDecision = (row: TradeDecisionRow): boolean =>
-  Boolean(row.outcome && row.outcome !== 'HOLD_NOOP' && row.outcome !== 'NO_SIGNAL');
+  Boolean(
+    row.outcome &&
+    row.outcome !== 'HOLD_NOOP' &&
+    row.outcome !== 'NO_SIGNAL' &&
+    row.outcome !== 'PENDING_FILL',
+  );
 
 /** A backtest log carries no `bar`/`narrative` and no `steps`: the page says so instead of
  * rendering empty sections that look like a robot that decided nothing. */

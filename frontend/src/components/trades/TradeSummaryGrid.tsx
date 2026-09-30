@@ -54,14 +54,45 @@ export const TradeSummaryGrid: React.FC<TradeSummaryGridProps> = ({ trade }) => 
     <Cell
       label="R-множник"
       value={trade.r_multiple == null ? '—' : trade.r_multiple.toFixed(2)}
-      hint="Результат у ризиках: відстань входу до стопа"
+      hint="Результат у ризиках: відстань входу до початкового стопа"
     />
     <Cell
       label="Комісія"
       value={trade.fee_known ? money(trade.fee, 4) : '—'}
-      hint={trade.fee_known ? 'Із журналу угод сесії' : 'Комісії цієї угоди в журналі немає'}
+      hint={
+        trade.fee_known
+          ? 'Із журналу: комісія входу (бектест) або угод сесії'
+          : 'Комісії цієї угоди в журналі немає'
+      }
     />
-    <Cell label="Ціна входу" value={money(trade.entry_price)} />
+    <Cell
+      label="Ціна входу"
+      value={money(trade.entry_price)}
+      hint="Close бару, на якому ухвалено рішення"
+    />
+    <Cell
+      label="Фактичне виконання"
+      value={trade.entry_fill_price == null ? '—' : money(trade.entry_fill_price)}
+      className={
+        trade.entry_slippage_bps != null && trade.entry_slippage_bps > 0
+          ? 'text-red-400'
+          : 'text-gray-100'
+      }
+      hint={
+        trade.entry_fill_price == null
+          ? 'Запису про виконання ордера в журналі немає'
+          : [
+              trade.entry_slippage_bps != null
+                ? `Прослизання ${trade.entry_slippage_bps.toFixed(1)} bps`
+                : null,
+              trade.entry_fill_delay_s != null
+                ? `через ${Math.round(trade.entry_fill_delay_s / 60)} хв після рішення`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(', ')
+      }
+    />
     <Cell
       label={trade.status === 'OPEN' ? 'Поточна ціна' : 'Ціна виходу'}
       value={money(trade.exit_price ?? trade.mark_price)}
@@ -70,7 +101,11 @@ export const TradeSummaryGrid: React.FC<TradeSummaryGridProps> = ({ trade }) => 
       label="Стоп-лос"
       value={money(trade.stop_loss)}
       className="text-red-400"
-      hint="Рівень на момент закриття: стоп міг рухатись за ціною"
+      hint={
+        trade.initial_stop_loss != null && trade.initial_stop_loss !== trade.stop_loss
+          ? `Рівень на момент закриття; початковий ${money(trade.initial_stop_loss)}`
+          : 'Рівень на момент закриття: стоп міг рухатись за ціною'
+      }
     />
     <Cell
       label="Тейк-профіт"

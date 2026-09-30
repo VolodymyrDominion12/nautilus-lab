@@ -46,6 +46,9 @@ NOTABLE = frozenset(
         "EXIT",
         "FLATTEN_REGIME_CHANGE",
         "STOP_LOSS",
+        "RATCHET_EXIT",
+        "ENTRY_FILLED",
+        "SIGNAL_VETOED",
         "TAKE_PROFIT",
         "MANUAL_CLOSE",
         "STOPS_UPDATED",
@@ -57,6 +60,9 @@ NOTABLE = frozenset(
 DEFAULT_HORIZONS: tuple[int, ...] = (1, 4, 24, 48, 96)
 #: A strategy step this close to its trigger (percent of price) counts as a near-miss.
 NEAR_MISS_PCT = 0.2
+#: A filter that fell short of its threshold by at most this share of the threshold
+#: (`margin_pct`, e.g. VPIN 0.68 vs 0.70 = -2.9%) also counts as a near-miss.
+NEAR_MISS_MARGIN_PCT = 5.0
 #: Below this many signals a pattern is reported as a hypothesis, not a finding.
 MIN_SIGNALS_FOR_FINDING = 30
 
@@ -132,6 +138,16 @@ def _forward_stats(values: Sequence[float]) -> ForwardStats:
     )
 
 
+def _vetoed_side(row: Mapping[str, Any]) -> str | None:
+    """The side a robot's own filter rejected (`primary_side` on the blocking step)."""
+    for item in row.get("steps") or []:
+        if item.get("verdict") == "block":
+            side = (item.get("values") or {}).get("primary_side")
+            if side in ("buy", "sell"):
+                return str(side)
+    return None
+
+
 def _near_miss(row: Mapping[str, Any]) -> str | None:
     """A strategy that evaluated and held, within NEAR_MISS_PCT of its breakout level."""
     for item in row.get("steps") or []:
@@ -140,6 +156,12 @@ def _near_miss(row: Mapping[str, Any]) -> str | None:
         dist = (item.get("values") or {}).get("dist_to_breakout_pct")
         if isinstance(dist, (int, float)) and abs(dist) <= NEAR_MISS_PCT:
             return f"{row.get('ts')} {item.get('component')} {dist:+.3f}% до пробою"
+    for item in row.get("steps") or []:
+        if item.get("stage") != "filter" or item.get("verdict") not in ("info", "block"):
+            continue
+        margin = (item.get("values") or {}).get("margin_pct")
+        if isinstance(margin, (int, float)) and -NEAR_MISS_MARGIN_PCT <= margin < 0:
+            return f"{row.get('ts')} {item.get('component')} {margin:+.2f}% до порогу"
     return None
 
 
@@ -177,11 +199,20 @@ def build_digest(
     forward: dict[str, dict[str, list[float]]] = {
         "executed": {f"+{h}": [] for h in horizons},
         "blocked": {f"+{h}": [] for h in horizons},
+        "vetoed": {f"+{h}": [] for h in horizons},
     }
     for index, row in enumerate(bars):
         outcome = str(row.get("outcome"))
-        group = "executed" if outcome in EXECUTED else "blocked" if outcome in BLOCKED else None
-        side = row.get("signal")
+        group = (
+            "executed"
+            if outcome in EXECUTED
+            else "blocked"
+            if outcome in BLOCKED
+            else "vetoed"
+            if outcome == "SIGNAL_VETOED"
+            else None
+        )
+        side = row.get("signal") if group != "vetoed" else _vetoed_side(row)
         entry = closes[index]
         if group is None or side not in ("buy", "sell") or not entry:
             continue
@@ -281,6 +312,8 @@ def digest_markdown(digest: DecisionDigest) -> str:
     lines += [f"- сигнали {k}: {v}" for k, v in digest.signals.items()]
     lines.append(_fwd_line("виконані", digest.forward.get("executed", {})))
     lines.append(_fwd_line("заблоковані", digest.forward.get("blocked", {})))
+    if any(item.n for item in digest.forward.get("vetoed", {}).values()):
+        lines.append(_fwd_line("відхилені фільтром робота", digest.forward.get("vetoed", {})))
     lines += [
         "",
         f"## Майже-сигнали (≤ {NEAR_MISS_PCT}% до пробою): {digest.near_misses}",

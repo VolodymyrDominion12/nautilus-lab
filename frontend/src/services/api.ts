@@ -930,7 +930,14 @@ export interface TradeSummary {
   exit_outcome?: string | null;
   exit_reason?: string | null;
   stop_loss?: number | null;
+  /** The stop the trade opened with (R is measured against it; `stop_loss` may trail). */
+  initial_stop_loss?: number | null;
   take_profit?: number | null;
+  /** What the venue filled the entry at, vs `entry_price` = the decision bar's close. */
+  entry_fill_price?: number | null;
+  /** Positive = filled worse than the decision close. */
+  entry_slippage_bps?: number | null;
+  entry_fill_delay_s?: number | null;
   qty?: number;
   qty_known?: boolean;
   fee?: number | null;

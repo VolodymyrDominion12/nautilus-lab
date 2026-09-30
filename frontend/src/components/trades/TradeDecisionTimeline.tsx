@@ -15,6 +15,8 @@ const rowClass = (row: TradeDecisionRow): string => {
     case 'ENTRY_OPENED':
     case 'REVERSE':
       return 'border-l-2 border-emerald-500/70';
+    case 'ENTRY_FILLED':
+      return 'border-l-2 border-emerald-300/50';
     case 'TAKE_PROFIT':
       return 'border-l-2 border-emerald-400/70';
     case 'STOP_LOSS':
@@ -23,6 +25,8 @@ const rowClass = (row: TradeDecisionRow): string => {
     case 'FLATTEN_REGIME_CHANGE':
     case 'EXIT':
       return 'border-l-2 border-sky-500/70';
+    case 'RATCHET_EXIT':
+      return 'border-l-2 border-pink-400/70';
     default:
       return 'border-l-2 border-gray-800';
   }

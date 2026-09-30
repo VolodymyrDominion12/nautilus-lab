@@ -124,6 +124,7 @@ select = [
 "src/nautilus_lab/application/decision_digest.py" = ["RUF001", "RUF002", "RUF003"]
 "src/nautilus_lab/application/decision_analysis.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/unit/test_decision_trace.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/unit/test_decision_trace_lifecycle.py" = ["RUF001", "RUF002", "RUF003"]
 # specs/_validator.py — інструмент, який перевіряє УКРАЇНСЬКІ специфікації, тож
 # його повідомлення й коментарі навмисно тією ж мовою, що й specs/*.yaml: людина
 # читає звіт поруч зі спекою. RUF001-003 шукають «неоднозначні» символи Unicode

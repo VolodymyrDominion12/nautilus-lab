@@ -62,6 +62,11 @@ class Outcome(StrEnum):
     NO_SIGNAL = "NO_SIGNAL"
     HOLD_NOOP = "HOLD_NOOP"
     ENTRY_OPENED = "ENTRY_OPENED"
+    #: The entry order was submitted on an earlier bar and has not filled yet. Not a
+    #: refusal: the robot already has what it asked for, the venue just has not answered.
+    PENDING_FILL = "PENDING_FILL"
+    #: A filter inside the robot (e.g. the meta-label classifier) rejected the signal.
+    SIGNAL_VETOED = "SIGNAL_VETOED"
     EXIT = "EXIT"
     REVERSE = "REVERSE"
     FLATTEN_REGIME_CHANGE = "FLATTEN_REGIME_CHANGE"
@@ -71,6 +76,10 @@ class Outcome(StrEnum):
     AUTO_TRADE_OFF = "AUTO_TRADE_OFF"
     SESSION_INACTIVE = "SESSION_INACTIVE"
     STOP_LOSS = "STOP_LOSS"
+    #: The ratchet (trailing) overlay closed the position on a closed bar.
+    RATCHET_EXIT = "RATCHET_EXIT"
+    #: The entry order filled: actual price, size, slippage and the protective stop level.
+    ENTRY_FILLED = "ENTRY_FILLED"
     TAKE_PROFIT = "TAKE_PROFIT"
     MANUAL_CLOSE = "MANUAL_CLOSE"
     STOPS_UPDATED = "STOPS_UPDATED"
@@ -134,6 +143,18 @@ def pct_distance(value: Decimal, reference: Decimal) -> Decimal | None:
     if reference == 0:
         return None
     return (value - reference) / reference * Decimal("100")
+
+
+def margin_pct(value: Decimal | None, threshold: Decimal | None) -> Decimal | None:
+    """How far `value` is past (+) or short of (-) `threshold`, in percent of the threshold.
+
+    The one number that makes near-misses comparable across robots: a VPIN of 0.62 against
+    a 0.70 trigger is -11.4%, a breakout 0.2% below the channel is -0.2%. None when either
+    side is missing or the threshold is 0.
+    """
+    if value is None or threshold is None or threshold == 0:
+        return None
+    return (value - threshold) / abs(threshold) * Decimal("100")
 
 
 def is_warmup(trace: tuple[TraceStep, ...]) -> bool:

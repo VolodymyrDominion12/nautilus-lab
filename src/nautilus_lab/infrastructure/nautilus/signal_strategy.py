@@ -41,6 +41,7 @@ from nautilus_lab.domain.decision_trace import (
     TraceValue,
     Verdict,
     blocked_by_label,
+    pct_distance,
     step,
 )
 from nautilus_lab.domain.drawdown_cooldown import PeakState, advance, on_refusal
@@ -91,6 +92,9 @@ class _EntryRefusal:
     reason: str
     value: Decimal | None = None
     limit: Decimal | None = None
+    #: The order that made `order_working` refuse, so the log can name it.
+    order_id: str | None = None
+    order_side: str | None = None
 
 
 class SignalRobotConfig(StrategyConfig, frozen=True):
@@ -222,6 +226,20 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         self._previous_close: Decimal | None = None
         self._ratchet: RatchetState | None = None
+        # Trade-lifecycle state for the decision log (docs/28). An intrabar stop-out is
+        # logged against the account and regime the last bar decided on, not the flat
+        # book it leaves behind; the stop level travels in `states.stop_loss` so the
+        # trade page can draw it; the entry fill records what the venue actually did.
+        self._last_account: dict[str, TraceValue] | None = None
+        self._last_regime: str = ""
+        self._current_bar_ts: datetime | None = None
+        self._protective_level: Decimal | None = None
+        self._entry_fill_price: Decimal | None = None
+        self._entry_fill_qty: Decimal | None = None
+        self._entry_fee: Decimal = Decimal("0")
+        self._entry_decision_price: Decimal | None = None
+        self._entry_decision_ts: datetime | None = None
+        self._overlay_steps: list[TraceStep] = []
         # Real per-bar taker split, keyed by bar event timestamp. It travels as a
         # constructor argument rather than a config field because it is data, not a
         # parameter: it must not show up in a strategy config dump, and it is only
@@ -274,6 +292,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
 
         signal = self._robot.on_bar(domain_bar)
         self._last_mark = domain_bar.close
+        self._current_bar_ts = domain_bar.ts_utc
+        self._overlay_steps = []
 
         trace = getattr(self._robot, "last_trace", ())
         steps = list(trace) if isinstance(trace, (tuple, list)) else []
@@ -284,11 +304,17 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._track_equity(domain_bar.ts_utc)
 
         if self._apply_ratchet(domain_bar):
-            self._record_decision_log(domain_bar, signal, Outcome.EXIT, steps)
+            self._record_decision_log(
+                domain_bar, signal, Outcome.RATCHET_EXIT, steps, None, self._overlay_steps
+            )
             return
 
         outcome, blocked_by, execution_steps = self._process_signal(signal, domain_bar.close)
-        self._record_decision_log(domain_bar, signal, outcome, steps, blocked_by, execution_steps)
+        if outcome is Outcome.NO_SIGNAL and signal is None and _vetoed(steps):
+            outcome = Outcome.SIGNAL_VETOED
+        self._record_decision_log(
+            domain_bar, signal, outcome, steps, blocked_by, self._overlay_steps + execution_steps
+        )
 
     def on_order_book_depth(self, depth: OrderBookDepth10) -> None:
         if not hasattr(self._robot, "on_book"):
@@ -308,7 +334,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         # and book robots never trigger on_bar in the backtest.
         self._process_signal(signal, mid_price)
 
-    def _place_protective_stop(self, entry_order: object) -> None:
+    def _place_protective_stop(self, entry_order: object) -> Decimal | None:
         """Rest a reduce-only stop behind a fully filled entry order.
 
         Driven by the entry's own fill, not by `PositionOpened`: on a NETTING account a
@@ -321,19 +347,19 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         distance = self._pending_stop_distance
         self._pending_stop_distance = None
         if not self._overlay.use_protective_stop or distance is None or distance <= 0:
-            return
+            return None
         instrument = self.cache.instrument(self.config.instrument_id)
         if instrument is None:
-            return
+            return None
         entry_price = _as_decimal(getattr(entry_order, "avg_px", 0))
         quantity = getattr(entry_order, "filled_qty", None)
         if entry_price <= 0 or quantity is None or _as_decimal(quantity) <= 0:
-            return
+            return None
         is_long = getattr(entry_order, "side", None) == OrderSide.BUY
         trigger = entry_price - distance if is_long else entry_price + distance
         if trigger <= 0:
             self.log.warning(f"Protective stop skipped: trigger {trigger} is not a price")
-            return
+            return None
         self._cancel_protective_stop()
         stop = self.order_factory.stop_market(
             instrument_id=self.config.instrument_id,
@@ -344,6 +370,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         self.submit_order(stop)
         self._stop_order_id = stop.client_order_id
+        self._protective_level = _as_decimal(instrument.make_price(trigger))
+        return self._protective_level
 
     def on_position_closed(self, event: object) -> None:
         """Book the trade for the Kelly stats, whoever closed it (signal, ratchet, stop)."""
@@ -354,6 +382,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             self._trade_stats.record(_as_decimal(realized))
         # Not the ratchet: on a reversal this event lands after the new entry armed it.
         self._cancel_protective_stop()
+        self._protective_level = None
 
     def on_order_filled(self, event: object) -> None:
         client_order_id = getattr(event, "client_order_id", None)
@@ -364,11 +393,98 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return
         if self._entry_order_id is None or client_order_id != self._entry_order_id:
             return
+        commission = getattr(event, "commission", None)
+        if commission is not None:
+            self._entry_fee += _as_decimal(commission)
         order = self.cache.order(client_order_id)
         if order is None or not order.is_closed:
             return  # partial fill: wait for the rest, then protect the whole size
         self._entry_order_id = None
-        self._place_protective_stop(order)
+        trigger = self._place_protective_stop(order)
+        self._record_entry_fill(order, event, trigger)
+
+    def _record_entry_fill(self, order: object, event: object, trigger: Decimal | None) -> None:
+        """The entry filled: log the venue's price, size, fee, slippage and the stop level.
+
+        The bar record that submitted the order only knows the bar's close. The fill is
+        what the account actually got, and in a bar backtest it can land a whole bar
+        later (the 2026-09-29 sweep: `FLAT` + "order already working" on the bar after
+        every entry). Logging the fill time against the decision time makes that delay,
+        and the slippage it costs, visible per trade.
+        """
+        price = _as_decimal(getattr(order, "avg_px", 0))
+        qty = _as_decimal(getattr(order, "filled_qty", 0))
+        is_long = getattr(order, "side", None) == OrderSide.BUY
+        self._entry_fill_price = price if price > 0 else None
+        self._entry_fill_qty = qty if qty > 0 else None
+        fee = self._entry_fee
+        self._entry_fee = Decimal("0")
+        if self.decision_log is None or self.session_id is None or price <= 0:
+            return
+        ts = _event_ts(event)
+        decision_price = self._entry_decision_price
+        slippage_bps = (
+            (price - decision_price) / decision_price * Decimal("10000") * (1 if is_long else -1)
+            if decision_price is not None and decision_price > 0
+            else None
+        )
+        delay_s = (
+            int((ts - self._entry_decision_ts).total_seconds())
+            if self._entry_decision_ts is not None
+            else None
+        )
+        steps: list[TraceStep] = [
+            step(
+                Stage.EXECUTION,
+                "fill",
+                Verdict.EMIT,
+                result="entry_filled",
+                values={
+                    "side": "LONG" if is_long else "SHORT",
+                    "qty": qty,
+                    "fill_price": price,
+                    "decision_price": decision_price,
+                    "slippage_bps": slippage_bps,
+                    "fee": fee if fee > 0 else None,
+                    "fill_delay_s": delay_s,
+                },
+                note="slippage_bps > 0 = filled worse than the decision bar's close",
+            )
+        ]
+        if trigger is not None:
+            steps.append(
+                step(
+                    Stage.EXECUTION,
+                    "protective_stop",
+                    Verdict.EMIT,
+                    result="stop_placed",
+                    values={
+                        "stop_loss": trigger,
+                        "risk_per_unit": abs(price - trigger),
+                        "risk_pct": pct_distance(trigger, price),
+                    },
+                )
+            )
+        record = DecisionRecord(
+            bar_end_utc=ts,
+            robot=self.config.robot.lower(),
+            instrument_id=str(self.config.instrument_id),
+            close_price=price,
+            regime=self._last_regime,
+            signal=None,
+            signal_reason=None,
+            indicators={},
+            states={"stop_loss": str(trigger)} if trigger is not None else {},
+            session_id=self.session_id,
+            kind=RecordKind.INTRABAR,
+            account=self._account_snapshot(),
+            steps=tuple(steps),
+            outcome=Outcome.ENTRY_FILLED.value,
+            config_hash=self._config_hash(),
+            params={k: str(v) for k, v in self.config.dict().items()},
+        )
+        record = replace(record, narrative=render_narrative(record_to_dict(record)))
+        self.decision_log.log(record)
 
     def _record_stop_fill(self, client_order_id: object, event: object) -> None:
         """The protective stop filled: record it as an intrabar `STOP_LOSS` decision.
@@ -395,32 +511,43 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return
         # The stop closes the side opposite the one it is placed on: SELL exits a LONG.
         position_side = "LONG" if getattr(order, "side", None) == OrderSide.SELL else "SHORT"
-        ts_ns = getattr(event, "ts_event", None)
-        ts = (
-            datetime.fromtimestamp(int(ts_ns) / 1_000_000_000, tz=UTC)
-            if ts_ns is not None
-            else datetime.now(UTC)
+        ts = _event_ts(event)
+        entry = self._entry_fill_price
+        gross_pnl = (
+            (price - entry) * qty_value * (1 if position_side == "LONG" else -1)
+            if entry is not None and qty_value is not None
+            else None
         )
+        self._entry_fill_price = None
+        self._entry_fill_qty = None
         record = DecisionRecord(
             bar_end_utc=ts,
             robot=self.config.robot.lower(),
             instrument_id=str(self.config.instrument_id),
             close_price=price,
-            regime="",
+            # The regime and account the position was held under: after the stop the
+            # book is flat, and a snapshot taken now would say so.
+            regime=self._last_regime,
             signal=None,
             signal_reason=None,
             indicators={},
-            states={},
+            states={"stop_loss": str(price)},
             session_id=self.session_id,
             kind=RecordKind.INTRABAR,
-            account=self._account_snapshot(),
+            account=self._last_account or self._account_snapshot(),
             steps=(
                 step(
                     Stage.INTRABAR,
                     "stop_loss",
                     Verdict.EMIT,
                     result="stop_loss",
-                    values={"level": price, "side": position_side, "qty": qty_value},
+                    values={
+                        "level": price,
+                        "side": position_side,
+                        "qty": qty_value,
+                        "entry_price": entry,
+                        "gross_pnl": gross_pnl,
+                    },
                 ),
             ),
             outcome=Outcome.STOP_LOSS.value,
@@ -555,6 +682,22 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             if not plan.wants_entry:
                 return Outcome.EXIT, None, steps
 
+        if refusal is not None and refusal.code == "order_working":
+            # Not a refusal in the risk sense: the order this robot already sent (usually
+            # last bar's entry) has not filled yet. Counting it as "blocked" inflated the
+            # sweep's ENTRY_BLOCKED_RISK by one bar per trade.
+            steps.append(
+                step(
+                    Stage.GATE,
+                    "execution.order_working",
+                    Verdict.INFO,
+                    result="order not filled yet",
+                    values={"order_id": refusal.order_id, "order_side": refusal.order_side},
+                    note="an earlier order is still in flight; no new entry is stacked on it",
+                )
+            )
+            return (Outcome.EXIT if plan.exit_position else Outcome.PENDING_FILL), None, steps
+
         if refusal is not None:
             blocked_by = blocked_by_label(refusal.code)
             steps.append(
@@ -586,6 +729,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         self._pending_stop_distance = distance
         self._entry_order_id = order.client_order_id
+        self._entry_decision_price = current_price
+        self._entry_decision_ts = self._current_bar_ts
+        self._entry_fee = Decimal("0")
         self.submit_order(order)
         self._turnover += current_price * qty
         self._arm_ratchet(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
@@ -637,9 +783,17 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         # next signal would stack another entry on top of the pending one. On book-driven
         # robots that ran a 1x-capped size up to ~4x notional (ml_obi), because book
         # updates arrive far faster than the 50ms fill latency. One live entry at a time.
-        if self._has_working_order():
+        working = self._working_order_id()
+        if working is not None:
             self._breaches.record("order already working")
-            return _EntryRefusal("order_working", "order already working")
+            order = self.cache.order(working)
+            side = getattr(order, "side", None) if order is not None else None
+            return _EntryRefusal(
+                "order_working",
+                "order already working",
+                order_id=str(working),
+                order_side=None if side is None else ("BUY" if side == OrderSide.BUY else "SELL"),
+            )
 
         distance = stop_distance(current_price, self._limits, atr=self._atr.value)
         risk_fraction = resolve_risk_fraction(
@@ -672,7 +826,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
                 return item.result
         if steps and all(item.stage is Stage.WARMUP for item in steps):
             return "WARMUP"
-        return "UNKNOWN"
+        # A robot without a regime classifier (ema, formulaic_lgbm, …) has no regime to
+        # report; "UNKNOWN" on every bar read as "the classifier failed" in the digest.
+        return ""
 
     def _record_decision_log(
         self,
@@ -688,6 +844,14 @@ class SignalRobot(Strategy):  # type: ignore[misc]
 
         all_steps = tuple(steps) + tuple(execution_steps or ())
         regime = self._record_regime(signal, steps)
+        account = self._account_snapshot()
+        states: dict[str, object] = dict(legacy_states(all_steps))
+        stop_level = self._current_stop_level()
+        if stop_level is not None and outcome not in _CLOSING_OUTCOMES:
+            states["stop_loss"] = str(stop_level)
+        self._last_account = account
+        if regime not in ("", "WARMUP"):
+            self._last_regime = regime
         record = DecisionRecord(
             bar_end_utc=bar.ts_utc,
             robot=self.config.robot.lower(),
@@ -697,10 +861,10 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             signal=signal.side.value if signal else None,
             signal_reason=signal.reason if signal else None,
             indicators=legacy_indicators(all_steps),
-            states=legacy_states(all_steps),
+            states=states,
             session_id=self.session_id,
             bar={"o": bar.open, "h": bar.high, "l": bar.low, "c": bar.close, "v": bar.volume},
-            account=self._account_snapshot(),
+            account=account,
             steps=all_steps,
             outcome=outcome.value,
             blocked_by=blocked_by,
@@ -711,6 +875,22 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         record = replace(record, narrative=render_narrative(record_to_dict(record)))
         self.decision_log.log(record)
+
+    def _current_stop_level(self) -> Decimal | None:
+        """The stop that binds the open position: the tighter of the venue stop and the ratchet."""
+        if self._is_flat():
+            return None
+        levels = [
+            level
+            for level in (
+                self._protective_level,
+                self._ratchet.stop_price if self._ratchet is not None else None,
+            )
+            if level is not None
+        ]
+        if not levels:
+            return None
+        return max(levels) if self._holding() is Holding.LONG else min(levels)
 
     @property
     def equity_curve(self) -> tuple[Decimal, ...]:
@@ -758,10 +938,47 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             self._ratchet = None
             return False
         params = self._overlay.ratchet_params(stop_pct=self._limits.stop_pct)
+        previous = self._ratchet
         self._ratchet, hit = step_ratchet(self._ratchet, bar, params)
+        level = previous.stop_price if self._ratchet is None else self._ratchet.stop_price
+        moved = self._ratchet is not None and self._ratchet.stop_price != previous.stop_price
+        self._overlay_steps.append(
+            step(
+                Stage.PLAN,
+                "ratchet",
+                Verdict.EMIT if hit else Verdict.INFO,
+                result="exit" if hit else ("tightened" if moved else "hold"),
+                values={
+                    "stop": level,
+                    "prior_stop": previous.stop_price,
+                    "armed": previous.armed if self._ratchet is None else self._ratchet.armed,
+                    "close": bar.close,
+                    "adverse": bar.low if previous.side is SignalSide.BUY else bar.high,
+                    "dist_to_stop_pct": pct_distance(bar.close, level),
+                },
+                thresholds={"entry_price": previous.entry_price},
+                note=(
+                    "stop touched: flatten at this close (the exit is a market order, "
+                    "not a fill at the stop level)"
+                    if hit
+                    else None
+                ),
+            )
+        )
         if not hit:
             return False
+        held = self._holding()
+        exit_qty = sum((abs(lot.signed_qty) for lot in self._open_lots()), Decimal("0"))
         self._flatten()
+        self._overlay_steps.append(
+            step(
+                Stage.EXECUTION,
+                "paper_broker",
+                Verdict.EMIT,
+                result="exit",
+                values={"side": held.value.upper(), "qty": exit_qty, "price": bar.close},
+            )
+        )
         return True
 
     def _arm_ratchet(self, entry_price: Decimal, side: SignalSide) -> None:
@@ -794,6 +1011,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
 
     def _has_working_order(self) -> bool:
+        return self._working_order_id() is not None
+
+    def _working_order_id(self) -> object | None:
         """True while a non-stop order for this instrument is submitted but not closed.
 
         `cache.orders_open()` alone is not enough: in a backtest an order is INFLIGHT
@@ -810,9 +1030,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         stop_id = self._stop_order_id
         for order in self.cache.orders_open(instrument_id=instrument_id):
             if order.client_order_id != stop_id:
-                return True
+                return order.client_order_id
         inflight = self.cache.client_order_ids_inflight(instrument_id=instrument_id)
-        return any(client_order_id != stop_id for client_order_id in inflight)
+        return next((oid for oid in inflight if oid != stop_id), None)
 
     def _equity(self) -> Decimal | None:
         """Account balance plus open positions marked at the last price seen.
@@ -866,6 +1086,25 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     @property
     def daily_returns(self) -> tuple[Decimal, ...]:
         return tuple(self._daily_returns)
+
+
+#: Outcomes after which the bar's position is being closed: no stop level is carried.
+_CLOSING_OUTCOMES = frozenset({Outcome.EXIT, Outcome.RATCHET_EXIT})
+
+
+def _vetoed(steps: list[TraceStep]) -> bool:
+    """True when a filter or strategy step inside the robot blocked its own signal."""
+    return any(
+        item.verdict is Verdict.BLOCK and item.stage in (Stage.FILTER, Stage.STRATEGY)
+        for item in steps
+    )
+
+
+def _event_ts(event: object) -> datetime:
+    ts_ns = getattr(event, "ts_event", None)
+    if ts_ns is None:
+        return datetime.now(UTC)
+    return datetime.fromtimestamp(int(ts_ns) / 1_000_000_000, tz=UTC)
 
 
 def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:

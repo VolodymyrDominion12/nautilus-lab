@@ -235,3 +235,79 @@ def test_backtest_records_a_protective_stop_as_intrabar(tmp_path: Path) -> None:
         # one sweep run were lost to "Object of type Quantity is not JSON serializable").
         json.dumps(record_to_dict(record), cls=DecimalEncoder)
         assert isinstance(stop_step.values["qty"], Decimal)
+
+
+# --- trade lifecycle (docs/30) ------------------------------------------------
+
+
+def _lifecycle_run(*, use_ratchet: bool) -> list[DecisionRecord]:
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=11)
+    log = InMemoryDecisionLog()
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=len(bars),
+        starting_equity=Decimal("10000"),
+        risk=RiskLimits(
+            risk_per_trade=Decimal("0.01"),
+            stop_pct=Decimal("0.02"),
+            max_daily_loss=Decimal("0.5"),
+            max_drawdown=Decimal("0.5"),
+        ),
+        risk_overlay=replace(RiskOverlay(), use_protective_stop=True, use_ratchet=use_ratchet),
+        robot=RobotName.EMA,
+        seed=11,
+        source=BarOrigin.SYNTHETIC,
+        session_id=f"bt-lifecycle-{use_ratchet}",
+    )
+    NautilusResearchBacktest(decision_log=log).run(request, bars)
+    return log.records
+
+
+@pytest.mark.integration
+def test_backtest_logs_the_entry_fill_with_its_stop_level() -> None:
+    """Every entry fill is an intrabar `ENTRY_FILLED` with price, size and the stop.
+
+    Before this record a backtest trade had no stop level at all (only `stop_distance`
+    on the decision bar), so the trade page drew no SL line and computed no R.
+    """
+    records = _lifecycle_run(use_ratchet=False)
+    fills = [r for r in records if r.outcome == "ENTRY_FILLED"]
+    assert fills, "an always-in-market EMA run must fill entries"
+    for record in fills:
+        assert record.kind.value == "intrabar"
+        fill = next(s for s in record.steps if s.result == "entry_filled")
+        assert fill.values["fill_price"] > 0
+        assert isinstance(fill.values["qty"], Decimal)
+        assert "stop_loss" in record.states
+        json.dumps(record_to_dict(record), cls=DecimalEncoder)
+    # While a position is open the bar records carry the stop that binds it.
+    held = [
+        r
+        for r in records
+        if r.kind.value == "bar_decision" and r.account.get("position") in ("LONG", "SHORT")
+    ]
+    assert held
+    assert all("stop_loss" in r.states for r in held)
+
+
+@pytest.mark.integration
+def test_backtest_does_not_count_a_pending_entry_as_a_risk_block() -> None:
+    """The bar after an entry, while its order is in flight, is `PENDING_FILL`."""
+    records = _lifecycle_run(use_ratchet=False)
+    assert not [r for r in records if r.blocked_by == "execution.order_working"]
+    assert all(r.regime != "UNKNOWN" for r in records), "ema has no regime: ''"
+
+
+@pytest.mark.integration
+def test_backtest_names_a_ratchet_exit() -> None:
+    records = _lifecycle_run(use_ratchet=True)
+    ratchet_steps = [s for r in records for s in r.steps if s.component == "ratchet"]
+    assert ratchet_steps, "a held position must show the ratchet level on each bar"
+    exits = [r for r in records if r.outcome == "RATCHET_EXIT"]
+    for record in exits:
+        assert any(s.component == "ratchet" for s in record.steps)
+    # A ratchet exit is never logged as a bare EXIT any more.
+    for record in records:
+        if record.outcome == "EXIT":
+            assert not [s for s in record.steps if s.component == "ratchet" and s.result == "exit"]

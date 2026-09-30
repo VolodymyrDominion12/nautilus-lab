@@ -25,14 +25,26 @@ const FILTERS: { key: string; label: string; outcomes?: string[] }[] = [
   {
     key: 'trades',
     label: 'Угоди',
-    outcomes: ['ENTRY_OPENED', 'REVERSE', 'EXIT', 'FLATTEN_REGIME_CHANGE', 'STOP_LOSS', 'TAKE_PROFIT', 'MANUAL_CLOSE'],
+    outcomes: [
+      'ENTRY_OPENED',
+      'ENTRY_FILLED',
+      'REVERSE',
+      'EXIT',
+      'RATCHET_EXIT',
+      'FLATTEN_REGIME_CHANGE',
+      'STOP_LOSS',
+      'TAKE_PROFIT',
+      'MANUAL_CLOSE',
+    ],
   },
   {
     key: 'blocked',
     label: 'Блоки',
     outcomes: ['ENTRY_BLOCKED_RISK', 'ENTRY_SKIPPED_PAUSED', 'ENTRY_SKIPPED_SIZE', 'AUTO_TRADE_OFF', 'SESSION_INACTIVE'],
   },
-  { key: 'quiet', label: 'Без сигналу', outcomes: ['NO_SIGNAL', 'HOLD_NOOP'] },
+  // A robot's own filter (e.g. the meta-label classifier) rejected the signal it had.
+  { key: 'vetoed', label: 'Відхилені сигнали', outcomes: ['SIGNAL_VETOED'] },
+  { key: 'quiet', label: 'Без сигналу', outcomes: ['NO_SIGNAL', 'HOLD_NOOP', 'PENDING_FILL'] },
 ];
 
 const PRESETS: { key: string; label: string }[] = [
@@ -50,9 +62,11 @@ const SIGNAL_OPTIONS = ['buy', 'sell', 'flat'];
 function outcomeClass(outcome?: string): string {
   switch (outcome) {
     case 'ENTRY_OPENED':
+    case 'ENTRY_FILLED':
     case 'REVERSE':
       return 'text-emerald-400';
     case 'EXIT':
+    case 'RATCHET_EXIT':
     case 'FLATTEN_REGIME_CHANGE':
     case 'TAKE_PROFIT':
     case 'MANUAL_CLOSE':
@@ -65,6 +79,7 @@ function outcomeClass(outcome?: string): string {
     case 'ENTRY_SKIPPED_SIZE':
     case 'AUTO_TRADE_OFF':
     case 'SESSION_INACTIVE':
+    case 'SIGNAL_VETOED':
       return 'text-amber-400';
     default:
       return 'text-gray-500';

@@ -8,6 +8,7 @@ from nautilus_lab.domain.decision_trace import (
     TraceStep,
     TraceValue,
     Verdict,
+    margin_pct,
     step,
     warmup_step,
 )
@@ -21,7 +22,7 @@ from nautilus_lab.domain.regime import (
     RegimeSnapshot,
 )
 from nautilus_lab.domain.signals import Signal, SignalSide
-from nautilus_lab.domain.vpin import VpinModel, VpinState
+from nautilus_lab.domain.vpin import VpinModel, VpinState, vpin_threshold
 
 
 class RegimeRouter:
@@ -197,7 +198,12 @@ class RegimeRouter:
                         "vpin",
                         Verdict.MODIFY if (state.toxic and modified) else Verdict.PASS,
                         result="toxic" if state.toxic else "normal",
-                        values={"vpin": state.value, "bucket_filled": state.bucket_filled},
+                        values={
+                            "vpin": state.value,
+                            "bucket_filled": state.bucket_filled,
+                            "margin_pct": margin_pct(state.value, vpin_threshold(self._vpin)),
+                        },
+                        thresholds={"toxic_threshold": vpin_threshold(self._vpin)},
                         note=(
                             f"toxic flow re-routed {snapshot.regime.value} -> {effective.value}"
                             if state.toxic and modified

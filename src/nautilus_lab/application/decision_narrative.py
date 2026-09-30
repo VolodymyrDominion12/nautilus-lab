@@ -24,6 +24,9 @@ OUTCOME_UK: dict[str, str] = {
     "NO_SIGNAL": "сигналу немає",
     "HOLD_NOOP": "позиція вже відповідає сигналу, дій немає",
     "ENTRY_OPENED": "відкрито позицію",
+    "ENTRY_FILLED": "вхідний ордер виконано",
+    "PENDING_FILL": "чекаємо виконання попереднього ордера",
+    "SIGNAL_VETOED": "сигнал відхилено фільтром робота",
     "EXIT": "позицію закрито",
     "REVERSE": "позицію перевернуто",
     "FLATTEN_REGIME_CHANGE": "закриття через зміну режиму",
@@ -33,6 +36,7 @@ OUTCOME_UK: dict[str, str] = {
     "AUTO_TRADE_OFF": "сигнал не виконано (автоторгівля вимкнена)",
     "SESSION_INACTIVE": "сигнал не виконано (сесія неактивна)",
     "STOP_LOSS": "спрацював стоп-лос",
+    "RATCHET_EXIT": "закрито ратчет-стопом",
     "TAKE_PROFIT": "спрацював тейк-профіт",
     "MANUAL_CLOSE": "позицію закрито вручну",
     "STOPS_UPDATED": "рівні SL/TP змінено вручну",
@@ -157,8 +161,14 @@ def _filter(step: Mapping[str, Any]) -> str:
     verdict = step.get("verdict")
     if verdict == "skip":
         return f"{name}: ще немає даних."
+    if step.get("component") == "meta_label":
+        return _meta_label(step)
     reading = _v(step, "vpin")
-    if reading is None:
+    threshold = _t(step, "toxic_threshold")
+    if reading is not None and threshold is not None:
+        margin = fmt(_v(step, "margin_pct"), signed=True)
+        reading = f"{fmt(reading)} (поріг {fmt(threshold)}, запас {margin}%)"
+    elif reading is None:
         reading = f"buy {fmt(_v(step, 'buy_intensity'))} / sell {fmt(_v(step, 'sell_intensity'))}"
     else:
         reading = fmt(reading)
@@ -167,6 +177,18 @@ def _filter(step: Mapping[str, Any]) -> str:
     if verdict == "modify":
         text += f"; фільтр змінив маршрут ({step.get('note')})"
     return text + "."
+
+
+def _meta_label(step: Mapping[str, Any]) -> str:
+    side = str(_v(step, "primary_side") or "?").upper()
+    p, threshold = _v(step, "p_success"), _t(step, "threshold")
+    if p is None:
+        return f"Meta-label: сигнал {side} не оцінено ({step.get('note')})."
+    verdict = "ПРИЙНЯТО" if step.get("result") == "accept" else "ВІДХИЛЕНО"
+    return (
+        f"Meta-label: сигнал {side}, P(take-profit) {fmt(p)} проти порогу {fmt(threshold)} "
+        f"(запас {fmt(_v(step, 'margin_pct'), signed=True)}%) → {verdict}."
+    )
 
 
 def _donchian(step: Mapping[str, Any]) -> str:
@@ -283,6 +305,8 @@ def _strategy(step: Mapping[str, Any]) -> str:
 
 
 def _plan(step: Mapping[str, Any]) -> str:
+    if step.get("component") == "ratchet":
+        return _ratchet(step)
     holding = str(_v(step, "holding") or "?").upper()
     result = step.get("result")
     words = {
@@ -294,6 +318,19 @@ def _plan(step: Mapping[str, Any]) -> str:
     return f"План: {holding} → {words.get(str(result), str(result))}."
 
 
+def _ratchet(step: Mapping[str, Any]) -> str:
+    stop, prior = fmt(_v(step, "stop")), fmt(_v(step, "prior_stop"))
+    result = step.get("result")
+    if result == "exit":
+        return (
+            f"Ратчет-стоп {stop} зачеплено (екстремум бару {fmt(_v(step, 'adverse'))}) → "
+            f"вихід за close {fmt(_v(step, 'close'))}."
+        )
+    if result == "tightened":
+        return f"Ратчет-стоп підтягнуто {prior} → {stop}."
+    return f"Ратчет-стоп {stop} (до нього {fmt(_v(step, 'dist_to_stop_pct'), signed=True)}%)."
+
+
 def _gate(step: Mapping[str, Any]) -> str:
     component = str(step.get("component", ""))
     verdict = step.get("verdict")
@@ -301,6 +338,11 @@ def _gate(step: Mapping[str, Any]) -> str:
         return "Автоторгівля вимкнена — сигнал лише записано." if verdict == "block" else ""
     if component == "session_active":
         return "Сесія неактивна — сигнал лише записано." if verdict == "block" else ""
+    if component == "execution.order_working":
+        if verdict == "info":
+            side = _v(step, "order_side") or ""
+            return f"Попередній ордер {side} ще не виконано — новий вхід не додаємо."
+        return "Вхід заблоковано: ордер уже в роботі."
     if component == "paused":
         return "Сесія на паузі — новий вхід пропущено." if verdict == "block" else ""
     if component.startswith("risk"):
@@ -342,6 +384,27 @@ def _execution(step: Mapping[str, Any]) -> str:
         )
     if result == "skipped":
         return f"Вхід пропущено: {step.get('note')}."
+    if result == "entry_filled":
+        slip = _v(step, "slippage_bps")
+        delay = _v(step, "fill_delay_s")
+        extra = []
+        if slip is not None:
+            decision = fmt(_v(step, "decision_price"))
+            extra.append(f"прослизання {fmt(slip, signed=True)} bps до close рішення {decision}")
+        if isinstance(delay, (int, float)):
+            extra.append(f"через {int(delay) // 60} хв після рішення")
+        if _v(step, "fee") is not None:
+            extra.append(f"комісія {fmt(_v(step, 'fee'))}")
+        tail = f" ({'; '.join(extra)})" if extra else ""
+        return (
+            f"Виконання: {_v(step, 'side')} {fmt(_v(step, 'qty'))} @ "
+            f"{fmt(_v(step, 'fill_price'))}{tail}."
+        )
+    if result == "stop_placed":
+        return (
+            f"Захисний стоп {fmt(_v(step, 'stop_loss'))} "
+            f"(ризик {fmt(_v(step, 'risk_pct'), signed=True)}% від ціни входу)."
+        )
     return _generic(step)
 
 

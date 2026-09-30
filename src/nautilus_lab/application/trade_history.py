@@ -30,10 +30,14 @@ ENTRY_OUTCOMES = ("ENTRY_OPENED", "REVERSE")
 EXIT_OUTCOMES = (
     "EXIT",
     "STOP_LOSS",
+    "RATCHET_EXIT",
     "TAKE_PROFIT",
     "FLATTEN_REGIME_CHANGE",
     "MANUAL_CLOSE",
 )
+
+#: The intrabar record a backtest writes when its entry order fills (price, size, stop).
+ENTRY_FILL_OUTCOME = "ENTRY_FILLED"
 
 #: A fill is stamped with wall-clock `YYYY-mm-dd HH:MM:SS`, a decision with the **bar's**
 #: end. On a 1m bar those differ by under a second, but a restarted or slow feed can shift
@@ -223,6 +227,18 @@ def _reconstruct_window(
                 "decisions": [row],
                 "duration_bars": 1,
             }
+            _apply_entry_step(current_trade, row)
+            if current_trade["stop_loss"] is not None:
+                current_trade["initial_stop_loss"] = current_trade["stop_loss"]
+        elif current_trade is not None and outcome == ENTRY_FILL_OUTCOME:
+            # Not a bar: the venue's answer to the entry. Kept in the trade's timeline but
+            # not counted as a bar held.
+            current_trade["decisions"].append(row)
+            _apply_entry_fill(current_trade, row)
+            level = _extract_level(row, "stop_loss")
+            if level is not None:
+                current_trade["stop_loss"] = level
+                current_trade.setdefault("initial_stop_loss", level)
         elif current_trade is not None:
             current_trade["decisions"].append(row)
             current_trade["duration_bars"] += 1
@@ -279,6 +295,57 @@ def _reconstruct_window(
     return trade_counter, trades
 
 
+def _step_values(row: dict[str, Any], stage: str, result: str) -> dict[str, Any] | None:
+    for item in row.get("steps") or []:
+        if isinstance(item, dict) and item.get("stage") == stage and item.get("result") == result:
+            values = item.get("values")
+            return values if isinstance(values, dict) else {}
+    return None
+
+
+def _apply_entry_step(trade: dict[str, Any], row: dict[str, Any]) -> None:
+    """The size the entry bar's execution step sent (backtest and paper both log it)."""
+    values = _step_values(row, "execution", "entry")
+    if not values:
+        return
+    qty = _to_float(values.get("qty"))
+    if qty:
+        trade["qty"] = qty
+        trade["qty_known"] = True
+    side = values.get("side")
+    if side in ("LONG", "SHORT"):
+        trade["side"] = side
+
+
+def _apply_entry_fill(trade: dict[str, Any], row: dict[str, Any]) -> None:
+    """Attach what the venue did with the entry: fill price, slippage, fee, delay.
+
+    `entry_price` stays the decision bar's close on purpose: exits are priced the same way
+    (a backtest logs no exit fill), so PnL compares like with like. The fill is reported
+    next to it, where the gap between the two is the finding.
+    """
+    values = _step_values(row, "execution", "entry_filled")
+    if not values:
+        return
+    for source, target in (
+        ("fill_price", "entry_fill_price"),
+        ("slippage_bps", "entry_slippage_bps"),
+        ("fill_delay_s", "entry_fill_delay_s"),
+    ):
+        number = _to_float(values.get(source))
+        if number is not None:
+            trade[target] = number
+    trade["entry_fill_time"] = row.get("ts")
+    qty = _to_float(values.get("qty"))
+    if qty:
+        trade["qty"] = qty
+        trade["qty_known"] = True
+    fee = _to_float(values.get("fee"))
+    if fee is not None:
+        trade["fee"] = fee
+        trade["fee_known"] = True
+
+
 def _extract_level(row: dict[str, Any], key: str) -> float | None:
     states = row.get("states") or {}
     indicators = row.get("indicators") or {}
@@ -310,8 +377,9 @@ def _finalize_trade(trade: dict[str, Any]) -> None:
         trade["realized_pnl_pct"] = round(pct, 2)
         trade["pnl_source"] = "price_delta"
 
-    # R-multiple if stop loss is known
-    sl = trade.get("stop_loss")
+    # R-multiple against the stop the trade was OPENED with: a ratchet that trails the
+    # stop to break-even would otherwise shrink the risk to ~0 and inflate R.
+    sl = trade.get("initial_stop_loss", trade.get("stop_loss"))
     if sl is not None and entry_px > 0 and exit_px is not None:
         risk_dist = abs(entry_px - sl)
         if risk_dist > 0:
@@ -373,7 +441,11 @@ def trade_summary(trade: dict[str, Any]) -> dict[str, Any]:
             "exit_outcome",
             "exit_reason",
             "stop_loss",
+            "initial_stop_loss",
             "take_profit",
+            "entry_fill_price",
+            "entry_slippage_bps",
+            "entry_fill_delay_s",
             "qty",
             "qty_known",
             "fee",

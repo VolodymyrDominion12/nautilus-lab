@@ -9,13 +9,14 @@ from nautilus_lab.domain.decision_trace import (
     TraceStep,
     TraceValue,
     Verdict,
+    margin_pct,
     pct_distance,
     step,
     warmup_step,
 )
 from nautilus_lab.domain.ema import ExponentialMovingAverage
 from nautilus_lab.domain.signals import Signal, SignalSide
-from nautilus_lab.domain.vpin import VpinModel, VpinState
+from nautilus_lab.domain.vpin import VpinModel, VpinState, vpin_threshold
 
 
 class VpinMomentum:
@@ -227,12 +228,18 @@ class VpinMomentum:
         state = self._last_vpin_state
         if state is None:
             return step(Stage.FILTER, "vpin", Verdict.SKIP, note="bucket not filled yet")
+        threshold = vpin_threshold(self._vpin)
         return step(
             Stage.FILTER,
             "vpin",
             Verdict.PASS if state.toxic else Verdict.INFO,
             result="toxic" if state.toxic else "normal",
-            values={"vpin": state.value, "bucket_filled": state.bucket_filled},
+            values={
+                "vpin": state.value,
+                "bucket_filled": state.bucket_filled,
+                "margin_pct": margin_pct(state.value, threshold),
+            },
+            thresholds={"toxic_threshold": threshold},
         )
 
     @property

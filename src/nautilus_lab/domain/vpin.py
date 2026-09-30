@@ -23,6 +23,12 @@ class VpinModel(Protocol):
     def update(self, bar: OhlcvBar) -> VpinState | None: ...
 
 
+def vpin_threshold(model: object) -> Decimal | None:
+    """The toxic threshold of a VPIN model, when it exposes one (None for test doubles)."""
+    value = getattr(model, "toxic_threshold", None)
+    return value if isinstance(value, Decimal) else None
+
+
 class TickVpin:
     """Volume-bucket VPIN, filled strictly tick-by-tick from AggTrades.
 
@@ -46,6 +52,11 @@ class TickVpin:
         self._sell_volume = Decimal("0")
         self._filled = Decimal("0")
         self._last: VpinState | None = None
+
+    @property
+    def toxic_threshold(self) -> Decimal:
+        """The VPIN at or above which flow counts as toxic (for the decision trace)."""
+        return self._toxic_threshold
 
     @property
     def last(self) -> VpinState | None:
@@ -111,6 +122,11 @@ class BarVpin:
         self._filled = Decimal("0")
         self._previous_close: Decimal | None = None
         self._last: VpinState | None = None
+
+    @property
+    def toxic_threshold(self) -> Decimal:
+        """The VPIN at or above which flow counts as toxic (for the decision trace)."""
+        return self._toxic_threshold
 
     @property
     def last(self) -> VpinState | None:

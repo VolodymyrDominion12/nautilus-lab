@@ -154,9 +154,11 @@ class Settings(BaseSettings):
     usdm_maker_fee: Decimal = Decimal("0.0002")
     usdm_taker_fee: Decimal = Decimal("0.0005")
     funding_min_net_apy: Decimal = Decimal("0.10")
-    funding_holding_periods: int = 30
+    funding_holding_periods: int = 60
     funding_basis_max: Decimal = Decimal("0.005")
     funding_close_on_negative: bool = True
+    funding_min_exit_apy: Decimal | None = None
+    funding_min_holding_periods: int = 15
     funding_spot_id: str = "ETH/USDT.SIM"
     funding_perp_id: str = "ETHUSDT-PERP.SIM"
     telegram_bot_token: str | None = None
@@ -292,4 +294,6 @@ class Settings(BaseSettings):
             basis_max=self.funding_basis_max,
             close_on_negative=self.funding_close_on_negative,
             taker_fee=self.spot_taker_fee + self.usdm_taker_fee,
+            min_exit_apy=self.funding_min_exit_apy,
+            min_holding_periods=self.funding_min_holding_periods,
         )

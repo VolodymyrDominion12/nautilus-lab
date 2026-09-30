@@ -50,15 +50,19 @@ class FundingParams:
     # rate. Charging the full round trip against *every* interval instead needs a
     # funding rate above 0.1% per 8h (~109% APY) to clear a 10% gate, which no
     # ordinary market ever pays — the robot could never open a position.
-    holding_periods: int = 30
+    holding_periods: int = 60
     basis_max: Decimal = Decimal("0.005")
     close_on_negative: bool = True
+    min_exit_apy: Decimal | None = None
+    min_holding_periods: int = 15
 
     def __post_init__(self) -> None:
         if self.taker_fee < 0:
             raise ValueError("taker_fee must be >= 0")
         if self.holding_periods < 1:
             raise ValueError("holding_periods must be >= 1")
+        if self.min_holding_periods < 0:
+            raise ValueError("min_holding_periods must be >= 0")
         if self.basis_max < 0:
             raise ValueError("basis_max must be >= 0")
 
@@ -77,7 +81,12 @@ class FundingCashAndCarry:
         self._perp_id = perp_id
         self._params = params
         self._open = False
+        self._periods_held: int = 0
         self._trace: tuple[TraceStep, ...] = ()
+
+    @property
+    def periods_held(self) -> int:
+        return self._periods_held
 
     @property
     def last_trace(self) -> tuple[TraceStep, ...]:
@@ -100,9 +109,12 @@ class FundingCashAndCarry:
             "mark_price": snapshot.mark_price,
             "index_price": snapshot.index_price,
             "holding": "open" if self._open else "flat",
+            "periods_held": self._periods_held,
         }
         thresholds: dict[str, TraceValue] = {
             "min_net_apy": self._params.min_net_apy,
+            "min_exit_apy": self._params.min_exit_apy,
+            "min_holding_periods": self._params.min_holding_periods,
             "basis_max": self._params.basis_max,
             "holding_periods": self._params.holding_periods,
         }
@@ -124,20 +136,35 @@ class FundingCashAndCarry:
             # An unusable snapshot must not crash the run, and must not be read as a
             # flat basis (0/0 is not "no divergence", it is "we do not know").
             if self._open:
+                self._open = False
+                self._periods_held = 0
                 explain(Verdict.EMIT, "flat", "index price unknown: close the carry")
                 return self._flat(ts, "missing index price")
             explain(Verdict.SKIP, None, "index price unknown: basis cannot be judged")
             return None
 
         if self._open:
+            self._periods_held += 1
+            values["periods_held"] = self._periods_held
             if self._params.close_on_negative and snapshot.funding_rate < 0:
                 self._open = False
+                self._periods_held = 0
                 explain(Verdict.EMIT, "flat", "funding turned negative")
                 return self._flat(ts, "negative funding")
             if abs(basis) > self._params.basis_max:
                 self._open = False
+                self._periods_held = 0
                 explain(Verdict.EMIT, "flat", "|basis| above basis_max")
                 return self._flat(ts, "basis divergence")
+            if (
+                self._params.min_exit_apy is not None
+                and self._periods_held >= self._params.min_holding_periods
+                and annualized < self._params.min_exit_apy
+            ):
+                self._open = False
+                self._periods_held = 0
+                explain(Verdict.EMIT, "flat", "funding decayed below min_exit_apy")
+                return self._flat(ts, "funding decayed below min_exit_apy")
             explain(Verdict.INFO, None, "carry still valid: hold")
             return None
 
@@ -148,6 +175,7 @@ class FundingCashAndCarry:
             explain(Verdict.INFO, None, "APY passes but |basis| above basis_max")
             return None
         self._open = True
+        self._periods_held = 0
         explain(Verdict.EMIT, "buy", "net APY passes and basis is tight: open the carry")
         return SpreadSignal(
             leg_a=LegIntent(self._spot_id, SignalSide.BUY),

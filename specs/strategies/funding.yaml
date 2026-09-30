@@ -70,11 +70,25 @@ params:
       Мінімальна річна нетто-дохідність ставки фандингу за вирахуванням амортизованої
       round-trip комісії для відкриття дельта-нейтральної позиції спот лонг + перп шорт.
   - env: FUNDING_HOLDING_PERIODS
-    default: 30
-    grid: [15, 30, 45]
+    default: 60
+    grid: [30, 60, 90, 120]
     description: >
       Очікувана кількість 8-годинних інтервалів утримання позиції, на які амортизується
       round-trip комісія входу та виходу (2 taker fees).
+  - env: FUNDING_MIN_EXIT_APY
+    default: null
+    tuned: false
+    note: >
+      Поріг виходу за згасанням ставки фандингу після min_holding_periods.
+    description: >
+      Мінімальна річна нетто-дохідність ставки фандингу, нижче якої позиція закривається (decay exit).
+  - env: FUNDING_MIN_HOLDING_PERIODS
+    default: 15
+    tuned: false
+    note: >
+      Мінімальний строк утримання для захисту від передчасного закриття до амортизації комісії.
+    description: >
+      Кількість 8-годинних інтервалів, які позиція обов'язково утримується перед перевіркою min_exit_apy.
   - env: FUNDING_BASIS_MAX
     default: 0.005
     tuned: false

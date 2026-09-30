@@ -224,7 +224,7 @@ class SelectedParams:
     adaptive_period: int = 40
     adaptive_selectivity: Decimal = Decimal("0.5")
     funding_min_net_apy: Decimal = Decimal("0")
-    funding_holding_periods: int = 30
+    funding_holding_periods: int = 60
 
     def label(self) -> str:
         """Trial identity: every field a grid can vary must change it (audit B5).

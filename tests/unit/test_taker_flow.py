@@ -53,7 +53,7 @@ def _bar(
     )
 
 
-def _request(*, instrument_id: str = "ETH/USDT.SIM") -> BacktestRequest:
+def _request(*, instrument_id: str = "ETH/USDT.SIM", days: int | None = None) -> BacktestRequest:
     return BacktestRequest(
         mode=TradingMode.RESEARCH,
         instrument_id=instrument_id,
@@ -68,6 +68,7 @@ def _request(*, instrument_id: str = "ETH/USDT.SIM") -> BacktestRequest:
         robot=RobotName.VPIN_MOMENTUM,
         source=BarOrigin.CATALOG,
         bar_type=_BAR_TYPE,
+        days=days,
     )
 
 
@@ -186,6 +187,15 @@ def test_bar_feed_rejects_a_flow_series_that_cannot_belong_to_these_bars(
 def test_bar_feed_without_a_flow_store_returns_the_bars_unchanged() -> None:
     bars = [_bar(0), _bar(1)]
     assert ResearchBarFeed(_FakeBarCatalog(bars)).load(_request()) == bars
+
+
+def test_bar_feed_slices_to_requested_days() -> None:
+    bars = [_bar(i * 24) for i in range(5)]
+    feed = ResearchBarFeed(_FakeBarCatalog(bars))
+    loaded = feed.load(_request(days=2))
+    assert len(loaded) == 3
+    assert loaded[-1].ts_utc == bars[-1].ts_utc
+    assert feed.load(_request(days=None)) == bars
 
 
 def test_bar_feed_leaves_bars_alone_if_no_flow_is_found_for_instrument(tmp_path: Path) -> None:

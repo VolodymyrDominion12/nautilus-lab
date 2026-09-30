@@ -15,6 +15,7 @@ class ResearchRunRequest(BaseModel):
     bars: int = 3000
     folds: int = 2
     is_fraction: float = 0.7
+    days: int | None = None
     embargo_bars: int | None = None
     use_optuna: bool = False
     optuna_trials: int = 20

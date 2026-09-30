@@ -42,6 +42,7 @@ class BacktestRequest:
     instrument_ids: tuple[str, ...] = ()
     start: datetime | None = None
     end: datetime | None = None
+    days: int | None = None
     spot_fees: FeeSchedule = field(default_factory=FeeSchedule.binance_spot_vip0)
     usdm_fees: FeeSchedule = field(default_factory=FeeSchedule.binance_usdm_vip0)
     embargo_bars: int = 0

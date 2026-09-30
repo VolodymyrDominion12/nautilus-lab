@@ -32,6 +32,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
   const [extraSymbols, setExtraSymbols] = useState('');
   const [barInterval, setBarInterval] = useState('1h');
   const [catalog, setCatalog] = useState('catalog');
+  const [days, setDays] = useState<number | ''>('');
   const [folds, setFolds] = useState(4);
   const [parallel, setParallel] = useState(2);
   const [label, setLabel] = useState('');
@@ -58,6 +59,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
       symbols: [...new Set([...symbols, ...extra])],
       interval: barInterval,
       catalog,
+      days: typeof days === 'number' && days > 0 ? days : undefined,
       folds,
       parallel,
       label,
@@ -144,6 +146,18 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
           <input className={`${input} w-32`} value={catalog} onChange={(e) => setCatalog(e.target.value)} />
         </label>
         <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
+          Днів
+          <input
+            type="number"
+            min={1}
+            placeholder="всі"
+            title="Кількість останніх днів каталогу для бектесту (залиште порожнім для всієї історії)"
+            className={`${input} w-20`}
+            value={days}
+            onChange={(e) => setDays(e.target.value === '' ? '' : Math.max(1, Number(e.target.value)))}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
           Фолди
           <input
             type="number"
@@ -175,7 +189,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
         Налаштування для всіх прогонів (KEY=value, по рядку)
         <textarea
           className={`${input} h-16`}
-          placeholder={'DRAWDOWN_COOLDOWN_DAYS=7\nRISK_PER_TRADE=0.01'}
+          placeholder={'BACKTEST_DAYS=30\nDRAWDOWN_COOLDOWN_DAYS=7\nRISK_PER_TRADE=0.01'}
           value={envText}
           onChange={(e) => setEnvText(e.target.value)}
         />

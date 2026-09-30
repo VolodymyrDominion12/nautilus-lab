@@ -316,6 +316,7 @@ def research_request(
     source: BarOrigin = BarOrigin.CATALOG,
     start: datetime | None = None,
     end: datetime | None = None,
+    days: int | None = None,
     stress_slice: str | None = None,
     tearsheet_path: str | None = None,
 ) -> BacktestRequest:
@@ -356,6 +357,7 @@ def research_request(
         instrument_ids=instrument_ids,
         start=start,
         end=end,
+        days=days,
         spot_fees=cfg.spot_fee_schedule(),
         usdm_fees=cfg.usdm_fee_schedule(),
         embargo_bars=cfg.embargo_bars,
@@ -589,6 +591,7 @@ def walk_forward_request(
     in_sample_fraction: Decimal | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
+    days: int | None = None,
     stress_slice: str | None = None,
     tearsheet_path: str | None = None,
     use_optuna: bool = False,
@@ -602,6 +605,7 @@ def walk_forward_request(
         source=source,
         start=start,
         end=end,
+        days=days,
         stress_slice=stress_slice,
         tearsheet_path=tearsheet_path,
     )

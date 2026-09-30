@@ -60,6 +60,7 @@ export interface ResearchRunParams {
   robot: string;
   source: 'catalog' | 'synthetic';
   bars?: number;
+  days?: number;
   folds?: number;
   is_fraction?: number;
   embargo_bars?: number;
@@ -1239,6 +1240,7 @@ export interface BatchLaunchParams {
   is_fraction?: string;
   parallel?: number;
   label?: string;
+  days?: number;
   env?: Record<string, string>;
   dry_run?: boolean;
 }

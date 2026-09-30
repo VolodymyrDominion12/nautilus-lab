@@ -71,12 +71,21 @@ class BatchRunRequest(BaseModel):
     is_fraction: str = "0.7"
     parallel: int = 2
     label: str = ""
+    days: int | None = None
     env: dict[str, str] = Field(default_factory=dict)
     dry_run: bool = False
 
 
 def _to_request(req: BatchRunRequest) -> BatchRequest:
     try:
+        days = req.days
+        if days is None and "BACKTEST_DAYS" in req.env:
+            try:
+                days = int(req.env["BACKTEST_DAYS"])
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422, detail=f"invalid BACKTEST_DAYS: {req.env['BACKTEST_DAYS']}"
+                ) from exc
         return BatchRequest(
             robots=tuple(req.robots),
             symbols=tuple(s.upper() for s in req.symbols),
@@ -88,6 +97,7 @@ def _to_request(req: BatchRunRequest) -> BatchRequest:
             is_fraction=Decimal(req.is_fraction),
             parallel=req.parallel,
             label=req.label,
+            days=days,
             env=dict(req.env),
         )
     except (ValueError, InvalidOperation) as exc:
@@ -195,9 +205,9 @@ def cancel_batch(ctx: Lab, batch_id: str) -> dict[str, Any]:
     if batch is None:
         raise HTTPException(status_code=404, detail=f"batch {batch_id!r} not found")
     pid = batch.get("pid")
-    if effective_status(batch) != RUNNING or not pid_alive(pid):
+    if not isinstance(pid, int) or effective_status(batch) != RUNNING or not pid_alive(pid):
         return {"status": "idle", "message": "batch is not running"}
-    os.kill(int(pid), signal.SIGTERM)
+    os.kill(pid, signal.SIGTERM)
     return {"status": "cancelling", "message": f"sent SIGTERM to batch {batch_id}"}
 
 

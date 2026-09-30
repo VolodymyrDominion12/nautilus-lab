@@ -23,6 +23,8 @@ from nautilus_lab.api.batch_store import (
     find_session_cell,
     list_batches,
     load_batch,
+    request_from_dict,
+    request_to_dict,
     run_payload,
 )
 from nautilus_lab.api.run_batch_job import BatchRun
@@ -70,6 +72,10 @@ def test_batch_request_rejects_bad_input() -> None:
         BatchRequest(symbols=("btc",))
     with pytest.raises(ValueError, match="folds"):
         BatchRequest(folds=1)
+    with pytest.raises(ValueError, match="days"):
+        BatchRequest(days=0)
+    with pytest.raises(ValueError, match="days"):
+        BatchRequest(days=-5)
     with pytest.raises(ValueError, match="SETTINGS_NAME"):
         BatchRequest(env={"lower": "x"})
 
@@ -82,6 +88,28 @@ def test_job_config_is_the_research_tab_payload() -> None:
     assert config["folds"] == 3
     assert config["instrument_id"] == "ETH/USDT.SIM"
     assert config["generate_tearsheet"] is False
+    assert "days" not in config
+
+
+def test_job_config_and_store_roundtrip_days() -> None:
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",), folds=3, days=30)
+    (cell,) = plan_cells(request, exists=_all_exist)
+    config = research_job_config(request, cell)
+    assert config["days"] == 30
+    payload = request_to_dict(request)
+    assert payload["days"] == 30
+    restored = request_from_dict(payload)
+    assert restored.days == 30
+
+
+def test_batch_route_resolves_days_from_field_and_env() -> None:
+    from nautilus_lab.api.routes.batches import BatchRunRequest, _to_request
+
+    req_direct = BatchRunRequest(days=45)
+    assert _to_request(req_direct).days == 45
+
+    req_env = BatchRunRequest(env={"BACKTEST_DAYS": "60"})
+    assert _to_request(req_env).days == 60
 
 
 # --- running cells with a stand-in research job ----------------------------------------

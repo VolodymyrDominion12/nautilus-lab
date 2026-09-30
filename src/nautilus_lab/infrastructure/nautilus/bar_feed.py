@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from nautilus_lab.application.dtos import BacktestRequest
 from nautilus_lab.domain.align import align_bars_inner_join
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar, validate_bar
+from nautilus_lab.domain.errors import CatalogEmptyError
 from nautilus_lab.domain.ports import BarCatalog, TakerFlowCatalog
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.stress_slices import resolve_stress_slice
@@ -36,6 +37,16 @@ class ResearchBarFeed:
         self._catalog = catalog
         self._taker_flow = taker_flow
 
+    @staticmethod
+    def _slice_days(bars: list[OhlcvBar], days: int | None) -> list[OhlcvBar]:
+        if not days or days <= 0 or not bars:
+            return bars
+        cutoff = bars[-1].ts_utc - timedelta(days=days)
+        sliced = [b for b in bars if b.ts_utc >= cutoff]
+        if not sliced:
+            raise CatalogEmptyError(f"no bars found in the last {days} days")
+        return sliced
+
     def load(self, request: BacktestRequest) -> list[OhlcvBar]:
         if request.robot is RobotName.PAIRS:
             multi = self.load_multi(request)
@@ -53,12 +64,15 @@ class ResearchBarFeed:
             start=start,
             end=end,
         )
+        bars = self._slice_days(bars, request.days)
+        flow_start = bars[0].ts_utc if bars else start
+        flow_end = bars[-1].ts_utc + timedelta(microseconds=1) if bars else end
         return self._with_taker_flow(
             bars,
             instrument_id=request.instrument_id,
             interval=interval_from_bar_type(request.bar_type),
-            start=start,
-            end=end,
+            start=flow_start,
+            end=flow_end,
         )
 
     def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
@@ -96,8 +110,25 @@ class ResearchBarFeed:
         for instrument_id in ids:
             bar_type = nautilus_bar_type(instrument_id, interval)
             loaded = self._catalog.load(bar_type=bar_type, start=start, end=end)
+            raw[instrument_id] = loaded
+        if request.days and request.days > 0 and raw:
+            non_empty = [series for series in raw.values() if series]
+            if non_empty:
+                max_last_ts = max(series[-1].ts_utc for series in non_empty)
+                cutoff = max_last_ts - timedelta(days=request.days)
+                raw = {
+                    inst: [b for b in series if b.ts_utc >= cutoff] for inst, series in raw.items()
+                }
+        for instrument_id in ids:
+            series = raw[instrument_id]
+            flow_start = series[0].ts_utc if series else start
+            flow_end = series[-1].ts_utc + timedelta(microseconds=1) if series else end
             raw[instrument_id] = self._with_taker_flow(
-                loaded, instrument_id=instrument_id, interval=interval, start=start, end=end
+                series,
+                instrument_id=instrument_id,
+                interval=interval,
+                start=flow_start,
+                end=flow_end,
             )
         aligned = align_bars_inner_join(raw)
         return {key: list(value) for key, value in aligned.items()}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from argparse import ArgumentParser
 from decimal import Decimal
@@ -30,12 +31,18 @@ def _job_from_payload(payload: dict[str, Any], reports_dir: Path) -> ResearchJob
         tearsheet_path = default_tearsheet_path(reports_dir, robot)
     overrides = payload.get("param_overrides")
     param_overrides = overrides if isinstance(overrides, dict) else {}
+    days_val = payload.get("days")
+    if days_val is None and param_overrides and "BACKTEST_DAYS" in param_overrides:
+        with contextlib.suppress(ValueError):
+            days_val = int(param_overrides["BACKTEST_DAYS"])
+    days = int(days_val) if days_val is not None else None
     return ResearchJobConfig(
         robot=robot,
         source=source,
         bars=int(payload.get("bars", 3000)),
         folds=int(payload.get("folds", 2)),
         is_fraction=Decimal(str(payload.get("is_fraction", "0.7"))),
+        days=days,
         embargo_bars=payload.get("embargo_bars"),
         use_optuna=bool(payload.get("use_optuna", False)),
         optuna_trials=int(payload.get("optuna_trials", 20)),

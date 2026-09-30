@@ -109,6 +109,7 @@ def request_from_dict(payload: dict[str, Any]) -> BatchRequest:
         is_fraction=Decimal(str(payload.get("is_fraction", "0.7"))),
         parallel=int(payload.get("parallel", 2)),
         label=str(payload.get("label", "")),
+        days=int(payload["days"]) if payload.get("days") is not None else None,
         env={str(k): str(v) for k, v in (payload.get("env") or {}).items()},
         models_dir=str(payload.get("models_dir", "models/clean")),
     )

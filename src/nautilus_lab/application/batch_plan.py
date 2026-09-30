@@ -56,6 +56,7 @@ class BatchRequest:
     is_fraction: Decimal = Decimal("0.7")
     parallel: int = 2
     label: str = ""
+    days: int | None = None
     #: Extra settings for every cell (e.g. `DRAWDOWN_COOLDOWN_DAYS=3`), as env overrides.
     env: dict[str, str] = field(default_factory=dict)
     models_dir: str = "models/clean"
@@ -76,6 +77,8 @@ class BatchRequest:
             raise ValueError("is_fraction must be in [0.1, 0.9]")
         if not (1 <= self.parallel <= 8):
             raise ValueError("parallel must be in [1, 8]")
+        if self.days is not None and self.days <= 0:
+            raise ValueError("days must be > 0")
         for key in self.env:
             if not re.match(r"^[A-Z][A-Z0-9_]*$", key):
                 raise ValueError(f"env override {key!r} is not a SETTINGS_NAME")
@@ -208,7 +211,7 @@ def _pairs_cell(request: BatchRequest, *, exists: Callable[[str], bool]) -> Batc
 
 def research_job_config(request: BatchRequest, cell: BatchCell) -> dict[str, object]:
     """The `run_research_job` payload for one cell (same shape the Research tab sends)."""
-    return {
+    payload: dict[str, object] = {
         "robot": cell.robot,
         "source": "catalog",
         "folds": request.folds,
@@ -219,3 +222,6 @@ def research_job_config(request: BatchRequest, cell: BatchCell) -> dict[str, obj
         "instrument_id": cell.instrument_id,
         "bar_interval": cell.interval,
     }
+    if request.days is not None:
+        payload["days"] = request.days
+    return payload

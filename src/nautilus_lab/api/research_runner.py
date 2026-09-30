@@ -44,6 +44,7 @@ class ResearchJobConfig:
     bars: int = 3000
     folds: int = 2
     is_fraction: Decimal = Decimal("0.7")
+    days: int | None = None
     embargo_bars: int | None = None
     use_optuna: bool = False
     optuna_trials: int = 20
@@ -327,6 +328,7 @@ def execute_research(
                     bar_count=job.bars,
                     robot=robot,
                     source=BarOrigin.CATALOG,
+                    days=job.days,
                     stress_slice=job.stress_slice,
                     tearsheet_path=tearsheet,
                 )
@@ -418,6 +420,7 @@ def execute_research(
             bar_count=job.bars if job.source == "synthetic" else 0,
             window=custom_window,
             in_sample_fraction=job.is_fraction,
+            days=job.days,
             stress_slice=job.stress_slice,
             tearsheet_path=tearsheet,
             use_optuna=job.use_optuna,

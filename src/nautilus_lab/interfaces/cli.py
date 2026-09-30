@@ -164,6 +164,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=Decimal("0.7"),
         help="Anchored split when dates are omitted (default 0.7)",
     )
+    research.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="Restrict catalog backtest to the last N days",
+    )
     research.add_argument("--catalog", help="Catalog directory (default: settings/catalog)")
     research.add_argument(
         "--slice",
@@ -632,6 +638,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
     trials = getattr(args, "trials", 20)
     should_notify = getattr(args, "notify", False)
     folds = getattr(args, "folds", 1)
+    days = getattr(args, "days", None)
     if folds < 1:
         # Without this, --folds 0 silently fell through to the single-split path and
         # reported one window as if the request had been honoured.
@@ -758,6 +765,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
             robot=robot,
             window=window,
             in_sample_fraction=args.is_fraction,
+            days=days,
             stress_slice=args.slice,
             tearsheet_path=tearsheet,
             use_optuna=optuna_enabled,
@@ -829,6 +837,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
             bar_count=args.bars,
             robot=robot,
             source=BarOrigin.CATALOG,
+            days=days,
             stress_slice=args.slice,
             tearsheet_path=tearsheet,
         )

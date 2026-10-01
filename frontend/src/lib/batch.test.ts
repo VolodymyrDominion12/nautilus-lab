@@ -3,9 +3,12 @@ import {
   blockedShare,
   buildBatchHash,
   parseBatchHash,
+  restartBlockedReason,
+  restartHint,
   rowWarnings,
   sortRows,
   topCounts,
+  type BatchListRow,
   type BatchRow,
 } from './batch';
 
@@ -81,5 +84,50 @@ describe('batch table', () => {
 
   test('a finished run with no fills is flagged', () => {
     expect(rowWarnings(row({ numbers: { total_oos_fills: 0 } }))).toContain('0 угод за всі фолди');
+  });
+});
+
+describe('restarting a batch', () => {
+  const listed = (over: Partial<BatchListRow>): BatchListRow => ({
+    id: '20260930_120000_batch',
+    label: 'batch',
+    created_at: '2026-09-30T12:00:00+00:00',
+    status: 'ok',
+    cells: 4,
+    counts: { ok: 4 },
+    robots: ['ema'],
+    symbols: ['ETHUSDT'],
+    ...over,
+  });
+
+  test('any finished batch may be re-run, however it ended', () => {
+    for (const status of ['ok', 'failed', 'cancelled', 'lost', 'blocked']) {
+      expect(restartBlockedReason(listed({ status }))).toBeNull();
+    }
+  });
+
+  test('a batch that is still moving is cancelled first', () => {
+    expect(restartBlockedReason(listed({ status: 'running' }))).toContain('скасуйте');
+    expect(restartBlockedReason(listed({ status: 'queued' }))).toContain('скасуйте');
+  });
+
+  test('an imported sweep has no request to re-run', () => {
+    expect(restartBlockedReason(listed({ imported_from: 'reports/decision-sweep' }))).toContain(
+      'імпортований',
+    );
+  });
+
+  test('the row says when it was re-run, and how many times', () => {
+    expect(restartHint(listed({}))).toBeNull();
+    expect(restartHint(listed({ restarted_at: '2026-10-01T09:30:00+00:00' }))).toBe(
+      'перезапущено 2026-10-01 09:30:00',
+    );
+    expect(
+      restartHint(listed({ restarted_at: '2026-10-01T09:30:00+00:00', restart_count: 3 })),
+    ).toBe('перезапущено 3× · 2026-10-01 09:30:00');
+    // A stored batch from before the counter existed still reads as one restart.
+    expect(
+      restartHint(listed({ restarted_at: '2026-10-01T09:30:00+00:00', restart_count: null })),
+    ).toBe('перезапущено 2026-10-01 09:30:00');
   });
 });

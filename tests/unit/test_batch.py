@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 import sys
 import textwrap
 from decimal import Decimal
@@ -18,6 +19,7 @@ from nautilus_lab.api.batch_store import (
     FAILED,
     OK,
     QUEUED,
+    RUNNING,
     batch_payload,
     cell_dir,
     create_batch,
@@ -28,8 +30,11 @@ from nautilus_lab.api.batch_store import (
     load_batch,
     request_from_dict,
     request_to_dict,
+    reset_batch,
     run_payload,
+    write_json,
 )
+from nautilus_lab.api.routes import batches as batches_routes
 from nautilus_lab.api.run_batch_job import BatchRun
 from nautilus_lab.application.batch_plan import BatchRequest, plan_cells, research_job_config
 from nautilus_lab.infrastructure.settings import Settings
@@ -310,3 +315,131 @@ def test_delete_batch_removes_directory_and_endpoint(tmp_path: Path) -> None:
     assert not path.exists()
     assert load_batch(reports, batch_id) is None
     assert delete_batch(reports, batch_id) is False
+
+
+# --- restarting a batch ----------------------------------------------------------------
+
+
+def test_reset_batch_replans_cells_and_keeps_the_request(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema", "glft"), symbols=("ETHUSDT",), folds=2, label="re")
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, path = create_batch(reports, request, cells)
+
+    reset_batch(reports, batch_id, cells)
+
+    batch = load_batch(reports, batch_id)
+    assert batch is not None
+    assert (path / "batch.json").exists()
+    assert batch["status"] == QUEUED
+    assert batch["restart_count"] == 1
+    assert batch["restarted_at"]
+    assert batch["request"] == request_to_dict(request)
+    state = {c["cell_id"]: (c["status"], c["error"]) for c in batch["cells"]}
+    assert state["ema_ETH"] == (QUEUED, None)
+    assert state["glft_ETH"][0] == BLOCKED
+    assert "no backtest adapter" in str(state["glft_ETH"][1])
+
+    with pytest.raises(ValueError, match="invalid batch id"):
+        reset_batch(reports, "../evil_batch", cells)
+
+
+def test_restart_route_wipes_the_old_run_and_relaunches_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",), folds=2)
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, path = create_batch(reports, request, cells)
+
+    # The restart re-plans the matrix against the current filesystem, so the catalog the
+    # request names has to exist under the app's root for its cell to stay runnable.
+    (tmp_path / "catalog").mkdir()
+
+    # Artifacts of the first run: the restart must delete them, not append to them.
+    cell = cell_dir(path, "ema_ETH")
+    decisions_dir(cell).mkdir(parents=True, exist_ok=True)
+    write_json(cell / "summary.json", {"cell_id": "ema_ETH", "status": OK})
+    (cell / "last_run.json").write_text('{"is_error": false}', encoding="utf-8")
+    (path / "batch.log").write_text("old run\n", encoding="utf-8")
+    (path / "trials").mkdir()
+    (path / "trials" / "ema_ETH.jsonl").write_text("{}\n", encoding="utf-8")
+    finished = load_batch(reports, batch_id) or {}
+    finished.update({"status": OK, "finished_at": "2026-09-30T00:00:00+00:00"})
+    for entry in finished["cells"]:
+        entry.update({"status": OK, "returncode": 0, "error": None})
+    write_json(path / "batch.json", finished)
+
+    launched: list[tuple[str, Path]] = []
+
+    def fake_launch(_ctx: object, bid: str, batch_path: Path) -> None:
+        launched.append((bid, batch_path))
+
+    monkeypatch.setattr(batches_routes, "_launch", fake_launch)
+    client = TestClient(create_app(Settings(), root=tmp_path))
+
+    resp = client.post(f"/api/batches/{batch_id}/restart")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "restarted"
+    assert body["batch_id"] == batch_id
+    assert [c["cell_id"] for c in body["cells"]] == ["ema_ETH"]
+    assert launched == [(batch_id, path)]
+
+    batch = load_batch(reports, batch_id)
+    assert batch is not None
+    assert batch["status"] == QUEUED
+    assert batch["pid"] is None
+    assert batch["finished_at"] is None
+    assert [c["status"] for c in batch["cells"]] == [QUEUED]
+    assert not cell.exists(), "old decisions and the cached summary must be gone"
+    assert not (path / "batch.log").exists()
+    assert not (path / "trials").exists()
+    assert (path / "batch.json").exists()
+
+    row = next(r for r in list_batches(reports) if r["id"] == batch_id)
+    assert row["restart_count"] == 1
+    assert row["restarted_at"] == batch["restarted_at"]
+
+
+def test_restart_refuses_an_import_a_running_batch_and_unknown_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",), folds=2)
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, path = create_batch(reports, request, cells)
+
+    def never_launch(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("a refused restart must not launch a process")
+
+    monkeypatch.setattr(batches_routes, "_launch", never_launch)
+    client = TestClient(create_app(Settings(), root=tmp_path))
+
+    assert client.post("/api/batches/nonexistent_batch_123/restart").status_code == 404
+    assert client.post("/api/batches/bad..id!!/restart").status_code == 400
+
+    # An imported sweep keeps robots but no symbols/intervals: nothing to re-run.
+    imported = {**(load_batch(reports, batch_id) or {}), "imported_from": "reports/decision-sweep"}
+    write_json(path / "batch.json", imported)
+    refused = client.post(f"/api/batches/{batch_id}/restart")
+    assert refused.status_code == 422
+    assert "imported" in refused.json()["detail"]
+
+    # A batch that is still moving is cancelled first, not wiped under its own process.
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        running = {
+            key: value
+            for key, value in (load_batch(reports, batch_id) or {}).items()
+            if key != "imported_from"
+        }
+        running.update({"status": RUNNING, "pid": child.pid})
+        write_json(path / "batch.json", running)
+        busy = client.post(f"/api/batches/{batch_id}/restart")
+        assert busy.status_code == 409
+        assert batch_id in busy.json()["detail"]
+    finally:
+        child.kill()
+        child.wait()
+    assert (path / "batch.json").exists()

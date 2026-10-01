@@ -39,12 +39,15 @@ from nautilus_lab.api.batch_store import (
     load_batch,
     pid_alive,
     read_json,
+    request_from_dict,
+    reset_batch,
     run_payload,
 )
 from nautilus_lab.api.context import Lab, LabContext, python_executable
 from nautilus_lab.application.batch_plan import (
     DEFAULT_ROBOTS,
     DEFAULT_SYMBOLS,
+    BatchCell,
     BatchRequest,
     plan_cells,
 )
@@ -139,16 +142,8 @@ def _launch(ctx: LabContext, batch_id: str, path: Path) -> None:
     threading.Thread(target=reap, name=f"batch-{batch_id}", daemon=True).start()
 
 
-@router.post("/api/batches")
-def start_batch(ctx: Lab, req: BatchRunRequest) -> dict[str, Any]:
-    """Plan the matrix; unless `dry_run`, write the batch and start its process."""
-    request = _to_request(req)
-    cells = plan_cells(
-        request,
-        exists=lambda rel: (ctx.root / rel).exists(),
-        wired=[robot.value for robot in BACKTEST_WIRED_ROBOTS],
-    )
-    plan = [
+def _plan_payload(cells: list[BatchCell]) -> list[dict[str, Any]]:
+    return [
         {
             "cell_id": cell.cell_id,
             "robot": cell.robot,
@@ -160,6 +155,22 @@ def start_batch(ctx: Lab, req: BatchRunRequest) -> dict[str, Any]:
         }
         for cell in cells
     ]
+
+
+def _planned_cells(ctx: LabContext, request: BatchRequest) -> list[BatchCell]:
+    return plan_cells(
+        request,
+        exists=lambda rel: (ctx.root / rel).exists(),
+        wired=[robot.value for robot in BACKTEST_WIRED_ROBOTS],
+    )
+
+
+@router.post("/api/batches")
+def start_batch(ctx: Lab, req: BatchRunRequest) -> dict[str, Any]:
+    """Plan the matrix; unless `dry_run`, write the batch and start its process."""
+    request = _to_request(req)
+    cells = _planned_cells(ctx, request)
+    plan = _plan_payload(cells)
     if req.dry_run:
         return {"status": "ok", "dry_run": True, "cells": plan}
     if not any(cell.runnable for cell in cells):
@@ -211,6 +222,51 @@ def cancel_batch(ctx: Lab, batch_id: str) -> dict[str, Any]:
         return {"status": "idle", "message": "batch is not running"}
     os.kill(pid, signal.SIGTERM)
     return {"status": "cancelling", "message": f"sent SIGTERM to batch {batch_id}"}
+
+
+@router.post("/api/batches/{batch_id}/restart")
+def restart_batch(ctx: Lab, batch_id: str) -> dict[str, Any]:
+    """Delete this batch's results and run the same request again, under the same id.
+
+    The record the researcher clicked keeps its address (`#/batch/<id>`): what is re-run is
+    the request stored in `batch.json`, and what is thrown away is the data — decisions,
+    cached summaries, logs and the trial ledger (`batch_store.reset_batch`). Keeping the id
+    while deleting the artifacts is the point: a restart that appended to the old run would
+    show old numbers under a new status.
+
+    Refused for an imported sweep (its stored request holds robots but no symbols/intervals,
+    so there is nothing to re-run) and while any batch is still running — cancel it first,
+    a second batch would fight the first over the same cores. `422` when the re-planned
+    matrix has no runnable cell left (its model or catalog went away).
+    """
+    try:
+        batch = load_batch(ctx.reports_dir, batch_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"batch {batch_id!r} not found")
+    if batch.get("imported_from"):
+        raise HTTPException(
+            status_code=422,
+            detail="an imported batch keeps no runnable request: launch it as a new batch",
+        )
+    try:
+        request = request_from_dict(batch.get("request") or {})
+    except (ValueError, KeyError, ArithmeticError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"batch {batch_id!r} has no re-runnable request: {exc}"
+        ) from exc
+    busy = _running_batch(ctx)
+    if busy is not None:
+        raise HTTPException(
+            status_code=409, detail=f"batch {busy} is still running, cancel it before restarting"
+        )
+    cells = _planned_cells(ctx, request)
+    if not any(cell.runnable for cell in cells):
+        raise HTTPException(status_code=422, detail="no runnable cell in this batch")
+    path = reset_batch(ctx.reports_dir, batch_id, cells)
+    _launch(ctx, batch_id, path)
+    return {"status": "restarted", "batch_id": batch_id, "cells": _plan_payload(cells)}
 
 
 @router.delete("/api/batches/{batch_id}")

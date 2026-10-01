@@ -1,7 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Download, Layers, RefreshCw, Trash2 } from 'lucide-react';
-import { deleteBatch, fetchBatches, importDecisionSweep } from '../../services/api';
-import { buildBatchHash, STATUS_CLASS, type BatchListRow } from '../../lib/batch';
+import { Download, Layers, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import { deleteBatch, fetchBatches, importDecisionSweep, restartBatch } from '../../services/api';
+import {
+  buildBatchHash,
+  restartBlockedReason,
+  restartHint,
+  STATUS_CLASS,
+  type BatchListRow,
+} from '../../lib/batch';
 import { formatDateTime } from '../../lib/format';
 import { BatchLaunchForm } from './BatchLaunchForm';
 
@@ -10,11 +16,16 @@ import { BatchLaunchForm } from './BatchLaunchForm';
  *
  * Each batch row is a real link (`#/batch/<id>`), so it opens in a new tab with a
  * middle click; the batch's own table links every run the same way.
+ *
+ * A row can be deleted or re-run. "Перезапустити" is not "запустити ще раз": the batch's
+ * artifacts are deleted first (`POST /api/batches/{id}/restart`, `batch_store.reset_batch`),
+ * so the numbers the table shows afterwards are the new run's and not a mix of the two.
  */
 export const BatchListPage: React.FC = () => {
   const [batches, setBatches] = useState<BatchListRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [restartingId, setRestartingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -43,6 +54,26 @@ export const BatchListPage: React.FC = () => {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleRestart = async (batch: BatchListRow) => {
+    const name = batch.label || batch.id;
+    const confirmed = window.confirm(
+      `Перезапустити пакет "${name}"?\n\n` +
+        'Старі результати, журнали рішень, угоди, кеш таблиці та журнал спроб буде ' +
+        'видалено, і той самий прогін запуститься заново під тим самим id.',
+    );
+    if (!confirmed) return;
+    setRestartingId(batch.id);
+    setError(null);
+    try {
+      await restartBatch(batch.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRestartingId(null);
     }
   };
 
@@ -116,46 +147,73 @@ export const BatchListPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {batches.map((batch) => (
-                <tr key={batch.id} className="border-t border-gray-800 hover:bg-gray-800/30">
-                  <td className="py-1.5">
-                    <a
-                      href={buildBatchHash({ page: 'batch', batchId: batch.id })}
-                      className="text-blue-400 hover:text-blue-300 font-mono"
-                    >
-                      {batch.label || batch.id}
-                    </a>
-                    {batch.imported_from && (
-                      <span className="ml-2 text-[10px] text-amber-400/80">імпорт</span>
-                    )}
-                  </td>
-                  <td className="text-gray-400">{formatDateTime(batch.created_at)}</td>
-                  <td className={STATUS_CLASS[batch.status] ?? 'text-gray-400'}>{batch.status}</td>
-                  <td className="font-mono text-gray-300">
-                    {batch.cells}
-                    <span className="text-gray-500">
-                      {' '}
-                      ({Object.entries(batch.counts)
-                        .map(([k, v]) => `${k} ${v}`)
-                        .join(', ')}
-                      )
-                    </span>
-                  </td>
-                  <td className="text-gray-400 font-mono">{batch.robots.join(', ')}</td>
-                  <td className="text-right py-1.5 pr-2">
-                    <button
-                      type="button"
-                      disabled={deletingId === batch.id}
-                      onClick={() => void handleDelete(batch.id, batch.label)}
-                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-950/40 border border-transparent hover:border-red-800/60 rounded transition-colors disabled:opacity-50"
-                      title="Видалити цей пакет і всі його результати бектестів, угод і логів"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Видалити</span>
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {batches.map((batch) => {
+                const restartReason = restartBlockedReason(batch);
+                const hint = restartHint(batch);
+                const busyHere = deletingId === batch.id || restartingId === batch.id;
+                return (
+                  <tr key={batch.id} className="border-t border-gray-800 hover:bg-gray-800/30">
+                    <td className="py-1.5">
+                      <a
+                        href={buildBatchHash({ page: 'batch', batchId: batch.id })}
+                        className="text-blue-400 hover:text-blue-300 font-mono"
+                      >
+                        {batch.label || batch.id}
+                      </a>
+                      {batch.imported_from && (
+                        <span className="ml-2 text-[10px] text-amber-400/80">імпорт</span>
+                      )}
+                    </td>
+                    <td className="text-gray-400">
+                      {formatDateTime(batch.created_at)}
+                      {hint && <div className="text-[10px] text-gray-500">{hint}</div>}
+                    </td>
+                    <td className={STATUS_CLASS[batch.status] ?? 'text-gray-400'}>
+                      {batch.status}
+                    </td>
+                    <td className="font-mono text-gray-300">
+                      {batch.cells}
+                      <span className="text-gray-500">
+                        {' '}
+                        ({Object.entries(batch.counts)
+                          .map(([k, v]) => `${k} ${v}`)
+                          .join(', ')}
+                        )
+                      </span>
+                    </td>
+                    <td className="text-gray-400 font-mono">{batch.robots.join(', ')}</td>
+                    <td className="text-right py-1.5 pr-2">
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={busyHere || restartReason !== null}
+                          onClick={() => void handleRestart(batch)}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] text-blue-400 hover:text-blue-300 hover:bg-blue-950/40 border border-transparent hover:border-blue-800/60 rounded transition-colors disabled:opacity-40"
+                          title={
+                            restartReason ??
+                            'Видалити результати цього пакета і запустити той самий прогін заново'
+                          }
+                        >
+                          <RotateCcw
+                            className={`w-3.5 h-3.5 ${restartingId === batch.id ? 'animate-spin' : ''}`}
+                          />
+                          <span>Перезапустити</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyHere}
+                          onClick={() => void handleDelete(batch.id, batch.label)}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-950/40 border border-transparent hover:border-red-800/60 rounded transition-colors disabled:opacity-50"
+                          title="Видалити цей пакет і всі його результати бектестів, угод і логів"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Видалити</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

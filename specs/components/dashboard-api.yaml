@@ -276,6 +276,31 @@ invariants_enforced:
     enforced_by: src/nautilus_lab/api/app.py
     verified_by: tests/unit/test_api_job_slots.py::test_second_launch_is_refused_while_the_first_has_not_spawned
 
+  - statement: >
+      Перезапуск пакета (`POST /api/batches/{id}/restart`) стирає артефакти прогону
+      — теки клітинок із журналами рішень, `last_run.json`, кеш `summary.json`,
+      `batch.log` і `trials/` — і лише тоді запускає той самий `request` з
+      `batch.json` заново, під тим самим id. Кеш видаляється обов'язково: інакше
+      таблиця показала б числа старого прогону під новим статусом — тобто
+      «перезапустив» читалось би як «порахував заново».
+    enforced_by: src/nautilus_lab/api/routes/batches.py
+    verified_by: tests/unit/test_batch.py::test_restart_route_wipes_the_old_run_and_relaunches_in_place
+    note: >
+      Клітинки переплановуються тим самим `plan_cells`, що й при старті: дотренована
+      модель робить свою клітинку робочою, а зниклий каталог — заблокованою з
+      причиною, і перезапуск не обіцяє більше, ніж дозволяє файлова система.
+      Відмови — не помилки, а ворота: `422` для імпортованого свіпу (у нього немає
+      придатного запиту) і коли робочих клітинок не лишилось, `409` поки будь-який
+      пакет виконується (спершу `cancel`), `404`/`400` для невідомого чи
+      некоректного id —
+      tests/unit/test_batch.py::test_restart_refuses_an_import_a_running_batch_and_unknown_ids.
+      Кнопка на фронті вимкнена рівно там, де API відмовить
+      (`frontend/src/lib/batch.ts::restartBlockedReason`,
+      frontend/src/lib/batch.test.ts), бо кнопка, яка дає бекенду сказати «ні», нічого
+      не вчить дослідника. Чого тут немає: паралельного перезапуску кількох пакетів і
+      перезапуску живого (running) пакета без скасування — обидва свідомо закриті
+      воротами, а не реалізовані.
+
 notes: >
   Компонент покриває лише ті інваріанти, які сьогодні мають тест. Свідомо не
   записано: (1) що `--folds N>=2` з явними датами відхиляється — це вже

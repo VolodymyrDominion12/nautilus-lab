@@ -1296,6 +1296,13 @@ export async function deleteBatch(batchId: string): Promise<{ status: string; de
   return parseJson(await fetch(batchPath(batchId), { method: 'DELETE' }));
 }
 
+/** Delete this batch's results and run the same request again, under the same id. */
+export async function restartBatch(
+  batchId: string,
+): Promise<{ status: string; batch_id: string; cells: PlannedCell[] }> {
+  return parseJson(await fetch(batchPath(batchId, '/restart'), { method: 'POST' }));
+}
+
 export async function importDecisionSweep(): Promise<{ batch_id: string }> {
   return parseJson(await fetch(apiUrl('/api/batches/import-sweep'), { method: 'POST' }));
 }

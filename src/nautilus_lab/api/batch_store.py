@@ -175,6 +175,8 @@ def list_batches(reports_dir: Path, *, limit: int = 50) -> list[dict[str, Any]]:
                 "label": batch.get("label", ""),
                 "created_at": batch.get("created_at"),
                 "finished_at": batch.get("finished_at"),
+                "restarted_at": batch.get("restarted_at"),
+                "restart_count": batch.get("restart_count"),
                 "status": effective_status(batch),
                 "cells": len(batch.get("cells", [])),
                 "counts": dict(counts),
@@ -208,6 +210,26 @@ def effective_status(batch: dict[str, Any]) -> str:
     return status
 
 
+def kill_batch_process(batch: dict[str, Any]) -> None:
+    """Kill the batch process and its children, if it is still alive.
+
+    The batch runs its cells as children of one process group, so SIGKILL goes to the
+    group first: killing only the parent would leave a cell's `run_research_job` writing
+    into a directory that is about to be deleted or re-run.
+    """
+    pid = batch.get("pid")
+    if not isinstance(pid, int) or not pid_alive(pid):
+        return
+    with contextlib.suppress(OSError):
+        os.killpg(pid, signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGKILL)
+    for _ in range(10):
+        if not pid_alive(pid):
+            break
+        time.sleep(0.05)
+
+
 def delete_batch(reports_dir: Path, batch_id: str) -> bool:
     """Permanently delete a batch directory and all its runs, decisions, logs and artifacts.
 
@@ -217,19 +239,60 @@ def delete_batch(reports_dir: Path, batch_id: str) -> bool:
     path = batch_dir(reports_dir, batch_id)
     if not path.exists():
         return False
-    batch = load_batch(reports_dir, batch_id) or {}
-    pid = batch.get("pid")
-    if isinstance(pid, int) and pid_alive(pid):
-        with contextlib.suppress(OSError):
-            os.killpg(pid, signal.SIGKILL)
-        with contextlib.suppress(OSError):
-            os.kill(pid, signal.SIGKILL)
-        for _ in range(10):
-            if not pid_alive(pid):
-                break
-            time.sleep(0.05)
+    kill_batch_process(load_batch(reports_dir, batch_id) or {})
     shutil.rmtree(path)
     return True
+
+
+def reset_batch(
+    reports_dir: Path, batch_id: str, cells: Iterable[BatchCell], *, now: datetime | None = None
+) -> Path:
+    """Wipe a batch's artifacts and put its cells back to `queued`, ready for a re-run.
+
+    A restart is not a second pass appended to the first: the cell directories (decisions,
+    `last_run.json`, the cached `summary.json`), the batch log and the trial ledger are
+    deleted, so the table cannot show a new run's numbers beside the old run's artifacts —
+    a stale `summary.json` would otherwise be served as the new result.
+
+    `batch.json` itself stays: its `request` **is** the recipe being re-run, and keeping the
+    id keeps `#/batch/<id>` valid. The cells come from a fresh `plan_cells`, so a model
+    trained since the first run makes its cell runnable and a catalog that moved away
+    blocks it with a reason.
+    """
+    path = batch_dir(reports_dir, batch_id)
+    batch = load_batch(reports_dir, batch_id)
+    if batch is None:
+        raise FileNotFoundError(path / "batch.json")
+    kill_batch_process(batch)
+    for child in list(path.iterdir()):
+        if child.name == "batch.json":
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    payload: dict[str, Any] = {
+        **batch,
+        "status": QUEUED,
+        "pid": None,
+        "started_at": None,
+        "finished_at": None,
+        "restarted_at": (now or datetime.now(UTC)).isoformat(),
+        "restart_count": int(batch.get("restart_count") or 0) + 1,
+        "cells": [
+            {
+                **asdict(cell),
+                "status": QUEUED if cell.runnable else BLOCKED,
+                "started_at": None,
+                "finished_at": None,
+                "returncode": None,
+                "error": cell.blocked,
+            }
+            for cell in cells
+        ],
+    }
+    write_json(path / "batch.json", payload)
+    return path
 
 
 # --- decisions of one cell ------------------------------------------------------------

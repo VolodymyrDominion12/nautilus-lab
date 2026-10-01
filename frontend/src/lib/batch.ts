@@ -8,6 +8,8 @@
  *   #/run/<batchId>/<cellId>   — one run: folds, trades, decisions, analysis
  */
 
+import { formatDateTime } from './format';
+
 export type BatchRoute =
   | { page: 'list' }
   | { page: 'batch'; batchId: string }
@@ -59,6 +61,9 @@ export interface BatchListRow {
   label: string;
   created_at: string | null;
   finished_at?: string | null;
+  /** When this batch was last wiped and re-run in place; absent = never. */
+  restarted_at?: string | null;
+  restart_count?: number | null;
   status: string;
   cells: number;
   counts: Record<string, number>;
@@ -240,4 +245,32 @@ export const STATUS_CLASS: Record<string, string> = {
   blocked: 'text-gray-500',
   cancelled: 'text-gray-500',
   lost: 'text-red-300',
+};
+
+// ---- restarting a batch ---------------------------------------------------------------
+
+/**
+ * Why this batch cannot be re-run from the list, or null when it can.
+ *
+ * The rule mirrors the API's refusals, because a button that lets the backend say "no"
+ * teaches the researcher nothing: an imported sweep keeps no runnable request, and a
+ * batch that is still moving has to be cancelled before it can be started over (`POST
+ * /api/batches/{id}/restart` answers 422 and 409 respectively).
+ */
+export const restartBlockedReason = (batch: BatchListRow): string | null => {
+  if (batch.imported_from) {
+    return 'імпортований пакет не має запиту для повторного прогону — запустіть новий';
+  }
+  if (batch.status === 'running' || batch.status === 'queued') {
+    return 'пакет ще виконується: спершу скасуйте його';
+  }
+  return null;
+};
+
+/** The note under "Створено": that this batch was wiped and re-run in place, and when. */
+export const restartHint = (batch: BatchListRow): string | null => {
+  if (!batch.restarted_at) return null;
+  const count = batch.restart_count ?? 1;
+  const when = formatDateTime(batch.restarted_at);
+  return count > 1 ? `перезапущено ${count}× · ${when}` : `перезапущено ${when}`;
 };

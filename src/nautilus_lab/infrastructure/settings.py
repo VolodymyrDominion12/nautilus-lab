@@ -72,10 +72,10 @@ class Settings(BaseSettings):
     live_enabled: bool = False
     starting_equity: Decimal = Decimal("100000")
     risk_per_trade: Decimal = Decimal("0.005")
-    stop_pct: Decimal = Decimal("0.01")
+    stop_pct: Decimal = Decimal("0.03")
     atr_stop_multiplier: Decimal = Decimal("2")
-    max_daily_loss: Decimal = Decimal("0.02")
-    max_drawdown: Decimal = Decimal("0.06")
+    max_daily_loss: Decimal = Decimal("0.04")
+    max_drawdown: Decimal = Decimal("0.12")
     max_open_positions: int = 1
     kelly_fraction: Decimal = Decimal("0.25")
     max_var_99: Decimal = Decimal("0.05")

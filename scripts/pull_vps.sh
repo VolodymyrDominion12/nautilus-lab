@@ -21,9 +21,9 @@ cd "$(dirname "$0")/.."
 REMOTE_DIR="${REMOTE_DIR:-nautilus-lab}"
 DEST="${DEST:-data/vps}"
 
-mkdir -p "$DEST/paper" "$DEST/catalog/data" "$DEST/reports"
-rsync -az --info=stats1 "$VPS:$REMOTE_DIR/data/paper/" "$DEST/paper/"
-rsync -az --info=stats1 "$VPS:$REMOTE_DIR/catalog/data/" "$DEST/catalog/data/" || true
+mkdir -p "$DEST/paper" "$DEST/catalog" "$DEST/reports"
+rsync -az --info=stats1 "$VPS:$REMOTE_DIR/data/paper/" "$DEST/paper/" || true
+rsync -az --info=stats1 "$VPS:$REMOTE_DIR/catalog/" "$DEST/catalog/" || true
 rsync -az --info=stats1 "$VPS:$REMOTE_DIR/reports/" "$DEST/reports/" || true
 ssh "$VPS" "cat $REMOTE_DIR/DEPLOYED_REVISION 2>/dev/null" > "$DEST/DEPLOYED_REVISION" || true
 echo "Pulled into $DEST (server revision: $(cat "$DEST/DEPLOYED_REVISION" 2>/dev/null || echo unknown))"

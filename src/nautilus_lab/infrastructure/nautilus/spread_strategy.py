@@ -50,6 +50,7 @@ class SpreadRobotConfig(StrategyConfig, frozen=True):
     pairs: PairsParams
     risk_per_trade: Decimal = Decimal("0.005")
     stop_pct: Decimal = Decimal("0.01")
+    atr_stop_multiplier: Decimal = Decimal("2")
     max_daily_loss: Decimal = Decimal("0.02")
     max_drawdown: Decimal = Decimal("0.06")
     max_open_positions: int = 2
@@ -99,6 +100,7 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             max_open_positions=config.max_open_positions,
             kelly_fraction=config.kelly_fraction,
             max_var_99=config.max_var_99,
+            atr_stop_multiplier=config.atr_stop_multiplier,
         )
         self._overlay = RiskOverlay(
             use_vol_scaling=config.use_vol_scaling,

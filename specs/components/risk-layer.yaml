@@ -233,8 +233,8 @@ notes: >
   Що документи описують правильно (перевірено, щоб не приписати зайвого):
   `risk_per_trade` як частку, яку можна втратити (`docs/02` §змінні), порядок і
   тексти причин у `evaluate_entry` (`docs/06` §3), недосяжність
-  `MAX_OPEN_POSITIONS` при перевірці `>` (`docs/06` §3, п.2) і те, що
-  `atr_stop_multiplier` не має змінної в `.env`.
+  `MAX_OPEN_POSITIONS` при перевірці `>` (`docs/06` §3, п.2) та значення
+  `atr_stop_multiplier` (змінна `ATR_STOP_MULTIPLIER` в `.env`).
 
 references:
   - docs/02-vstanovlennya.md

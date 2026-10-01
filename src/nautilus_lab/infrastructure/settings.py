@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     starting_equity: Decimal = Decimal("100000")
     risk_per_trade: Decimal = Decimal("0.005")
     stop_pct: Decimal = Decimal("0.01")
+    atr_stop_multiplier: Decimal = Decimal("2")
     max_daily_loss: Decimal = Decimal("0.02")
     max_drawdown: Decimal = Decimal("0.06")
     max_open_positions: int = 1
@@ -226,6 +227,7 @@ class Settings(BaseSettings):
             max_open_positions=self.max_open_positions,
             kelly_fraction=self.kelly_fraction,
             max_var_99=self.max_var_99,
+            atr_stop_multiplier=self.atr_stop_multiplier,
         )
 
     def spot_fee_schedule(self) -> FeeSchedule:

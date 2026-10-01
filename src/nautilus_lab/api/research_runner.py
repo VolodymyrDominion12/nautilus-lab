@@ -15,7 +15,7 @@ from nautilus_lab.api.serializers import build_job_result, pct, serialize_backte
 from nautilus_lab.api.settings_coerce import apply_setting_overrides
 from nautilus_lab.application.dtos import BacktestReport, MultiWindowReport, WalkForwardReport
 from nautilus_lab.application.journal import JournalEntry, record_run
-from nautilus_lab.application.promotion_gate import evaluate_gate
+from nautilus_lab.application.promotion_gate import class_for_robot, evaluate_gate
 from nautilus_lab.application.run_walk_forward import window_return
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.errors import JournalFormatError
@@ -215,7 +215,7 @@ def _print_walk_forward(report: WalkForwardReport) -> None:
         print(f"tearsheet_saved={report.out_of_sample.tearsheet_path}")
 
 
-def _print_multi_window(report: MultiWindowReport) -> None:
+def _print_multi_window(report: MultiWindowReport, robot: str | None = None) -> None:
     print(report.notes)
     for fold in report.folds:
         window = fold.window
@@ -237,7 +237,8 @@ def _print_multi_window(report: MultiWindowReport) -> None:
         f"oos_fills={report.total_oos_fills}"
     )
     print(report.summary_line())
-    print(evaluate_gate(report, None).summary_line())
+    strategy_cls = class_for_robot(robot) if robot else None
+    print(evaluate_gate(report, None, strategy_class=strategy_cls).summary_line())
 
 
 def execute_research(
@@ -431,7 +432,7 @@ def execute_research(
 
         if job.folds > 1:
             multi = use_case.execute_multi(wf_request)
-            _print_multi_window(multi)
+            _print_multi_window(multi, robot=robot.value)
             tearsheet_path = None
             for fold in multi.folds:
                 if fold.out_of_sample.tearsheet_path:

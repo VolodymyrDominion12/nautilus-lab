@@ -2,21 +2,21 @@
   "bars": 3000,
   "cases": {
     "adaptive_ema": {
-      "ending_balance": "95523.56849837",
-      "fees_paid": "3507.05410163",
-      "fills": 48,
-      "max_drawdown": "0.05103142496768883468197948082",
-      "positions": 24,
-      "realized_balance": "95523.56849837",
+      "ending_balance": "94778.88261662",
+      "fees_paid": "2186.05219338",
+      "fills": 30,
+      "max_drawdown": "0.05460954481693119954479405555",
+      "positions": 15,
+      "realized_balance": "94778.88261662",
       "risk_breaches": [
         [
           "daily loss circuit breaker",
-          285
+          248
         ]
       ],
-      "sharpe_like": "-0.04565512329787439352251443606",
-      "traded_notional": "4676072.1354999999752329",
-      "turnover": "2338974.18342",
+      "sharpe_like": "-0.05396171022867872222133299854",
+      "traded_notional": "2914736.2577699999712202",
+      "turnover": "1457812.53070",
       "unrealized_pnl": "0"
     },
     "ema": {

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from nautilus_lab.domain.bars import OhlcvBar
-from nautilus_lab.domain.decision_trace import TraceStep, warmup_step
+from nautilus_lab.domain.decision_trace import Stage, TraceStep, Verdict, step, warmup_step
 from nautilus_lab.domain.donchian import DowntrendBreakout, UptrendBreakout
 from nautilus_lab.domain.errors import InvalidRiskError
 from nautilus_lab.domain.mean_reversion import RangeMeanReversion
@@ -58,6 +58,10 @@ class AdaptiveEmaParams:
     donchian_period: int = 20
     bb_period: int = 20
     bb_k: Decimal = Decimal("2")
+    range_allow_short: bool = False
+    range_exit_at_mean: bool = False
+    min_bb_width_pct: Decimal = Decimal("0")
+    hold_trend_in_range: bool = True
 
     def __post_init__(self) -> None:
         if self.base_period < 2:
@@ -78,6 +82,8 @@ class AdaptiveEmaParams:
             raise InvalidRiskError("bb_period must be >= 2")
         if self.bb_k <= 0:
             raise InvalidRiskError("bb_k must be > 0")
+        if self.min_bb_width_pct < 0:
+            raise InvalidRiskError("min_bb_width_pct must be >= 0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +237,11 @@ class AdaptiveEmaRouter:
             instrument_id=instrument_id,
             period=params.bb_period,
             band_k=params.bb_k,
+            allow_short=params.range_allow_short,
+            exit_at_mean=params.range_exit_at_mean,
+            min_band_width_pct=params.min_bb_width_pct,
         )
+        self._current_side: SignalSide = SignalSide.FLAT
         self._last_regime: MarketRegime | None = None
         self._last_snapshot: AdaptiveEmaSnapshot | None = None
         self._params = params
@@ -296,35 +306,99 @@ class AdaptiveEmaRouter:
             exit_trend_er=self._params.exit_trend_er,
             extra={"alpha": self._last_snapshot.alpha},
         )
-        if self._last_regime is not None and self._last_snapshot.regime is not self._last_regime:
-            changed_from = self._last_regime
-            self._last_regime = self._last_snapshot.regime
-            self._warm_up(bar)
-            self._trace = (
-                regime,
-                regime_change_step(
-                    "AdaptiveEmaRouter", old=changed_from, new=self._last_snapshot.regime
-                ),
-            )
-            return Signal(
-                instrument_id=self._instrument_id,
-                side=SignalSide.FLAT,
-                bar_ts_utc=bar.ts_utc,
-                reason=f"regime change to {self._last_snapshot.regime.value}",
-                regime=self._last_snapshot.regime,
-            )
+        up_signal = self._uptrend.on_bar(bar)
+        down_signal = self._downtrend.on_bar(bar)
+        range_signal = self._range.on_bar(bar)
+
+        regime_changed = (
+            self._last_regime is not None and self._last_snapshot.regime is not self._last_regime
+        )
+        changed_from = self._last_regime
         self._last_regime = self._last_snapshot.regime
+
+        if regime_changed and changed_from is not None:
+            if (
+                (
+                    self._params.hold_trend_in_range
+                    and self._current_side is SignalSide.BUY
+                    and changed_from is MarketRegime.UPTREND
+                    and self._last_snapshot.regime is MarketRegime.RANGE
+                )
+                or (
+                    self._params.hold_trend_in_range
+                    and self._current_side is SignalSide.SELL
+                    and changed_from is MarketRegime.DOWNTREND
+                    and self._last_snapshot.regime is MarketRegime.RANGE
+                )
+                or (
+                    self._params.hold_trend_in_range
+                    and self._current_side is SignalSide.BUY
+                    and changed_from is MarketRegime.RANGE
+                    and self._last_snapshot.regime is MarketRegime.UPTREND
+                )
+            ):
+                pass
+            else:
+                self._current_side = SignalSide.FLAT
+                self._trace = (
+                    regime,
+                    regime_change_step(
+                        "AdaptiveEmaRouter", old=changed_from, new=self._last_snapshot.regime
+                    ),
+                )
+                return Signal(
+                    instrument_id=self._instrument_id,
+                    side=SignalSide.FLAT,
+                    bar_ts_utc=bar.ts_utc,
+                    reason=f"regime change to {self._last_snapshot.regime.value}",
+                    regime=self._last_snapshot.regime,
+                )
+
         if self._last_snapshot.regime is MarketRegime.UPTREND:
-            leg: UptrendBreakout | DowntrendBreakout | RangeMeanReversion = self._uptrend
+            signal = up_signal
+            active_trace = self._uptrend.last_trace
         elif self._last_snapshot.regime is MarketRegime.DOWNTREND:
-            leg = self._downtrend
+            signal = down_signal
+            active_trace = self._downtrend.last_trace
         else:
-            leg = self._range
-        signal = leg.on_bar(bar)
+            if self._params.hold_trend_in_range and self._current_side is SignalSide.BUY:
+                if up_signal is not None and up_signal.side is SignalSide.FLAT:
+                    signal = up_signal
+                    active_trace = self._uptrend.last_trace
+                else:
+                    signal = None
+                    active_trace = (
+                        step(
+                            Stage.STRATEGY,
+                            "AdaptiveEmaRouter",
+                            Verdict.INFO,
+                            note="in range: holding trend long above EMA",
+                        ),
+                    )
+            elif self._params.hold_trend_in_range and self._current_side is SignalSide.SELL:
+                if down_signal is not None and down_signal.side is SignalSide.FLAT:
+                    signal = down_signal
+                    active_trace = self._downtrend.last_trace
+                else:
+                    signal = None
+                    active_trace = (
+                        step(
+                            Stage.STRATEGY,
+                            "AdaptiveEmaRouter",
+                            Verdict.INFO,
+                            note="in range: holding trend short below EMA",
+                        ),
+                    )
+            else:
+                signal = range_signal
+                active_trace = self._range.last_trace
+
         signal, gate = gate_leg(
             "AdaptiveEmaRouter", regime=self._last_snapshot.regime, signal=signal, legs=self._legs
         )
-        self._trace = (regime, *leg.last_trace, *gate)
+        if signal is not None:
+            self._current_side = signal.side
+        self._trace = (regime, *active_trace, *gate)
         return signal
 
     def _warm_up(self, bar: OhlcvBar) -> None:

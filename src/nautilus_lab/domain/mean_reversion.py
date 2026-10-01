@@ -20,11 +20,23 @@ from nautilus_lab.domain.windows import RollingWindow
 class RangeMeanReversion:
     """Bollinger mean reversion for ranging markets. Closed bars only."""
 
-    def __init__(self, *, instrument_id: str, period: int, band_k: Decimal) -> None:
+    def __init__(
+        self,
+        *,
+        instrument_id: str,
+        period: int,
+        band_k: Decimal,
+        allow_short: bool = True,
+        exit_at_mean: bool = False,
+        min_band_width_pct: Decimal = Decimal("0"),
+    ) -> None:
         self._instrument_id = instrument_id
         self._closes = RollingWindow(period)
         self._band_k = band_k
         self._period = period
+        self._allow_short = allow_short
+        self._exit_at_mean = exit_at_mean
+        self._min_band_width_pct = min_band_width_pct
         self._seen = 0
         self._trace: tuple[TraceStep, ...] = ()
 
@@ -63,7 +75,9 @@ class RangeMeanReversion:
             )
         upper = mean + self._band_k * stdev
         lower = mean - self._band_k * stdev
-        inner = Decimal("0.5") * self._band_k * stdev
+        exit_factor = Decimal("0.2") if self._exit_at_mean else Decimal("0.5")
+        inner = exit_factor * self._band_k * stdev
+        width_pct = (Decimal("2") * self._band_k * stdev) / mean if mean > 0 else Decimal("0")
         values: dict[str, TraceValue] = {
             "close": bar.close,
             "mean": mean,
@@ -73,9 +87,24 @@ class RangeMeanReversion:
             "z": (bar.close - mean) / stdev,
             # |z| against the band width: 0 = on the band, -20% = 20% inside it.
             "margin_pct": margin_pct(abs((bar.close - mean) / stdev), self._band_k),
+            "width_pct": width_pct,
         }
-        thresholds["exit_band_z"] = Decimal("0.5") * self._band_k
+        thresholds["exit_band_z"] = exit_factor * self._band_k
+        if self._min_band_width_pct > 0:
+            thresholds["min_band_width_pct"] = self._min_band_width_pct
         if bar.close <= lower:
+            if self._min_band_width_pct > 0 and width_pct < self._min_band_width_pct:
+                self._trace = (
+                    step(
+                        Stage.STRATEGY,
+                        "RangeMeanReversion",
+                        Verdict.INFO,
+                        values=values,
+                        thresholds=thresholds,
+                        note="close at lower band but band width below minimum: hold",
+                    ),
+                )
+                return None
             self._trace = (
                 step(
                     Stage.STRATEGY,
@@ -95,6 +124,37 @@ class RangeMeanReversion:
                 regime=MarketRegime.RANGE,
             )
         if bar.close >= upper:
+            if not self._allow_short:
+                self._trace = (
+                    step(
+                        Stage.STRATEGY,
+                        "RangeMeanReversion",
+                        Verdict.EMIT,
+                        result="flat",
+                        values=values,
+                        thresholds=thresholds,
+                        note="close at upper band (short disabled): take profit",
+                    ),
+                )
+                return Signal(
+                    instrument_id=self._instrument_id,
+                    side=SignalSide.FLAT,
+                    bar_ts_utc=bar.ts_utc,
+                    reason="range upper band take profit",
+                    regime=MarketRegime.RANGE,
+                )
+            if self._min_band_width_pct > 0 and width_pct < self._min_band_width_pct:
+                self._trace = (
+                    step(
+                        Stage.STRATEGY,
+                        "RangeMeanReversion",
+                        Verdict.INFO,
+                        values=values,
+                        thresholds=thresholds,
+                        note="close at upper band but band width below minimum: hold",
+                    ),
+                )
+                return None
             self._trace = (
                 step(
                     Stage.STRATEGY,

@@ -128,6 +128,10 @@ class Settings(BaseSettings):
     adaptive_er_period: int = 20
     adaptive_selectivity: Decimal = Decimal("0.5")
     adaptive_slope_lookback: int = 10
+    adaptive_range_allow_short: bool = False
+    adaptive_range_exit_at_mean: bool = False
+    adaptive_min_bb_width_pct: Decimal = Decimal("0")
+    adaptive_hold_trend_in_range: bool = True
     use_bar_vpin: bool = False
     use_tick_vpin: bool = False
     use_hawkes: bool = False
@@ -256,6 +260,10 @@ class Settings(BaseSettings):
             donchian_period=self.donchian_period,
             bb_period=self.bb_period,
             bb_k=self.bb_k,
+            range_allow_short=self.adaptive_range_allow_short,
+            range_exit_at_mean=self.adaptive_range_exit_at_mean,
+            min_bb_width_pct=self.adaptive_min_bb_width_pct,
+            hold_trend_in_range=self.adaptive_hold_trend_in_range,
         )
 
     def risk_overlay(self) -> RiskOverlay:

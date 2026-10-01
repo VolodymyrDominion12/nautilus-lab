@@ -97,6 +97,8 @@ params:
   - env: ADAPTIVE_ER_PERIOD
     default: 20
     tuned: false
+    description: >
+      Вікно efficiency ratio для стану фільтра.
     note: >
       Вікно efficiency ratio для стану фільтра. Не входить у сітку: це не «крутилка
       прибутковості», а визначення самого стану, і перебір ще однієї осі лише
@@ -104,8 +106,40 @@ params:
   - env: ADAPTIVE_SLOPE_LOOKBACK
     default: 10
     tuned: false
+    description: >
+      Вікно нахилу адаптивної EMA.
     note: >
       Вікно нахилу адаптивної EMA. Фіксоване з тієї ж причини, що й вище.
+  - env: ADAPTIVE_RANGE_ALLOW_SHORT
+    default: false
+    tuned: false
+    description: >
+      Дозвіл відкриття коротких позицій у боковику (RANGE).
+    note: >
+      Аналіз угод показав, що контртрендові шорти в боковику несуть системний збиток
+      (-8,735 USDT на ETH, PF=0.39). За замовчуванням false.
+  - env: ADAPTIVE_RANGE_EXIT_AT_MEAN
+    default: false
+    tuned: false
+    description: >
+      Вихід із лонгу боковика при досягненні середньої лінії (z <= 0).
+    note: >
+      Фіксація прибутку на середній смузі замість протилежної смуги Боллінджера.
+  - env: ADAPTIVE_MIN_BB_WIDTH_PCT
+    default: 0
+    tuned: false
+    description: >
+      Мінімальна ширина смуг Боллінджера у відсотках для входу в боковику.
+    note: >
+      Фільтр надмірно вузького діапазону (компресія волатильності, де прибуток з'їдається комісіями).
+  - env: ADAPTIVE_HOLD_TREND_IN_RANGE
+    default: true
+    tuned: false
+    description: >
+      Утримання трендової позиції при вході в боковик вище/нижче EMA.
+    note: >
+      Запобігає передчасному скиданню позиції в нуль (flats) на короткочасних
+      перемиканнях режиму, якщо ціна залишається з правильного боку від EMA.
 
 invariants:
   no_lookahead: true

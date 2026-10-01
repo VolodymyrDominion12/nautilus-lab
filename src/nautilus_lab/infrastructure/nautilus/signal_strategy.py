@@ -142,6 +142,10 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     adaptive_er_period: int = 20
     adaptive_selectivity: Decimal = Decimal("0.5")
     adaptive_slope_lookback: int = 10
+    adaptive_range_allow_short: bool = False
+    adaptive_range_exit_at_mean: bool = False
+    adaptive_min_bb_width_pct: Decimal = Decimal("0")
+    adaptive_hold_trend_in_range: bool = True
     use_vol_scaling: bool = False
     vol_scaling_target: Decimal = Decimal("0.02")
     vol_model: VolModel = VolModel.HAR
@@ -1207,6 +1211,10 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
                 donchian_period=config.donchian_period,
                 bb_period=config.bb_period,
                 bb_k=config.bb_k,
+                range_allow_short=config.adaptive_range_allow_short,
+                range_exit_at_mean=config.adaptive_range_exit_at_mean,
+                min_bb_width_pct=config.adaptive_min_bb_width_pct,
+                hold_trend_in_range=config.adaptive_hold_trend_in_range,
             ),
             legs=parse_legs(config.regime_legs),
         )

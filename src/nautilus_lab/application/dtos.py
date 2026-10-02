@@ -9,6 +9,7 @@ from typing import Protocol
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
+from nautilus_lab.domain.entry_filters import EntryFilterParams
 from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.funding import FundingParams, FundingSnapshot
 from nautilus_lab.domain.metrics import BacktestMetrics, SelectionMetric
@@ -76,6 +77,14 @@ class BacktestRequest:
     # What in-sample selection maximises (grid, Optuna, paper --select-on-is).
     selection_metric: SelectionMetric = SelectionMetric.PNL
     session_id: str | None = None
+    #: Entry gates and the no-reversal rule (domain/entry_filters.py); all off by default.
+    entry_filters: EntryFilterParams = field(default_factory=EntryFilterParams)
+    #: Venue latency for orders, in ms. 0 = an order sent on a closed bar fills against
+    #: that bar's close (plus the fill model's slippage), which is what a live robot
+    #: acting on the close gets. Any positive value is shorter than a bar but still
+    #: lands after the next bar was matched, i.e. fills a whole bar late at its close —
+    #: the pre-2026-10-02 behaviour (50ms), kept reachable for comparison.
+    fill_latency_ms: int = 0
 
 
 @dataclass(frozen=True, slots=True)

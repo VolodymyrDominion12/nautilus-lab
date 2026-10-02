@@ -6,6 +6,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
+from nautilus_lab.domain.entry_filters import EntryFilterParams
 from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.funding import FundingParams
 from nautilus_lab.domain.metrics import SelectionMetric
@@ -122,6 +123,22 @@ class Settings(BaseSettings):
     bb_period: int = 20
     bb_k: Decimal = Decimal("2")
     regime_confirmation_bars: int = 1
+    # regime's range leg: false = the upper Bollinger band takes profit, never shorts.
+    regime_range_allow_short: bool = True
+    # Entry gates on new exposure (domain/entry_filters.py). Off by default: they come
+    # from one batch's OOS trades and must be tested as a pre-registered hypothesis.
+    entry_filter_htf_trend: bool = False
+    entry_filter_htf_ema_period: int = 200
+    entry_filter_htf_slope_lookback: int = 24
+    entry_filter_vol_expansion: bool = False
+    entry_filter_vol_fast_period: int = 24
+    entry_filter_vol_slow_period: int = 300
+    entry_filter_min_vol_ratio: Decimal = Decimal("1")
+    # An opposite signal only closes the position; the reverse entry is not sent.
+    no_instant_reverse: bool = False
+    # Backtest venue latency (ms). 0 = fill at the decision bar's close; >0 = the old
+    # one-bar-late fill at the next close (see BacktestRequest.fill_latency_ms).
+    backtest_fill_latency_ms: int = 0
     # adaptive_ema: the filter regime leg gets a step that depends on the efficiency
     # ratio (selectivity). 0 reproduces the fixed-alpha EMA exactly - the null
     # hypothesis lives inside the grid, see specs/strategies/adaptive_ema.yaml.
@@ -247,6 +264,19 @@ class Settings(BaseSettings):
             bb_period=self.bb_period,
             bb_k=self.bb_k,
             confirmation_bars=self.regime_confirmation_bars,
+            range_allow_short=self.regime_range_allow_short,
+        )
+
+    def entry_filter_params(self) -> EntryFilterParams:
+        return EntryFilterParams(
+            htf_trend=self.entry_filter_htf_trend,
+            htf_ema_period=self.entry_filter_htf_ema_period,
+            htf_slope_lookback=self.entry_filter_htf_slope_lookback,
+            vol_expansion=self.entry_filter_vol_expansion,
+            vol_fast_period=self.entry_filter_vol_fast_period,
+            vol_slow_period=self.entry_filter_vol_slow_period,
+            min_vol_ratio=self.entry_filter_min_vol_ratio,
+            no_instant_reverse=self.no_instant_reverse,
         )
 
     def adaptive_ema_params(self) -> AdaptiveEmaParams:

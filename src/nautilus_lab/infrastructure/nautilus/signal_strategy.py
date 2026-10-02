@@ -46,6 +46,7 @@ from nautilus_lab.domain.decision_trace import (
 )
 from nautilus_lab.domain.drawdown_cooldown import PeakState, advance, on_refusal
 from nautilus_lab.domain.ema_crossover import EmaCrossover
+from nautilus_lab.domain.entry_filters import EntryFilter, EntryFilterParams
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
 from nautilus_lab.domain.marking import OpenLot, marked_equity
 from nautilus_lab.domain.meta_label_strategy import MetaLabelStrategy
@@ -53,8 +54,10 @@ from nautilus_lab.domain.ml_obi_strategy import MlObiStrategy
 from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.position_plan import (
     Holding,
+    PositionPlan,
     holding_from_signed_qty,
     plan_for_signal,
+    without_reversal,
 )
 from nautilus_lab.domain.ratchet_stop import RatchetState, initial_ratchet, step_ratchet
 from nautilus_lab.domain.regime import RegimeParams, RobotName, require_backtest_support
@@ -112,6 +115,8 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     bb_period: int = 20
     bb_k: Decimal = Decimal("2")
     regime_confirmation_bars: int = 1
+    #: regime's range leg: False = the upper band takes profit instead of shorting.
+    range_allow_short: bool = True
     risk_per_trade: Decimal = Decimal("0.005")
     stop_pct: Decimal = Decimal("0.01")
     atr_stop_multiplier: Decimal = Decimal("2")
@@ -164,6 +169,15 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     drawdown_cooldown_days: int = 0
     ml_obi_model_path: str | None = None
     ml_obi_threshold: Decimal = Decimal("0.55")
+    # Entry gates (domain/entry_filters.py). All off = the behaviour before they existed.
+    filter_htf_trend: bool = False
+    filter_htf_ema_period: int = 200
+    filter_htf_slope_lookback: int = 24
+    filter_vol_expansion: bool = False
+    filter_vol_fast_period: int = 24
+    filter_vol_slow_period: int = 300
+    filter_min_vol_ratio: Decimal = Decimal("1")
+    no_instant_reverse: bool = False
 
 
 class SignalRobot(Strategy):  # type: ignore[misc]
@@ -201,6 +215,18 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             use_ratchet=config.use_ratchet,
             ratchet_arm_pct=config.ratchet_arm_pct,
             use_protective_stop=config.use_protective_stop,
+        )
+        self._entry_filter = EntryFilter(
+            EntryFilterParams(
+                htf_trend=config.filter_htf_trend,
+                htf_ema_period=config.filter_htf_ema_period,
+                htf_slope_lookback=config.filter_htf_slope_lookback,
+                vol_expansion=config.filter_vol_expansion,
+                vol_fast_period=config.filter_vol_fast_period,
+                vol_slow_period=config.filter_vol_slow_period,
+                min_vol_ratio=config.filter_min_vol_ratio,
+                no_instant_reverse=config.no_instant_reverse,
+            )
         )
         self._previous_ts: datetime | None = None
         self._day_start_equity: Decimal | None = None
@@ -297,6 +323,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         validate_bar(domain_bar, previous_ts=self._previous_ts, now=domain_bar.ts_utc)
         self._previous_ts = domain_bar.ts_utc
         self._atr.update(domain_bar)
+        # Fed on every closed bar, warm-up included, so its windows are full by the time
+        # the first signal is acted on (same rule as the robot's own legs, B2).
+        self._entry_filter.update(domain_bar)
         self._last_vol_forecast = self._vol.update(domain_bar, self._previous_close)
         self._previous_close = domain_bar.close
 
@@ -664,8 +693,13 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         if plan.is_noop:
             return Outcome.HOLD_NOOP, None, steps
 
-        # An order from an earlier bar has not filled yet (in a bar backtest a market order
-        # fills about one bar later). Acting now would stack a second close on the first:
+        plan, vetoed_by = self._gate_entry(plan, signal.side, steps)
+        if plan.is_noop:
+            return Outcome.SIGNAL_VETOED, vetoed_by, steps
+
+        # An order from an earlier bar has not filled yet (with a venue latency > 0 a bar
+        # backtest fills a market order one bar later, see `_latency_model` in
+        # backtest_runner). Acting now would stack a second close on the first:
         # the 2026-09-29 ema BTC log shows a reversal at 15:59, then at 16:59 the same SHORT
         # "closed" again while the first close was in flight — and `_flatten` also dropped
         # the pending entry's id, so that entry filled with no protective stop and no
@@ -781,6 +815,39 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         if plan.exit_position:
             return Outcome.REVERSE, None, steps
         return Outcome.ENTRY_OPENED, None, steps
+
+    def _gate_entry(
+        self, plan: PositionPlan, side: SignalSide, steps: list[TraceStep]
+    ) -> tuple[PositionPlan, str | None]:
+        """Apply the reversal rule and the entry filters to the entry half of `plan`.
+
+        Exits are never touched: a blocked reversal still closes what we hold. Returns
+        the (possibly reduced) plan and, when an entry filter refused, `filter.<gate>`.
+        """
+        params = self._entry_filter.params
+        if params.no_instant_reverse:
+            reduced = without_reversal(plan)
+            if reduced != plan:
+                steps.append(
+                    step(
+                        Stage.PLAN,
+                        "no_instant_reverse",
+                        Verdict.MODIFY,
+                        result="exit only",
+                        note="opposite signal closes the position; the reverse entry waits",
+                    )
+                )
+                plan = reduced
+        if not plan.wants_entry:
+            return plan, None
+        verdict = self._entry_filter.evaluate(side)
+        steps.extend(verdict.steps)
+        if verdict.allowed:
+            return plan, None
+        return (
+            PositionPlan(exit_position=plan.exit_position, wants_entry=False),
+            f"filter.{verdict.code}",
+        )
 
     def _entry_allowed(
         self, current_price: Decimal, *, reversing: bool
@@ -1276,6 +1343,7 @@ def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRout
             bb_period=config.bb_period,
             bb_k=config.bb_k,
             confirmation_bars=config.regime_confirmation_bars,
+            range_allow_short=config.range_allow_short,
         ),
         vpin=vpin,
         hawkes=hawkes,

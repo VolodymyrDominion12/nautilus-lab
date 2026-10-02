@@ -21,7 +21,7 @@ from nautilus_lab.application.decision_trace_codec import record_to_dict
 from nautilus_lab.application.dtos import BacktestRequest
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.decision_log import DecisionRecord
-from nautilus_lab.domain.decision_trace import Stage
+from nautilus_lab.domain.decision_trace import Stage, TraceValue
 from nautilus_lab.domain.order_book import BookLevel, OrderBookSnapshot
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.risk import RiskLimits
@@ -340,3 +340,90 @@ def test_backtest_never_stacks_orders_on_one_in_flight() -> None:
     entries = [r for r in records if r.outcome in ("ENTRY_OPENED", "REVERSE")]
     fills = [r for r in records if r.outcome == "ENTRY_FILLED"]
     assert len(fills) >= len(entries) - 1  # the last entry may still be in flight at the end
+
+
+def _ema_run(**request_overrides: object) -> list[DecisionRecord]:
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=11)
+    log = InMemoryDecisionLog()
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=len(bars),
+        starting_equity=Decimal("10000"),
+        risk=RiskLimits(
+            risk_per_trade=Decimal("0.01"),
+            stop_pct=Decimal("0.02"),
+            max_daily_loss=Decimal("0.5"),
+            max_drawdown=Decimal("0.5"),
+        ),
+        risk_overlay=replace(RiskOverlay(), use_protective_stop=True),
+        robot=RobotName.EMA,
+        seed=11,
+        source=BarOrigin.SYNTHETIC,
+        session_id="bt-fill-timing",
+    )
+    NautilusResearchBacktest(decision_log=log).run(replace(request, **request_overrides), bars)
+    return log.records
+
+
+def _fill_steps(records: list[DecisionRecord]) -> list[dict[str, TraceValue]]:
+    return [
+        dict(s.values)
+        for r in records
+        if r.outcome == "ENTRY_FILLED"
+        for s in r.steps
+        if s.result == "entry_filled"
+    ]
+
+
+@pytest.mark.integration
+def test_entries_fill_on_the_decision_bar_by_default() -> None:
+    """2026-10-02: an order sent on a closed bar fills at that close, not an hour later.
+
+    With the old 50ms venue latency every entry in batch 20261001 filled at the *next*
+    bar's close (the engine matches a bar before settling commands that arrived during
+    it), and the protective stop only started resting a bar after that.
+    """
+    fills = _fill_steps(_ema_run())
+    assert fills, "an always-in-market EMA run must fill entries"
+    for fill in fills:
+        assert fill["fill_delay_s"] == 0
+        slippage = fill["slippage_bps"]
+        assert isinstance(slippage, Decimal)
+        assert abs(slippage) < Decimal("5"), "at most the fill model's one tick"
+
+
+@pytest.mark.integration
+def test_positive_latency_keeps_the_old_one_bar_late_fill_reachable() -> None:
+    fills = _fill_steps(_ema_run(fill_latency_ms=50))
+    assert fills
+    assert all(isinstance(f["fill_delay_s"], int) and f["fill_delay_s"] > 0 for f in fills)
+
+
+@pytest.mark.integration
+def test_entry_filters_veto_entries_and_explain_why() -> None:
+    from nautilus_lab.domain.entry_filters import EntryFilterParams
+
+    params = EntryFilterParams(htf_trend=True, htf_ema_period=50, htf_slope_lookback=10)
+    records = _ema_run(entry_filters=params)
+    entries = [r for r in records if r.outcome in ("ENTRY_OPENED", "REVERSE")]
+    for record in entries:
+        gate = [s for s in record.steps if s.component == "htf_trend"]
+        assert gate and gate[0].verdict.value == "pass", "every entry passed the gate"
+    vetoed = [r for r in records if r.outcome == "SIGNAL_VETOED"]
+    assert all(r.blocked_by == "filter.htf_trend" for r in vetoed)
+    assert vetoed, "an always-in-market robot must hit the gate against the trend"
+
+
+@pytest.mark.integration
+def test_no_instant_reverse_only_flattens_on_an_opposite_signal() -> None:
+    from nautilus_lab.domain.entry_filters import EntryFilterParams
+
+    records = _ema_run(entry_filters=EntryFilterParams(no_instant_reverse=True))
+    assert not [r for r in records if r.outcome == "REVERSE"]
+    exits = [
+        r
+        for r in records
+        if r.outcome == "EXIT" and any(s.component == "no_instant_reverse" for s in r.steps)
+    ]
+    assert exits, "an EMA cross while in a position must close it without re-entering"

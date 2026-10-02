@@ -193,7 +193,7 @@ class NautilusResearchBacktest:
                     random_seed=request.seed,
                 ),
                 fee_model=MakerTakerFeeModel(),
-                latency_model=LatencyModel(base_latency_nanos=50_000_000),
+                latency_model=_latency_model(request.fill_latency_ms),
                 bar_execution=True,
             )
             for instrument in instruments:
@@ -239,7 +239,7 @@ class NautilusResearchBacktest:
                     f"{request.robot.value} {request.source.value} backtest with fees "
                     f"(spot maker={request.spot_fees.maker} taker={request.spot_fees.taker}, "
                     f"usdm maker={request.usdm_fees.maker} taker={request.usdm_fees.taker}), "
-                    "50ms latency, 25% one-tick slippage"
+                    f"{_latency_note(request.fill_latency_ms)}, 25% one-tick slippage"
                 ),
                 metrics=metrics,
                 tearsheet_path=saved_tearsheet,
@@ -286,6 +286,30 @@ def _periods_per_year(request: BacktestRequest) -> int | None:
         return PERIODS_PER_YEAR.get(interval_from_bar_type(request.bar_type))
     except ValueError:
         return None
+
+
+def _latency_model(latency_ms: int) -> LatencyModel | None:
+    """Venue latency for one run. None = no latency model: commands settle at once.
+
+    Why 0 is the default (2026-10-02): the engine matches a bar *before* it settles
+    the commands that arrived during it (`BacktestEngine._run`: `process_bar`, then the
+    strategy, then `_process_and_settle_venues(ts)`). With any latency > 0 an order sent
+    on bar t is still in flight at t, so it settles after bar t+1 was matched and fills
+    at t+1's close — one whole bar late — and a protective stop placed on that fill only
+    starts resting a further bar later. Batch 20261001: 140/140 BTC and 154/154 ETH
+    entries filled exactly at the next bar's close; a short on 2026-08-19 lost 9.8R.
+    """
+    if latency_ms < 0:
+        raise ValueError("fill latency must be >= 0 ms")
+    if latency_ms == 0:
+        return None
+    return LatencyModel(base_latency_nanos=latency_ms * 1_000_000)
+
+
+def _latency_note(latency_ms: int) -> str:
+    if latency_ms == 0:
+        return "fills at the decision bar's close"
+    return f"{latency_ms}ms latency (fills one bar late)"
 
 
 def _trade_start_ns(request: BacktestRequest) -> int | None:
@@ -591,6 +615,7 @@ def _single_run(
             bb_period=request.regime.bb_period,
             bb_k=request.regime.bb_k,
             regime_confirmation_bars=request.regime.confirmation_bars,
+            range_allow_short=request.regime.range_allow_short,
             risk_per_trade=request.risk.risk_per_trade,
             stop_pct=request.risk.stop_pct,
             max_daily_loss=request.risk.max_daily_loss,
@@ -640,6 +665,14 @@ def _single_run(
             ml_obi_threshold=request.ml_obi_threshold,
             trade_start_ns=_trade_start_ns(request),
             drawdown_cooldown_days=request.risk_overlay.drawdown_cooldown_days,
+            filter_htf_trend=request.entry_filters.htf_trend,
+            filter_htf_ema_period=request.entry_filters.htf_ema_period,
+            filter_htf_slope_lookback=request.entry_filters.htf_slope_lookback,
+            filter_vol_expansion=request.entry_filters.vol_expansion,
+            filter_vol_fast_period=request.entry_filters.vol_fast_period,
+            filter_vol_slow_period=request.entry_filters.vol_slow_period,
+            filter_min_vol_ratio=request.entry_filters.min_vol_ratio,
+            no_instant_reverse=request.entry_filters.no_instant_reverse,
         ),
         taker_buy_base_volume_by_ns=taker_buy_by_ns or None,
         decision_log=decision_log,

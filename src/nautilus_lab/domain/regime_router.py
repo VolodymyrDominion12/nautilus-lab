@@ -99,6 +99,7 @@ class RegimeRouter:
             instrument_id=instrument_id,
             period=params.bb_period,
             band_k=params.bb_k,
+            allow_short=params.range_allow_short,
         )
         self._last_regime: MarketRegime | None = None
         self._last_snapshot: RegimeSnapshot | None = None

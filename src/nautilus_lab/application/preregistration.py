@@ -59,6 +59,11 @@ def research_terms(
         ("use_bar_vpin", str(backtest.use_bar_vpin)),
         ("use_hawkes", str(backtest.use_hawkes)),
         ("use_tick_vpin", str(backtest.use_tick_vpin)),
+        # Part of the tested hypothesis since 2026-10-02: a registration made with the
+        # gates off must not certify a run with them on (or with another fill model).
+        ("entry_filters", repr(backtest.entry_filters)),
+        ("fill_latency_ms", str(backtest.fill_latency_ms)),
+        ("range_allow_short", str(backtest.regime.range_allow_short)),
     )
     return ResearchTerms(
         robot=backtest.robot.value,

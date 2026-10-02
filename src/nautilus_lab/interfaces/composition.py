@@ -384,6 +384,8 @@ def research_request(
         tearsheet_path=tearsheet_path,
         selection_metric=cfg.selection_metric,
         session_id=str(uuid.uuid4()),
+        entry_filters=cfg.entry_filter_params(),
+        fill_latency_ms=cfg.backtest_fill_latency_ms,
     )
 
 

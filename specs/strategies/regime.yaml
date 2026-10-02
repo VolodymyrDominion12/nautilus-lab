@@ -97,6 +97,13 @@ params:
     tuned: false
     note: >
       Кількість барів поспіль для підтвердження зміни режиму (фільтр пилки).
+  - env: REGIME_RANGE_ALLOW_SHORT
+    default: true
+    tuned: false
+    note: >
+      false = range-лег не шортить верхню смугу Bollinger, а лише фіксує прибуток
+      лонга. Перемикач гіпотези H3 (батч 20261001: range-шорти збиткові на BTC і ETH);
+      вмикається лише через преєстрацію, не підбирається на IS.
 
 invariants:
   no_lookahead: true

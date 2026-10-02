@@ -107,6 +107,10 @@ class RegimeParams:
     bb_period: int = 20
     bb_k: Decimal = Decimal("2")
     confirmation_bars: int = 1
+    #: False = the range leg only takes longs (the upper band is a take-profit, not a
+    #: short). Range shorts lost on BTC and ETH in batch 20261001 (docs/32, H3). True
+    #: keeps the behaviour every earlier run used.
+    range_allow_short: bool = True
 
     def __post_init__(self) -> None:
         if self.confirmation_bars < 1:

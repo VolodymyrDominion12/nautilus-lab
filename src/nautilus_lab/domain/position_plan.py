@@ -64,3 +64,14 @@ def plan_for_signal(held: Holding, desired: SignalSide) -> PositionPlan:
     if held is target:
         return PositionPlan(exit_position=False, wants_entry=False)
     return PositionPlan(exit_position=held is not Holding.FLAT, wants_entry=True)
+
+
+def without_reversal(plan: PositionPlan) -> PositionPlan:
+    """Keep the exit of a reversal, drop its entry: an opposite signal only flattens.
+
+    In batch `20261001_182028_batch` every exit-and-re-enter on the same bar lost (BTC
+    and ETH, regime 1h). The next bar's own signal decides whether to open again.
+    """
+    if plan.exit_position and plan.wants_entry:
+        return PositionPlan(exit_position=True, wants_entry=False)
+    return plan

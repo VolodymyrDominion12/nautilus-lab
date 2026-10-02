@@ -143,6 +143,21 @@ def test_a_pair_is_one_dataset_whatever_the_leg_order() -> None:
     assert trial_id(single, "fast=5") == "ema|fast=5"
 
 
+def test_an_entry_gate_makes_a_new_trial() -> None:
+    from nautilus_lab.domain.entry_filters import EntryFilterParams
+
+    single = _request()
+    gated = replace(
+        single,
+        entry_filters=EntryFilterParams(htf_trend=True, no_instant_reverse=True),
+        regime=replace(single.regime, range_allow_short=False),
+    )
+    assert trial_id(gated, "fast=5") == (
+        "ema|fast=5 htf_trend=200/24 no_instant_reverse range_long_only"
+    )
+    assert trial_id(gated, "fast=5") != trial_id(single, "fast=5")
+
+
 # ---- DSR -------------------------------------------------------------------------------
 
 RETURNS = [Decimal(str(value)) for value in (0.02, 0.01, 0.03, -0.01, 0.02, 0.015, 0.025, 0.0)]

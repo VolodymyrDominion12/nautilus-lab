@@ -52,14 +52,14 @@ implementation:
 params:
   - env: DONCHIAN_PERIOD
     default: 20
-    grid: [10, 20, 40]
+    grid: [20, 40, 60]
     description: >
       Вікно пробою: сигнал на максимум/мінімум за N закритих барів у тренді.
       Підбирається разом із BB_PERIOD (у сітці за замовчуванням вони рухаються
       синхронно — одне значення на обидва).
   - env: BB_PERIOD
     default: 20
-    grid: [10, 20, 40]
+    grid: [20, 40, 60]
     description: Вікно смуг Bollinger для mean reversion у флеті.
   - env: BB_K
     default: 2

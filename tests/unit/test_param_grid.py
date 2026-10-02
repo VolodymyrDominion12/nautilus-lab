@@ -32,7 +32,7 @@ def test_ema_grid_varies_periods_only() -> None:
 def test_regime_grid_varies_donchian_and_bands() -> None:
     grid = list(iter_param_grid(_request(RobotName.REGIME)))
     assert len(grid) == 6
-    assert {item.donchian_period for item in grid} == {10, 20, 40}
+    assert {item.donchian_period for item in grid} == {20, 40, 60}
     assert {item.bb_k for item in grid} == {Decimal("2"), Decimal("2.5")}
 
 

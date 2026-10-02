@@ -158,6 +158,14 @@ def test_an_entry_gate_makes_a_new_trial() -> None:
     assert trial_id(gated, "fast=5") != trial_id(single, "fast=5")
 
 
+def test_a_disabled_regime_leg_makes_a_new_trial() -> None:
+    single = _request()
+    trend_only = replace(single, regime_legs="uptrend,downtrend")
+    assert trial_id(trend_only, "fast=5") == "ema|fast=5 legs=downtrend,uptrend"
+    every_leg = replace(single, regime_legs="uptrend,downtrend,range")
+    assert trial_id(every_leg, "fast=5") == trial_id(single, "fast=5")
+
+
 # ---- DSR -------------------------------------------------------------------------------
 
 RETURNS = [Decimal(str(value)) for value in (0.02, 0.01, 0.03, -0.01, 0.02, 0.015, 0.025, 0.0)]

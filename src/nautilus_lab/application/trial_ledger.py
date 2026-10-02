@@ -26,6 +26,7 @@ from typing import Protocol
 
 from nautilus_lab.application.dtos import BacktestRequest
 from nautilus_lab.domain.bars import BarOrigin
+from nautilus_lab.domain.regime_router import legs_label
 
 
 class TrialLedger(Protocol):
@@ -44,6 +45,9 @@ def dataset_key(request: BacktestRequest) -> str:
 def trial_id(request: BacktestRequest, label: str) -> str:
     """One trial = robot + parameters + any non-default entry rule (2026-10-02).
 
+    Disabling a regime leg (`REGIME_LEGS`) is such a rule too: with the range leg off the
+    robot trades a different set of entries on the same data.
+
     Turning an entry gate on is a new configuration that looked at the same data, so it
     must add to the DSR's trial count. With every gate off the id is unchanged, which
     keeps the ledgers written before the gates existed comparable.
@@ -60,13 +64,15 @@ def _variant(request: BacktestRequest) -> str:
         parts.append(f"htf_trend={gates.htf_ema_period}/{gates.htf_slope_lookback}")
     if gates.vol_expansion:
         parts.append(
-            f"vol_expansion={gates.vol_fast_period}/{gates.vol_slow_period}"
-            f">={gates.min_vol_ratio}"
+            f"vol_expansion={gates.vol_fast_period}/{gates.vol_slow_period}>={gates.min_vol_ratio}"
         )
     if gates.no_instant_reverse:
         parts.append("no_instant_reverse")
     if not request.regime.range_allow_short:
         parts.append("range_long_only")
+    legs = legs_label(request.regime_legs)
+    if legs:
+        parts.append(f"legs={legs}")
     return " ".join(parts)
 
 

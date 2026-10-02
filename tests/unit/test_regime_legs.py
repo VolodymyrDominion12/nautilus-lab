@@ -8,7 +8,7 @@ import pytest
 
 from nautilus_lab.domain.decision_trace import Verdict
 from nautilus_lab.domain.regime import MarketRegime
-from nautilus_lab.domain.regime_router import ALL_LEGS, gate_leg, parse_legs
+from nautilus_lab.domain.regime_router import ALL_LEGS, gate_leg, legs_label, parse_legs
 from nautilus_lab.domain.signals import Signal, SignalSide
 
 TS = datetime(2026, 7, 1, tzinfo=UTC)
@@ -49,3 +49,14 @@ def test_disabled_leg_exit_still_passes() -> None:
     out, (note,) = gate_leg("R", regime=MarketRegime.RANGE, signal=flat, legs=legs)
     assert out is flat
     assert note.verdict is Verdict.INFO
+
+
+def test_legs_label_is_canonical_and_empty_when_every_leg_is_on() -> None:
+    assert legs_label("") == ""
+    assert legs_label(None) == ""
+    assert legs_label("range,uptrend,downtrend") == ""
+    assert (
+        legs_label("uptrend,downtrend")
+        == legs_label(" Downtrend , uptrend")
+        == ("downtrend,uptrend")
+    )

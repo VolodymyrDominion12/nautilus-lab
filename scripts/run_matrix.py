@@ -14,6 +14,9 @@
 
   --tier A      запустити лише тір A (за замовчуванням — усі)
   --dry-run     показати команди без виконання
+  --register    лише преєструвати умови (`lab research --register <hypothesis>`) для
+                прогонів, у яких задано `hypothesis`; бектести не біжать. Запускати
+                ДО справжнього прогону того самого тіру (docs/33 §3).
   --force-dirty дозволити брудне дерево (ТІЛЬКИ для локальної налагодження,
                 ніколи не для реальної матриці)
 """
@@ -38,10 +41,71 @@ class MatrixRun:
     interval: str  # 1h / 4h / 1d
     extra_args: tuple[str, ...] = ()
     env_vars: tuple[tuple[str, str], ...] = ()
+    #: Short name of the variant when one tier runs several configs of the same cell.
+    variant: str = ""
+    #: Text for `lab research --register`; empty = this run is not pre-registered.
+    hypothesis: str = ""
 
     @property
     def label(self) -> str:
-        return f"{self.tier}_{self.robot}_{self.symbol}_{self.interval}"
+        base = f"{self.tier}_{self.robot}_{self.symbol}_{self.interval}"
+        return f"{base}_{self.variant}" if self.variant else base
+
+
+# ── Тір C (docs/33): підтвердження H0/H3 на монетах, яких аналіз не бачив ──────
+# H0 = regime лише з трендовими ногами; H3 = H0 + HTF-нахил + розширення волатильності.
+# Обидва фільтри знайдено на OOS BTC/ETH 1h (батчі 20261001, 20261002), тож чесна
+# перевірка — інші монети. На 4h вікна фільтрів перераховано на той самий календарний
+# проміжок: EMA200x1h ~ EMA50x4h, нахил 24h = 6 барів, ATR 24/300 x1h = 6/75 x4h.
+_C_COINS = ("SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT")
+_C_TREND_LEGS = (("REGIME_LEGS", "uptrend,downtrend"),)
+_C_FILTERS_1H = (
+    ("ENTRY_FILTER_HTF_TREND", "true"),
+    ("ENTRY_FILTER_HTF_EMA_PERIOD", "200"),
+    ("ENTRY_FILTER_HTF_SLOPE_LOOKBACK", "24"),
+    ("ENTRY_FILTER_VOL_EXPANSION", "true"),
+    ("ENTRY_FILTER_VOL_FAST_PERIOD", "24"),
+    ("ENTRY_FILTER_VOL_SLOW_PERIOD", "300"),
+    ("ENTRY_FILTER_MIN_VOL_RATIO", "1"),
+)
+_C_FILTERS_4H = (
+    ("ENTRY_FILTER_HTF_TREND", "true"),
+    ("ENTRY_FILTER_HTF_EMA_PERIOD", "50"),
+    ("ENTRY_FILTER_HTF_SLOPE_LOOKBACK", "6"),
+    ("ENTRY_FILTER_VOL_EXPANSION", "true"),
+    ("ENTRY_FILTER_VOL_FAST_PERIOD", "6"),
+    ("ENTRY_FILTER_VOL_SLOW_PERIOD", "75"),
+    ("ENTRY_FILTER_MIN_VOL_RATIO", "1"),
+)
+_C_HYPOTHESIS = {
+    "H0": "H0 regime trend legs only (no range leg) beats vol-matched buy&hold",
+    "H3": (
+        "H3 regime trend legs + slow-EMA slope gate + vol-expansion gate beats vol-matched buy&hold"
+    ),
+}
+
+
+def _tier_c() -> tuple[MatrixRun, ...]:
+    runs: list[MatrixRun] = []
+    for interval, catalog, filters in (
+        ("1h", "catalog", _C_FILTERS_1H),
+        ("4h", "catalog_2019_4h", _C_FILTERS_4H),
+    ):
+        for coin in _C_COINS:
+            for variant, env in (("H0", _C_TREND_LEGS), ("H3", _C_TREND_LEGS + filters)):
+                runs.append(
+                    MatrixRun(
+                        "C",
+                        "regime",
+                        coin,
+                        interval,
+                        ("--folds", "6", "--days", "1000", "--catalog", catalog),
+                        env,
+                        variant=variant,
+                        hypothesis=f"{_C_HYPOTHESIS[variant]} [{coin} {interval}]",
+                    )
+                )
+    return tuple(runs)
 
 
 MATRIX: tuple[MatrixRun, ...] = (
@@ -200,6 +264,7 @@ MATRIX: tuple[MatrixRun, ...] = (
             ("FUNDING_PERP_ID", "ETHUSDT-PERP.SIM"),
         ),
     ),
+    *_tier_c(),
 )
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -225,8 +290,12 @@ def _git_revision(repo_root: Path) -> str:
     return result.stdout.strip() or "unknown"
 
 
-def _build_command(run: MatrixRun, lab: str) -> list[str]:
-    """Побудувати команду `lab research` для одного прогону."""
+def _build_command(run: MatrixRun, lab: str, *, register: bool = False) -> list[str]:
+    """Побудувати команду `lab research` для одного прогону.
+
+    `register=True` дописує `--register <hypothesis>`: ті самі умови й env, але замість
+    бектесту лише запис термінів у research/preregistrations/.
+    """
     cmd = [
         lab,
         "research",
@@ -234,6 +303,10 @@ def _build_command(run: MatrixRun, lab: str) -> list[str]:
         run.robot,
     ]
     cmd.extend(run.extra_args)
+    if register:
+        if not run.hypothesis:
+            raise ValueError(f"{run.label}: --register needs a hypothesis on the run")
+        cmd.extend(("--register", run.hypothesis))
     return cmd
 
 
@@ -243,6 +316,7 @@ def _run_all(
     repo_root: Path,
     out_dir: Path,
     dry_run: bool,
+    register: bool = False,
 ) -> int:
     lab = str(repo_root / ".venv" / "bin" / "lab")
     revision = _git_revision(repo_root)
@@ -256,11 +330,13 @@ def _run_all(
 
     failures: list[str] = []
     for run in runs:
-        cmd = _build_command(run, lab)
-        log_path = out_dir / f"{run.label}.log"
+        cmd = _build_command(run, lab, register=register)
+        suffix = ".register.log" if register else ".log"
+        log_path = out_dir / f"{run.label}{suffix}"
         print(f"  [{run.tier}] {run.label}", end="  ", flush=True)
         if dry_run:
-            print(f"(dry-run) {' '.join(cmd)}")
+            env_note = " ".join(f"{k}={v}" for k, v in run.env_vars)
+            print(f"(dry-run) {' '.join(cmd)}" + (f"  [env: {env_note}]" if env_note else ""))
             continue
         try:
             env = dict(os.environ)
@@ -352,6 +428,14 @@ def main(argv: list[str] | None = None) -> int:
             "локальної налагодження, ніколи для реальної матриці."
         ),
     )
+    parser.add_argument(
+        "--register",
+        action="store_true",
+        help=(
+            "Лише преєструвати умови прогонів, у яких задано hypothesis "
+            "(lab research --register). Запускати до справжнього прогону."
+        ),
+    )
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -396,8 +480,16 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+    if args.register:
+        runs = [r for r in runs if r.hypothesis]
+        if not runs:
+            print("ERROR: у вибраних прогонах немає hypothesis для --register", file=sys.stderr)
+            return 1
+
     out_dir = repo_root / "reports" / "matrix"
-    return _run_all(runs, repo_root=repo_root, out_dir=out_dir, dry_run=args.dry_run)
+    return _run_all(
+        runs, repo_root=repo_root, out_dir=out_dir, dry_run=args.dry_run, register=args.register
+    )
 
 
 if __name__ == "__main__":

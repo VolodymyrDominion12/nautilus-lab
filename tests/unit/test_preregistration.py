@@ -115,10 +115,16 @@ def test_the_same_setup_gives_the_same_hash() -> None:
         _request(robot=RobotName.ADAPTIVE_EMA),
         replace(_request(), in_sample_fraction=Decimal("0.6")),
         replace(_request(), use_optuna=True),
+        _request(regime_legs="uptrend,downtrend"),
+        _request(use_quantile_vpin=True),
     ],
 )
 def test_changing_any_term_changes_the_hash(changed: WalkForwardRequest) -> None:
     assert _terms(changed).sha256() != _terms().sha256()
+
+
+def test_listing_every_leg_keeps_the_default_hash() -> None:
+    assert _terms(_request(regime_legs="range,downtrend,uptrend")).sha256() == _terms().sha256()
 
 
 def test_easing_the_gate_changes_the_hash() -> None:

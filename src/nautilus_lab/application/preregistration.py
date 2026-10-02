@@ -23,6 +23,7 @@ from nautilus_lab.domain.preregistration import (
     ResearchTerms,
     check_preregistration,
 )
+from nautilus_lab.domain.regime_router import legs_label
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 
 
@@ -48,7 +49,7 @@ def research_terms(
         grid = tuple(params.label() for params in iter_param_grid(backtest))
     rules = criteria or GateCriteria()
     gate = tuple((item.name, str(getattr(rules, item.name))) for item in dataclasses.fields(rules))
-    options = (
+    options: tuple[tuple[str, str], ...] = (
         ("bar_type", backtest.bar_type),
         ("spot_fees", repr(backtest.spot_fees)),
         ("usdm_fees", repr(backtest.usdm_fees)),
@@ -65,6 +66,14 @@ def research_terms(
         ("fill_latency_ms", str(backtest.fill_latency_ms)),
         ("range_allow_short", str(backtest.regime.range_allow_short)),
     )
+    # Switches added after registrations already existed: written only when they differ
+    # from the default, so a default run keeps the hash it was registered under, while a
+    # registration with every leg on can never certify a run with the range leg off.
+    legs = legs_label(backtest.regime_legs)
+    if legs:
+        options += (("regime_legs", legs),)
+    if backtest.use_quantile_vpin:
+        options += (("vpin_quantile", str(backtest.vpin_quantile)),)
     return ResearchTerms(
         robot=backtest.robot.value,
         dataset=dataset_key(backtest),

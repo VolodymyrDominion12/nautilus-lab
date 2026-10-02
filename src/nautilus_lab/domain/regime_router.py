@@ -40,6 +40,20 @@ def parse_legs(text: str | None) -> frozenset[MarketRegime]:
         raise ValueError(f"unknown regime leg in {text!r}; allowed: {allowed}") from exc
 
 
+def legs_label(text: str | None) -> str:
+    """Canonical name of a `REGIME_LEGS` choice; "" when every leg is on.
+
+    `"uptrend,downtrend"` and `" Downtrend,uptrend"` are the same configuration, so the
+    trial ledger and the pre-registration must see the same string for both. All legs
+    on is the default and the behaviour before the switch existed: it stays "" so ids and
+    hashes written before 2026-10-02 still match.
+    """
+    legs = parse_legs(text)
+    if legs == ALL_LEGS:
+        return ""
+    return ",".join(sorted(leg.value for leg in legs))
+
+
 def gate_leg(
     component: str,
     *,

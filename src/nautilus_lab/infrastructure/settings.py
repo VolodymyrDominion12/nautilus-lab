@@ -159,6 +159,10 @@ class Settings(BaseSettings):
     hawkes_toxic_threshold: Decimal = Decimal("2.0")
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    # IS-гіпотеза «перцентильний поріг»: замість фіксованого 0.7 — rolling-квантиль.
+    # Вмикається лише для robot=vpin_momentum при USE_QUANTILE_VPIN=true.
+    use_quantile_vpin: bool = False
+    vpin_quantile: Decimal = Decimal("0.90")
     # REGIME_LEGS: enabled legs of regime / adaptive_ema, e.g. "uptrend,range" (docs/31).
     regime_legs: str = ""
     embargo_bars: int = 10

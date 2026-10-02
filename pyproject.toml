@@ -161,6 +161,12 @@ select = [
 "scripts/decision_sweep_summary.py" = ["RUF001", "RUF002", "RUF003"]
 # tests/unit/test_regime_router.py -- B2/B3 regression tests, Ukrainian docstrings.
 "tests/unit/test_regime_router.py" = ["RUF001", "RUF002", "RUF003"]
+# src/nautilus_lab/domain/vpin.py — QuantileVpin клас містить українські docstrings
+# (IS-гіпотеза «перцентильний поріг»); той самий випадок, що й decision_narrative.py.
+"src/nautilus_lab/domain/vpin.py" = ["RUF001", "RUF002", "RUF003"]
+# tests/unit/test_quantile_vpin.py — тести для QuantileVpin з українськими docstrings
+# і коментарями. E501 ігнорується для одного довгого рядка утворення кошика.
+"tests/unit/test_quantile_vpin.py" = ["RUF001", "RUF002", "RUF003", "E501"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -129,8 +129,10 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     qty_step: Decimal = Decimal("0.001")
     use_bar_vpin: bool = False
     use_tick_vpin: bool = False
+    use_quantile_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    vpin_quantile: Decimal = Decimal("0.90")
     #: Enabled legs of regime / adaptive_ema / meta_label's primary ("" = all).
     regime_legs: str = ""
     use_hawkes: bool = False
@@ -1248,6 +1250,13 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             vpin = TickVpin(
                 bucket_volume=config.vpin_bucket_volume,
                 toxic_threshold=config.vpin_toxic_threshold,
+            )
+        elif config.use_quantile_vpin:
+            from nautilus_lab.domain.vpin import QuantileVpin
+
+            vpin = QuantileVpin(
+                bucket_volume=config.vpin_bucket_volume,
+                quantile=config.vpin_quantile,
             )
         else:
             vpin = BarVpin(

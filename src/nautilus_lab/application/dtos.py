@@ -50,8 +50,10 @@ class BacktestRequest:
     stress_slice: str | None = None
     use_bar_vpin: bool = False
     use_tick_vpin: bool = False
+    use_quantile_vpin: bool = False
     vpin_bucket_volume: Decimal = Decimal("1000")
     vpin_toxic_threshold: Decimal = Decimal("0.7")
+    vpin_quantile: Decimal = Decimal("0.90")
     regime_legs: str = ""
     use_hawkes: bool = False
     hawkes_baseline: Decimal = Decimal("0.1")

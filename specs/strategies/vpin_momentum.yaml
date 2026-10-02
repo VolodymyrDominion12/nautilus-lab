@@ -11,6 +11,9 @@ blocked_reason: >
   стратегія незмірювана. Bar-VPIN на 1h є слабким проксі мікроструктури. Блокується
   до хвилі 7, коли буде доступна тік-історія (aggTrades ≥ 6 місяців). Якщо
   повертати — поріг як перцентиль (напр. p90), а не фіксовані 0.7.
+  IS-гіпотеза «перцентильний поріг» реалізована через USE_QUANTILE_VPIN=true
+  (domain/vpin.py::QuantileVpin): поріг = rolling-квантиль завершених кошиків.
+  Підбір VPIN_QUANTILE дозволяється ТІЛЬКИ на IS (--is-fraction); OOS — фіксований.
 title: "VPIN momentum: момент у бік токсичного потоку, трейлінг-стоп за ATR"
 
 hypothesis: >
@@ -112,6 +115,23 @@ params:
       жодного разу**: максимум справжнього VPIN за 23 808 кошиків — 0.694. Тому
       робот стоїть осторонь (див. `evidence.notes`), і саме тому поріг не можна
       рухати «щоб заторгувало»: це була б підгонка під уже побачений OOS.
+  - env: USE_QUANTILE_VPIN
+    default: false
+    tuned: false
+    note: >
+      IS-гіпотеза «перцентильний поріг» (domain/vpin.py::QuantileVpin). При true
+      замість фіксованого VPIN_TOXIC_THRESHOLD=0.7 використовується rolling-квантиль
+      VPIN_QUANTILE від розподілу завершених кошиків. Підбирати VPIN_QUANTILE
+      дозволяється ТІЛЬКИ на IS-вікні; OOS-значення фіксується. Взаємно
+      ексклюзивно з USE_TICK_VPIN: якщо обидва true, пріоритет у tick-VPIN.
+  - env: VPIN_QUANTILE
+    default: 0.90
+    grid: [0.85, 0.90, 0.95]
+    note: >
+      Перцентиль rolling-розподілу VPIN для QuantileVpin. Активний лише при
+      USE_QUANTILE_VPIN=true. IS-сітка [0.85, 0.90, 0.95] відповідає очікуваному
+      діапазону: p85–p95 rolling-вікна з реального bar-VPIN (ETH 1h: p90 ≈ 0.222).
+      Optuna може шукати у [0.75, 0.99] з кроком 0.05 — але ТІЛЬКИ на IS.
 
 invariants:
   no_lookahead: true

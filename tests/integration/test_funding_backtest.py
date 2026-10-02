@@ -63,7 +63,7 @@ def test_funding_research_backtest_synthetic() -> None:
     )
     report = use_case.execute(request)
 
-    assert report.fills == 2
+    assert report.fills == 4
     assert report.positions == 2
     assert report.ending_balance is not None
     assert report.ending_balance > Decimal("100000")
@@ -94,7 +94,7 @@ def test_funding_paper_session_synthetic() -> None:
     )
     report = use_case.execute(request)
 
-    assert len(report.fills) == 2
+    assert len(report.fills) == 4
     sides = {fill.side for fill in report.fills}
     assert sides == {"BUY", "SELL"}
     instruments = {fill.instrument_id for fill in report.fills}

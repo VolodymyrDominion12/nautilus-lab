@@ -58,7 +58,7 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
             )
         return
     if request.robot is RobotName.META_LABEL:
-        for threshold in (Decimal("0.50"), Decimal("0.55"), Decimal("0.60")):
+        for threshold in (Decimal("0.45"), Decimal("0.50"), Decimal("0.55")):
             yield SelectedParams(
                 fast_ema=base.fast_ema,
                 slow_ema=base.slow_ema,

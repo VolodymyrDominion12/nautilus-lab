@@ -32,7 +32,14 @@ export const InstrumentCards: React.FC<InstrumentCardsProps> = ({ instruments, s
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-lg font-bold text-gray-100">{inst.raw_symbol}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-lg font-bold text-gray-100">{inst.raw_symbol}</span>
+                  {inst.instrument_id.endsWith('-PERP.SIM') && (
+                    <span className="px-2 py-0.5 text-[10px] font-semibold tracking-wider bg-purple-950/60 text-purple-300 border border-purple-800/50 rounded-md">
+                      PERP
+                    </span>
+                  )}
+                </div>
                 <span className="px-2.5 py-0.5 text-xs font-medium bg-blue-950/60 text-blue-400 border border-blue-800/50 rounded-full">
                   {inst.quote_currency}
                 </span>

@@ -37,6 +37,7 @@ INGEST_SERIES_FLAGS: dict[str, list[str]] = {
     "trades": ["--trades"],
     "funding": ["--funding"],
     "depth": ["--depth"],
+    "premium_index": ["--premium-index"],
 }
 
 #: Series that need exactly one symbol. `--depth` opens one WebSocket per run, and the CLI
@@ -162,6 +163,8 @@ def run_ingest(
         cmd.extend(["--end", req.end])
     if req.catalog:
         cmd.extend(["--catalog", req.catalog])
+    if req.interval:
+        cmd.extend(["--interval", req.interval])
     if req.incremental:
         cmd.append("--incremental")
 

@@ -52,6 +52,7 @@ export const SeriesCoverage: React.FC<SeriesCoverageProps> = ({ health, instrume
               <th className="text-right p-1.5">depth</th>
               <th className="text-left p-1.5">ticks until</th>
               <th className="text-right p-1.5">funding</th>
+              <th className="text-right p-1.5">prem index</th>
             </tr>
           </thead>
           <tbody className="text-gray-300">
@@ -100,6 +101,15 @@ export const SeriesCoverage: React.FC<SeriesCoverageProps> = ({ health, instrume
                     </span>
                   ) : (
                     <span className="text-amber-400">missing</span>
+                  )}
+                </td>
+                <td className="p-1.5 text-right">
+                  {item.premium_index?.present ? (
+                    <span className="text-emerald-400">
+                      {item.premium_index.rows?.toLocaleString() ?? 'yes'}
+                    </span>
+                  ) : (
+                    <span className="text-gray-600">—</span>
                   )}
                 </td>
               </tr>

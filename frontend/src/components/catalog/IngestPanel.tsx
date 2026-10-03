@@ -18,6 +18,9 @@ function startMessage(series: IngestSeries, incremental: boolean): string {
     return 'Fetching aggregated trades (ticks) — needed by the tick-level VPIN and Hawkes filters...\n';
   }
   if (series === 'funding') return 'Fetching funding settlements for the perpetual...\n';
+  if (series === 'premium_index') {
+    return 'Fetching premium index klines (basis mark vs index) for perpetual contracts...\n';
+  }
   if (series === 'depth') {
     return 'Opening the Binance depth WebSocket — this records until you press Stop...\n';
   }
@@ -35,6 +38,7 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
   const [symbols, setSymbols] = useState('ETHUSDT,BTCUSDT');
   const [startDate, setStartDate] = useState('2024-01-01');
   const [endDate, setEndDate] = useState('');
+  const [interval, setInterval] = useState('1d');
   const [ingestSeries, setIngestSeries] = useState<IngestSeries>('klines');
   const [ingestLog, setIngestLog] = useState('');
   /** Button state: true from the click until the server reports the job idle. */
@@ -79,6 +83,8 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
         catalog: selectedCatalogPath || undefined,
         incremental: incremental && ingestSeries === 'klines',
         series: ingestSeries,
+        interval:
+          ingestSeries === 'klines' || ingestSeries === 'premium_index' ? interval : undefined,
       });
       if (response.status === 'started') {
         pollingSince.current = Date.now();
@@ -115,18 +121,19 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
         </div>
         <p className="text-xs text-gray-400">
           Public endpoints only, no API keys. One catalog holds every series; each ingest kind
-          writes its own tree, so bars, ticks and funding can be fetched independently.
+          writes its own tree, so bars, ticks, funding, and premium index can be fetched independently.
         </p>
 
         <div className="flex flex-col gap-3 mt-2">
           <div>
             <label className="text-xs font-medium text-gray-300 block mb-1">Series</label>
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               {(
                 [
-                  ['klines', 'Klines', 'OHLCV bars'],
-                  ['trades', 'Trades', 'ticks for VPIN/Hawkes'],
+                  ['klines', 'Klines', 'OHLCV bars (spot / perp)'],
+                  ['premium_index', 'Prem Index', 'perp basis mark vs index'],
                   ['funding', 'Funding', 'perp settlements'],
+                  ['trades', 'Trades', 'ticks for VPIN/Hawkes'],
                   ['depth', 'Depth', 'live L2 snapshots'],
                 ] as const
               ).map(([value, label, hint]) => (
@@ -145,30 +152,88 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
                 </button>
               ))}
             </div>
-            <span className="text-[10px] text-gray-600 block mt-1">
+            <span className="text-[10px] text-gray-500 block mt-1">
               {ingestSeries === 'klines'
-                ? 'The bar series every robot reads; supports incremental updates.'
-                : ingestSeries === 'trades'
-                  ? 'Aggregated trades into data/agg_trade/ — one file per UTC day. Enables the tick-level VPIN and Hawkes filters.'
-                  : ingestSeries === 'funding'
-                    ? 'Funding settlements into data/funding/. Always walks the whole requested window.'
-                    : 'Live L2 order-book capture over a WebSocket into data/orderbook/. It has no start/end window and runs until you stop it, so keep the start/end fields empty.'}
+                ? 'The bar series every robot reads (spot or perp); supports incremental updates.'
+                : ingestSeries === 'premium_index'
+                  ? 'Perpetual mark vs index basis spread into data/premium_index/. Essential for funding & basis carry.'
+                  : ingestSeries === 'trades'
+                    ? 'Aggregated trades into data/agg_trade/ — one file per UTC day. Enables the tick-level VPIN and Hawkes filters.'
+                    : ingestSeries === 'funding'
+                      ? 'Funding settlements into data/funding/. Always walks the whole requested window.'
+                      : 'Live L2 order-book capture over a WebSocket into data/orderbook/. It has no start/end window and runs until you stop it, so keep the start/end fields empty.'}
             </span>
           </div>
 
           <div>
-            <label className="text-xs font-medium text-gray-300 block mb-1">Symbols</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-gray-300">Symbols</label>
+              <div className="flex items-center gap-1 text-[10px]">
+                <span className="text-gray-500">Presets:</span>
+                <button
+                  type="button"
+                  onClick={() => setSymbols('BTCUSDT,ETHUSDT')}
+                  className="px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 hover:text-white hover:bg-gray-700 transition-colors"
+                >
+                  Top 2
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSymbols(
+                      'BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,ADAUSDT,AVAXUSDT,DOTUSDT,MATICUSDT,LINKUSDT',
+                    )
+                  }
+                  className="px-1.5 py-0.5 rounded bg-blue-950/70 text-blue-300 border border-blue-800/40 hover:bg-blue-900/60 transition-colors"
+                >
+                  11 Spot
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSymbols(
+                      'BTCUSDT-PERP,ETHUSDT-PERP,SOLUSDT-PERP,BNBUSDT-PERP,XRPUSDT-PERP,DOGEUSDT-PERP,ADAUSDT-PERP,AVAXUSDT-PERP,DOTUSDT-PERP,MATICUSDT-PERP,LINKUSDT-PERP',
+                    )
+                  }
+                  className="px-1.5 py-0.5 rounded bg-purple-950/70 text-purple-300 border border-purple-800/40 hover:bg-purple-900/60 transition-colors"
+                >
+                  11 Perps
+                </button>
+              </div>
+            </div>
             <input
               type="text"
               value={symbols}
               onChange={(e) => setSymbols(e.target.value)}
-              placeholder="ETHUSDT,BTCUSDT"
+              placeholder="ETHUSDT,BTCUSDT or BTCUSDT-PERP"
               className="w-full bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 font-mono"
             />
             <span className="text-[10px] text-gray-600">
               USDT pairs only — the catalog maps them to *.SIM instruments.
             </span>
           </div>
+
+          {(ingestSeries === 'klines' || ingestSeries === 'premium_index') && (
+            <div>
+              <label className="text-xs font-medium text-gray-300 block mb-1">Bar interval</label>
+              <div className="grid grid-cols-6 gap-1">
+                {(['1d', '4h', '1h', '15m', '5m', '1m'] as const).map((intv) => (
+                  <button
+                    key={intv}
+                    type="button"
+                    onClick={() => setInterval(intv)}
+                    className={`py-1.5 rounded-lg text-xs font-mono font-medium border transition-colors ${
+                      interval === intv
+                        ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50'
+                        : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-gray-200'
+                    }`}
+                  >
+                    {intv}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="text-xs font-medium text-gray-300 block mb-1">Start date UTC</label>
@@ -207,11 +272,13 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
             )}
             {ingestSeries === 'klines'
               ? 'Full ingest (klines)'
-              : ingestSeries === 'trades'
-                ? 'Fetch aggregated trades'
-                : ingestSeries === 'funding'
-                  ? 'Fetch funding history'
-                  : 'Start live depth capture'}
+              : ingestSeries === 'premium_index'
+                ? 'Fetch premium index'
+                : ingestSeries === 'trades'
+                  ? 'Fetch aggregated trades'
+                  : ingestSeries === 'funding'
+                    ? 'Fetch funding history'
+                    : 'Start live depth capture'}
           </button>
 
           <button

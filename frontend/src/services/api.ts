@@ -370,8 +370,8 @@ export async function fetchCatalogBars(params: {
   return parseJson(await fetch(apiUrl(`/api/catalog/bars?${query.toString()}`)));
 }
 
-/** Which tree an ingest writes into. One catalog holds all four side by side. */
-export type IngestSeries = 'klines' | 'trades' | 'funding' | 'depth';
+/** Which tree an ingest writes into. One catalog holds all five side by side. */
+export type IngestSeries = 'klines' | 'trades' | 'funding' | 'depth' | 'premium_index';
 
 export async function runIngest(params: {
   symbols: string;
@@ -380,6 +380,7 @@ export async function runIngest(params: {
   catalog?: string;
   incremental?: boolean;
   series?: IngestSeries;
+  interval?: string;
 }): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/catalog/ingest'), {
@@ -485,6 +486,7 @@ export interface DataHealthInstrument {
   /** L2 depth snapshots, captured live — day-sharded like the ticks. */
   orderbook: TickCoverage;
   funding: DataSeriesCoverage;
+  premium_index?: DataSeriesCoverage;
 }
 
 export interface DataHealthResponse {

@@ -89,12 +89,12 @@ def test_tick_filter_is_refused_when_the_catalog_has_no_tick_series(
 
 def test_every_ingest_kind_maps_to_a_real_cli_flag() -> None:
     """The dashboard must not invent flags: each entry is passed straight to `lab ingest`."""
-    assert set(INGEST_SERIES_FLAGS) == {"klines", "trades", "funding", "depth"}
+    assert set(INGEST_SERIES_FLAGS) == {"klines", "trades", "funding", "depth", "premium_index"}
     # klines is the default path of `lab ingest` and therefore carries no flag
     assert INGEST_SERIES_FLAGS["klines"] == []
     for series, flags in INGEST_SERIES_FLAGS.items():
         for flag in flags:
-            assert flag in {"--trades", "--funding", "--depth"}, (series, flag)
+            assert flag in {"--trades", "--funding", "--depth", "--premium-index"}, (series, flag)
 
 
 def test_ingest_rejects_an_unknown_series(client: TestClient) -> None:

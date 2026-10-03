@@ -254,6 +254,7 @@ export interface IngestRunRequest {
   catalog?: string | null;
   incremental?: boolean;
   series?: string;
+  interval?: string | null;
 }
 
 export interface SettingsUpdate {

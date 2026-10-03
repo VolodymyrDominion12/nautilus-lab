@@ -46,8 +46,10 @@ class IngestRunRequest(BaseModel):
     catalog: str | None = None
     incremental: bool = False
     #: Series to ingest. `klines` is the default (bars for every robot); `trades` pulls
-    #: aggregated trades for the tick-level filters; `funding` pulls settlements.
+    #: aggregated trades for the tick-level filters; `funding` pulls settlements;
+    #: `premium_index` pulls Binance USD-M premium index candles.
     series: str = "klines"
+    interval: str | None = None
 
 
 class SettingsUpdate(BaseModel):

@@ -108,6 +108,21 @@ def _funding_health(root: Path, symbol: str) -> dict[str, Any]:
     }
 
 
+def _premium_index_health(root: Path, symbol: str, interval: str) -> dict[str, Any]:
+    from nautilus_lab.infrastructure.premium_index_catalog import ParquetPremiumIndexCatalog
+
+    target = ParquetPremiumIndexCatalog(root).series_path(symbol, interval)
+    if not target.exists():
+        return {"present": False, "rows": None, "first": None, "last": None}
+    first, last = _parquet_span(target, "ts_utc")
+    return {
+        "present": True,
+        "rows": _parquet_rows(target),
+        "first": first,
+        "last": last,
+    }
+
+
 def _sharded_health(directory: Path) -> dict[str, Any]:
     """Coverage of a day-sharded series: `data/<name>/<SYMBOL>/<YYYY-MM-DD>.parquet`."""
     missing: dict[str, Any] = {
@@ -187,12 +202,14 @@ def describe_data_health(catalog_path: str | None = None) -> dict[str, Any]:
             "ticks": dict(empty_shards),
             "orderbook": dict(empty_shards),
             "funding": {"present": False, "rows": None, "first": None, "last": None},
+            "premium_index": {"present": False, "rows": None, "first": None, "last": None},
         }
         if symbol:
             entry["taker_flow"] = _taker_flow_health(resolved, symbol, bar_interval)
             entry["ticks"] = _ticks_health(resolved, symbol)
             entry["orderbook"] = _orderbook_health(resolved, symbol)
             entry["funding"] = _funding_health(resolved, symbol)
+            entry["premium_index"] = _premium_index_health(resolved, symbol, bar_interval)
         rows.append(entry)
     return {
         "catalog_path": str(resolved),

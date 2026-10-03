@@ -78,6 +78,17 @@ def test_adaptive_ema_grid_contains_the_fixed_alpha_control() -> None:
     assert any(selectivity == Decimal("0") for _, selectivity in pairs)
 
 
+def test_pairs_grid_varies_z_entry() -> None:
+    grid = list(iter_param_grid(_request(RobotName.PAIRS)))
+    assert len(grid) == 4
+    assert {item.z_entry for item in grid} == {
+        Decimal("1.5"),
+        Decimal("2"),
+        Decimal("2.5"),
+        Decimal("3"),
+    }
+
+
 def test_every_grid_point_has_its_own_trial_label() -> None:
     """Audit B5: the three vpin_momentum points shared one label (1 trial, not 3)."""
     for robot in RobotName:

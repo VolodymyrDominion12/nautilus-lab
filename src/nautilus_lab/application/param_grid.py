@@ -11,7 +11,7 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
     """Small grid. Fit on in-sample only; never peek at out-of-sample."""
     base = selected_from_request(request)
     if request.robot is RobotName.PAIRS:
-        for z_entry in (Decimal("1.5"), Decimal("2"), Decimal("2.5")):
+        for z_entry in (Decimal("1.5"), Decimal("2"), Decimal("2.5"), Decimal("3")):
             yield SelectedParams(
                 fast_ema=base.fast_ema,
                 slow_ema=base.slow_ema,

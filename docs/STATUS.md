@@ -14,7 +14,7 @@
 |---|---|---|---|---|---|---|---|---|---|
 | [`formulaic_lgbm`](../specs/strategies/formulaic_lgbm.yaml) | candidate | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Formulaic LGBM: напрямок бару з 12 формульних ознак OHLCV + пороговий класифікатор |
 | [`funding`](../specs/strategies/funding.yaml) | candidate | так | `funding_strategy` | — | — | так | — | не виміряно | Funding cash-and-carry: спот лонг + перпетуал шорт, вхід за нетто-APY |
-| [`meta_label`](../specs/strategies/meta_label.yaml) | candidate | так | `signal_strategy` | так | так | так | — | не виміряно | Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни |
+| [`meta_label`](../specs/strategies/meta_label.yaml) | candidate | так | `signal_strategy` | так | так | так | — | виміряно: не обганяє buy&hold | Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни |
 | [`pairs`](../specs/strategies/pairs.yaml) | candidate | так | `spread_strategy` | — | — | так | — | виміряно: не обганяє buy&hold | Pairs trading: коінтеграція ETH/BTC і повернення до середнього за z-score |
 | [`regime`](../specs/strategies/regime.yaml) | candidate | так | `signal_strategy` | так | так | так | так | виміряно: не обганяє buy&hold | Regime router: Donchian у тренді, Bollinger mean reversion у флеті |
 | [`glft`](../specs/strategies/glft.yaml) | blocked | — | `none` | — | — | — | — | не виміряно | (1) Немає споживача `QuoteIntent`. |

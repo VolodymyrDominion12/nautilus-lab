@@ -54,7 +54,8 @@ def test_htf_trend_allows_with_the_slope_and_blocks_against_it() -> None:
     for index in range(20):
         gate.update(_bar(Decimal(100 + index), index))
     slope = gate.htf_slope()
-    assert slope is not None and slope > 0
+    assert slope is not None
+    assert slope > 0
     assert gate.evaluate(SignalSide.BUY).allowed
     short = gate.evaluate(SignalSide.SELL)
     assert not short.allowed
@@ -75,30 +76,28 @@ def test_flat_is_never_blocked() -> None:
 
 
 def test_vol_expansion_blocks_compressed_ranges() -> None:
-    gate = EntryFilter(
-        EntryFilterParams(vol_expansion=True, vol_fast_period=3, vol_slow_period=10)
-    )
+    gate = EntryFilter(EntryFilterParams(vol_expansion=True, vol_fast_period=3, vol_slow_period=10))
     for index in range(7):
         gate.update(_bar(Decimal("100"), index, spread=Decimal("2")))
     for index in range(7, 10):
         gate.update(_bar(Decimal("100"), index, spread=Decimal("0.5")))
     ratio = gate.vol_ratio()
-    assert ratio is not None and ratio < 1
+    assert ratio is not None
+    assert ratio < 1
     verdict = gate.evaluate(SignalSide.BUY)
     assert not verdict.allowed
     assert verdict.code == "vol_expansion"
 
 
 def test_vol_expansion_allows_expanding_ranges() -> None:
-    gate = EntryFilter(
-        EntryFilterParams(vol_expansion=True, vol_fast_period=3, vol_slow_period=10)
-    )
+    gate = EntryFilter(EntryFilterParams(vol_expansion=True, vol_fast_period=3, vol_slow_period=10))
     for index in range(7):
         gate.update(_bar(Decimal("100"), index, spread=Decimal("0.5")))
     for index in range(7, 10):
         gate.update(_bar(Decimal("100"), index, spread=Decimal("2")))
     ratio = gate.vol_ratio()
-    assert ratio is not None and ratio > 1
+    assert ratio is not None
+    assert ratio > 1
     assert gate.evaluate(SignalSide.SELL).allowed
 
 

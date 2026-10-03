@@ -14,6 +14,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -342,7 +343,7 @@ def test_backtest_never_stacks_orders_on_one_in_flight() -> None:
     assert len(fills) >= len(entries) - 1  # the last entry may still be in flight at the end
 
 
-def _ema_run(**request_overrides: object) -> list[DecisionRecord]:
+def _ema_run(**request_overrides: Any) -> list[DecisionRecord]:
     bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=11)
     log = InMemoryDecisionLog()
     request = BacktestRequest(
@@ -409,7 +410,8 @@ def test_entry_filters_veto_entries_and_explain_why() -> None:
     entries = [r for r in records if r.outcome in ("ENTRY_OPENED", "REVERSE")]
     for record in entries:
         gate = [s for s in record.steps if s.component == "htf_trend"]
-        assert gate and gate[0].verdict.value == "pass", "every entry passed the gate"
+        assert gate, "every entry passed the gate"
+        assert gate[0].verdict.value == "pass", "every entry passed the gate"
     vetoed = [r for r in records if r.outcome == "SIGNAL_VETOED"]
     assert all(r.blocked_by == "filter.htf_trend" for r in vetoed)
     assert vetoed, "an always-in-market robot must hit the gate against the trend"

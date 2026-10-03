@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     selection_metric: SelectionMetric = SelectionMetric.PNL
     drawdown_cooldown_days: int = 0
     research_drawdown_cooldown_days: int = 7
-    pairs_refit_every: int = 0
+    pairs_refit_every: int = 48
     # The two legs of `pairs` (A is traded in the spread's direction, B hedges it).
     pairs_leg_a: str = "ETH/USDT.SIM"
     pairs_leg_b: str = "BTC/USDT.SIM"

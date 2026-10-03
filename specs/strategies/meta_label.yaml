@@ -54,7 +54,7 @@ implementation:
 params:
   - env: META_LABEL_THRESHOLD
     default: 0.55
-    grid: [0.45, 0.50, 0.55]
+    grid: [0.45, 0.50, 0.55, 0.60, 0.65]
     description: >
       Поріг P(успіх | сигнал regime). Вхід, якщо ймовірність ≥ порогу;
       інакше сигнал ігнорується. Єдиний параметр сітки

@@ -74,6 +74,8 @@ def research_terms(
         options += (("regime_legs", legs),)
     if backtest.use_quantile_vpin:
         options += (("vpin_quantile", str(backtest.vpin_quantile)),)
+    if backtest.regime.min_hold_bars:
+        options += (("regime_min_hold_bars", str(backtest.regime.min_hold_bars)),)
     return ResearchTerms(
         robot=backtest.robot.value,
         dataset=dataset_key(backtest),

@@ -125,6 +125,8 @@ class Settings(BaseSettings):
     regime_confirmation_bars: int = 1
     # regime's range leg: false = the upper Bollinger band takes profit, never shorts.
     regime_range_allow_short: bool = True
+    # regime: bars a position is held before the router may exit/flip it (0 = off).
+    regime_min_hold_bars: int = 0
     # Entry gates on new exposure (domain/entry_filters.py). Off by default: they come
     # from one batch's OOS trades and must be tested as a pre-registered hypothesis.
     entry_filter_htf_trend: bool = False
@@ -269,6 +271,7 @@ class Settings(BaseSettings):
             bb_k=self.bb_k,
             confirmation_bars=self.regime_confirmation_bars,
             range_allow_short=self.regime_range_allow_short,
+            min_hold_bars=self.regime_min_hold_bars,
         )
 
     def entry_filter_params(self) -> EntryFilterParams:

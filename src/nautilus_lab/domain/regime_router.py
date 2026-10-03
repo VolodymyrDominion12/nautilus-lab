@@ -121,6 +121,7 @@ class RegimeRouter:
         self._last_hawkes_state: HawkesIntensity | None = None
         self._last_effective_regime: MarketRegime | None = None
         self._current_side: SignalSide = SignalSide.FLAT
+        self._bars_held = 0
         self._seen = 0
         self._trace: tuple[TraceStep, ...] = ()
 
@@ -170,6 +171,33 @@ class RegimeRouter:
             )
 
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
+        prior = self._current_side
+        signal = self._route_bar(bar)
+        if prior is not SignalSide.FLAT:
+            self._bars_held += 1
+        if (
+            signal is not None
+            and prior is not SignalSide.FLAT
+            and signal.side is not prior
+            and self._bars_held < self._params.min_hold_bars
+        ):
+            # Too early to leave: keep the position and drop the exit/flip.
+            self._current_side = prior
+            self._trace = (
+                *self._trace,
+                step(
+                    Stage.FILTER,
+                    "min_hold_bars",
+                    Verdict.BLOCK,
+                    result=f"held {self._bars_held} < {self._params.min_hold_bars} bars",
+                ),
+            )
+            return None
+        if signal is not None and signal.side is not prior:
+            self._bars_held = 0
+        return signal
+
+    def _route_bar(self, bar: OhlcvBar) -> Signal | None:
         self._seen += 1
         self._last_vpin_state = self._vpin.update(bar) if self._vpin is not None else None
         self._last_hawkes_state = self._hawkes.last if self._hawkes is not None else None

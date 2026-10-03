@@ -616,6 +616,7 @@ def _single_run(
             bb_k=request.regime.bb_k,
             regime_confirmation_bars=request.regime.confirmation_bars,
             range_allow_short=request.regime.range_allow_short,
+            regime_min_hold_bars=request.regime.min_hold_bars,
             risk_per_trade=request.risk.risk_per_trade,
             stop_pct=request.risk.stop_pct,
             max_daily_loss=request.risk.max_daily_loss,

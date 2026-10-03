@@ -111,8 +111,14 @@ class RegimeParams:
     #: short). Range shorts lost on BTC and ETH in batch 20261001 (docs/32, H3). True
     #: keeps the behaviour every earlier run used.
     range_allow_short: bool = True
+    #: Bars a position must be held before the router may exit or flip it (0 = off).
+    #: Cost-control hypothesis from batch 20261003: breakeven (~5 bps) sat below the
+    #: paid cost (7.5 bps). Select on IS only; the OOS value stays fixed.
+    min_hold_bars: int = 0
 
     def __post_init__(self) -> None:
+        if self.min_hold_bars < 0:
+            raise InvalidRiskError("min_hold_bars must be >= 0")
         if self.confirmation_bars < 1:
             raise InvalidRiskError("confirmation_bars must be >= 1")
         if self.er_period < 2:

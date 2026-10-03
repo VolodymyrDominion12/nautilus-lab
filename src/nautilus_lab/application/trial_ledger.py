@@ -70,6 +70,8 @@ def _variant(request: BacktestRequest) -> str:
         parts.append("no_instant_reverse")
     if not request.regime.range_allow_short:
         parts.append("range_long_only")
+    if request.regime.min_hold_bars:
+        parts.append(f"min_hold={request.regime.min_hold_bars}")
     legs = legs_label(request.regime_legs)
     if legs:
         parts.append(f"legs={legs}")

@@ -38,21 +38,25 @@ def test_regime_grid_varies_donchian_and_bands() -> None:
 
 def test_formulaic_grid_varies_threshold_only() -> None:
     grid = list(iter_param_grid(_request(RobotName.FORMULAIC_LGBM)))
-    assert len(grid) == 3
+    assert len(grid) == 5
     assert {item.formulaic_threshold for item in grid} == {
         Decimal("0.50"),
         Decimal("0.55"),
         Decimal("0.60"),
+        Decimal("0.65"),
+        Decimal("0.70"),
     }
 
 
 def test_meta_label_grid_varies_threshold_only() -> None:
     grid = list(iter_param_grid(_request(RobotName.META_LABEL)))
-    assert len(grid) == 3
+    assert len(grid) == 5
     assert {item.meta_label_threshold for item in grid} == {
         Decimal("0.45"),
         Decimal("0.50"),
         Decimal("0.55"),
+        Decimal("0.60"),
+        Decimal("0.65"),
     }
 
 
@@ -88,3 +92,23 @@ def test_default_extras_keep_recorded_labels_unchanged() -> None:
     default = next(item for item in grid if item.vpin_ema_period == 50)
     assert "vpin_ema_period" not in default.label()
     assert "vpin_ema_period=30" in next(i for i in grid if i.vpin_ema_period == 30).label()
+
+
+def test_vpin_momentum_grid_ignores_quantile_by_default() -> None:
+    grid = list(iter_param_grid(_request(RobotName.VPIN_MOMENTUM)))
+    assert len(grid) == 3
+    assert {item.vpin_quantile for item in grid} == {Decimal("0.90")}
+
+
+def test_vpin_momentum_grid_varies_quantile_when_enabled() -> None:
+    from dataclasses import replace
+
+    request = replace(_request(RobotName.VPIN_MOMENTUM), use_quantile_vpin=True)
+    grid = list(iter_param_grid(request))
+    assert len(grid) == 9
+    assert {item.vpin_quantile for item in grid} == {
+        Decimal("0.85"),
+        Decimal("0.90"),
+        Decimal("0.95"),
+    }
+    assert len({item.label() for item in grid}) == 9

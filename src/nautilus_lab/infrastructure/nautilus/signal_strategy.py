@@ -117,6 +117,7 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     regime_confirmation_bars: int = 1
     #: regime's range leg: False = the upper band takes profit instead of shorting.
     range_allow_short: bool = True
+    regime_min_hold_bars: int = 0
     risk_per_trade: Decimal = Decimal("0.005")
     stop_pct: Decimal = Decimal("0.01")
     atr_stop_multiplier: Decimal = Decimal("2")
@@ -1353,6 +1354,7 @@ def _regime_primary(config: SignalRobotConfig, instrument_id: str) -> RegimeRout
             bb_k=config.bb_k,
             confirmation_bars=config.regime_confirmation_bars,
             range_allow_short=config.range_allow_short,
+            min_hold_bars=config.regime_min_hold_bars,
         ),
         vpin=vpin,
         hawkes=hawkes,

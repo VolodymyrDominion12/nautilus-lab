@@ -214,6 +214,7 @@ _LABEL_EXTRAS_DEFAULTS: tuple[tuple[str, object], ...] = (
     ("z_exit", Decimal("0.5")),
     ("vpin_ema_period", 50),
     ("vpin_atr_multiple", Decimal("2")),
+    ("vpin_quantile", Decimal("0.90")),
 )
 
 
@@ -230,6 +231,7 @@ class SelectedParams:
     z_exit: Decimal = Decimal("0.5")
     vpin_ema_period: int = 50
     vpin_atr_multiple: Decimal = Decimal("2")
+    vpin_quantile: Decimal = Decimal("0.90")
     formulaic_threshold: Decimal = Decimal("0.55")
     meta_label_threshold: Decimal = Decimal("0.55")
     adaptive_period: int = 40
@@ -760,6 +762,7 @@ def selected_from_request(request: BacktestRequest) -> SelectedParams:
         z_exit=request.pairs.z_exit,
         vpin_ema_period=request.vpin_momentum_ema_period,
         vpin_atr_multiple=request.vpin_momentum_atr_multiple,
+        vpin_quantile=request.vpin_quantile,
         formulaic_threshold=request.formulaic_threshold,
         meta_label_threshold=request.meta_label_threshold,
         adaptive_period=request.adaptive_params.base_period,
@@ -789,6 +792,7 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
         ),
         vpin_momentum_ema_period=params.vpin_ema_period,
         vpin_momentum_atr_multiple=params.vpin_atr_multiple,
+        vpin_quantile=params.vpin_quantile,
         formulaic_threshold=params.formulaic_threshold,
         meta_label_threshold=params.meta_label_threshold,
         adaptive_params=replace(

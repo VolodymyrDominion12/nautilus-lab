@@ -25,23 +25,36 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
             )
         return
     if request.robot is RobotName.VPIN_MOMENTUM:
+        quantiles = (
+            (Decimal("0.85"), Decimal("0.90"), Decimal("0.95"))
+            if request.use_quantile_vpin
+            else (base.vpin_quantile,)
+        )
         for ema_period in (30, 50, 80):
-            yield SelectedParams(
-                fast_ema=base.fast_ema,
-                slow_ema=base.slow_ema,
-                donchian_period=base.donchian_period,
-                bb_period=base.bb_period,
-                bb_k=base.bb_k,
-                enter_trend_er=base.enter_trend_er,
-                exit_trend_er=base.exit_trend_er,
-                z_entry=base.z_entry,
-                z_exit=base.z_exit,
-                vpin_ema_period=ema_period,
-                vpin_atr_multiple=base.vpin_atr_multiple,
-            )
+            for quantile in quantiles:
+                yield SelectedParams(
+                    fast_ema=base.fast_ema,
+                    slow_ema=base.slow_ema,
+                    donchian_period=base.donchian_period,
+                    bb_period=base.bb_period,
+                    bb_k=base.bb_k,
+                    enter_trend_er=base.enter_trend_er,
+                    exit_trend_er=base.exit_trend_er,
+                    z_entry=base.z_entry,
+                    z_exit=base.z_exit,
+                    vpin_ema_period=ema_period,
+                    vpin_atr_multiple=base.vpin_atr_multiple,
+                    vpin_quantile=quantile,
+                )
         return
     if request.robot is RobotName.FORMULAIC_LGBM:
-        for threshold in (Decimal("0.50"), Decimal("0.55"), Decimal("0.60")):
+        for threshold in (
+            Decimal("0.50"),
+            Decimal("0.55"),
+            Decimal("0.60"),
+            Decimal("0.65"),
+            Decimal("0.70"),
+        ):
             yield SelectedParams(
                 fast_ema=base.fast_ema,
                 slow_ema=base.slow_ema,
@@ -58,7 +71,13 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
             )
         return
     if request.robot is RobotName.META_LABEL:
-        for threshold in (Decimal("0.45"), Decimal("0.50"), Decimal("0.55")):
+        for threshold in (
+            Decimal("0.45"),
+            Decimal("0.50"),
+            Decimal("0.55"),
+            Decimal("0.60"),
+            Decimal("0.65"),
+        ):
             yield SelectedParams(
                 fast_ema=base.fast_ema,
                 slow_ema=base.slow_ema,

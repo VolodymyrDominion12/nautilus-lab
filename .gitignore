@@ -84,10 +84,10 @@ data/
 *.db-shm
 
 # Market data & Nautilus catalogs (Parquet series)
-catalog/
-catalog_*/
-catalog-*/
-catalogs/
+/catalog/
+/catalog_*/
+/catalog-*/
+/catalogs/
 *.parquet
 *.feather
 *.arrow

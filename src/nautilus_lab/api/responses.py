@@ -117,14 +117,28 @@ class JobLogResponse(ApiModel):
 
 class CatalogSummary(ApiModel):
     path: str
-    exists: bool
-    total_instruments: int
+    name: str = ""
+    exists: bool = False
+    total_instruments: int = 0
+    total_bars: int = 0
+    bar_interval: str | None = None
+    market_type: str = "unknown"
+    first_date: str | None = None
+    last_date: str | None = None
+    symbols: list[str] = []
+    symbol_counts: dict[str, int] = {}
+    has_funding: bool = False
+    has_premium_index: bool = False
+    has_ticks: bool = False
+    has_orderbook: bool = False
+    has_taker_flow: bool = False
     error: str | None = None
 
 
 class CatalogsResponse(ApiModel):
     default: str
     catalogs: list[CatalogSummary]
+    all_symbols: list[str] = []
 
 
 class ReportItem(ApiModel):
@@ -165,10 +179,15 @@ class CatalogInstrument(ApiModel):
 
 class CatalogResponse(ApiModel):
     catalog_path: str
-    exists: bool
+    name: str = ""
+    exists: bool = True
     bar_interval: str | None = None
+    market_type: str = "unknown"
     total_instruments: int | None = None
-    instruments: list[CatalogInstrument]
+    total_bars: int = 0
+    first_date: str | None = None
+    last_date: str | None = None
+    instruments: list[CatalogInstrument] = []
     error: str | None = None
 
 

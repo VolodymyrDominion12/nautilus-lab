@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,7 +10,7 @@ from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.settings import Settings
-from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
+from nautilus_lab.infrastructure.timeframe import interval_from_bar_type, nautilus_bar_type
 from nautilus_lab.interfaces.composition import settings
 
 
@@ -60,26 +61,57 @@ def resolve_catalog_path(catalog_path: str | None) -> Path:
     return candidate.resolve()
 
 
+def discover_catalog_paths(cfg: Settings | None = None) -> list[str]:
+    """Find all catalog directories: configured paths + discovered directories on disk."""
+    resolved = cfg or settings()
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    for p in resolved.all_catalog_paths():
+        res = str(resolve_catalog_path(p))
+        if res not in seen:
+            seen.add(res)
+            paths.append(p)
+
+    root = repo_root()
+    for entry in sorted(root.glob("catalog*")):
+        if entry.is_dir() and (entry / "data").exists():
+            res = str(entry.resolve())
+            if res not in seen:
+                seen.add(res)
+                paths.append(entry.name)
+
+    return paths
+
+
 def describe_catalog(catalog_path: str | None = None) -> dict[str, Any]:
     resolved = resolve_catalog_path(catalog_path)
-    # The interval is a property of this process's settings, not of the directory, but the
-    # dashboard needs it to request bars and to label its chart: one catalog holds one
-    # interval, and a chart asking for the wrong one renders empty with no explanation.
-    interval = settings().bar_interval
+    default_interval = settings().bar_interval
+    name = resolved.name
     if not resolved.exists():
         return {
             "catalog_path": str(resolved),
+            "name": name,
             "exists": False,
-            "bar_interval": interval,
+            "bar_interval": default_interval,
+            "market_type": "unknown",
+            "total_instruments": 0,
+            "total_bars": 0,
+            "first_date": None,
+            "last_date": None,
             "instruments": [],
         }
 
     try:
         cat = ParquetDataCatalog(str(resolved))
         instruments_info: list[dict[str, Any]] = []
+        detected_interval: str | None = None
         for inst in cat.instruments():
             bars = cat.bars(instrument_ids=[str(inst.id)])
             count = len(bars)
+            if detected_interval is None and count > 0:
+                with contextlib.suppress(ValueError):
+                    detected_interval = interval_from_bar_type(str(bars[0].bar_type))
             # ISO-8601, not `str(Timestamp)`: pandas renders its own nanosecond precision
             # ("2026-09-18 23:59:59.999000064"), which is not a format a browser is
             # obliged to parse and does not match the tick/funding series' timestamps.
@@ -100,39 +132,139 @@ def describe_catalog(catalog_path: str | None = None) -> dict[str, Any]:
                     "taker_fee": float(inst.taker_fee),
                 }
             )
+
+        eff_interval = detected_interval or default_interval
+        total_bars = sum(int(i["bars_count"]) for i in instruments_info)
+        first_dates = sorted([i["first_date"] for i in instruments_info if i.get("first_date")])
+        last_dates = sorted(
+            [i["last_date"] for i in instruments_info if i.get("last_date")], reverse=True
+        )
+
+        is_perp = (
+            all(i["instrument_id"].endswith("-PERP.SIM") for i in instruments_info)
+            if instruments_info
+            else False
+        )
+        is_spot = (
+            all(
+                "/" in i["instrument_id"] and not i["instrument_id"].endswith("-PERP.SIM")
+                for i in instruments_info
+            )
+            if instruments_info
+            else False
+        )
+        if is_perp:
+            mtype = "perp"
+        elif is_spot:
+            mtype = "spot"
+        elif instruments_info:
+            mtype = "mixed"
+        else:
+            mtype = "unknown"
+
         return {
             "catalog_path": str(resolved),
+            "name": name,
             "exists": True,
-            "bar_interval": interval,
+            "bar_interval": eff_interval,
+            "market_type": mtype,
             "instruments": instruments_info,
             "total_instruments": len(instruments_info),
+            "total_bars": total_bars,
+            "first_date": first_dates[0] if first_dates else None,
+            "last_date": last_dates[0] if last_dates else None,
         }
     except Exception as exc:  # noqa: BLE001 — an unreadable catalog is reported, not raised
         return {
             "catalog_path": str(resolved),
+            "name": name,
             "exists": True,
-            "bar_interval": interval,
+            "bar_interval": default_interval,
+            "market_type": "unknown",
             "error": str(exc),
             "instruments": [],
+            "total_instruments": 0,
+            "total_bars": 0,
+            "first_date": None,
+            "last_date": None,
         }
 
 
 def list_catalogs(cfg: Settings | None = None) -> dict[str, Any]:
     resolved = cfg or settings()
     catalogs: list[dict[str, Any]] = []
-    for path in resolved.all_catalog_paths():
-        summary = describe_catalog(path)
+    all_symbols_set: set[str] = set()
+
+    for path_str in discover_catalog_paths(resolved):
+        summary = describe_catalog_cached(path_str)
+        insts = summary.get("instruments", [])
+        total_bars = summary.get("total_bars") or sum(int(i.get("bars_count", 0)) for i in insts)
+        symbols = [str(i.get("raw_symbol") or i.get("instrument_id", "")) for i in insts]
+
+        symbol_counts: dict[str, int] = {}
+        for i in insts:
+            raw = str(i.get("raw_symbol") or i.get("instrument_id", ""))
+            clean_s = raw.removesuffix("-PERP").replace("/", "")
+            symbol_counts[clean_s] = int(i.get("bars_count", 0))
+            all_symbols_set.add(clean_s)
+
+        path_obj = Path(summary["catalog_path"])
+        name = summary.get("name") or path_obj.name
+        data_dir = path_obj / "data"
+
+        has_funding = (
+            (data_dir / "funding").exists() and any((data_dir / "funding").iterdir())
+            if (data_dir / "funding").exists()
+            else False
+        )
+        has_premium_index = (
+            (data_dir / "premium_index").exists() and any((data_dir / "premium_index").iterdir())
+            if (data_dir / "premium_index").exists()
+            else False
+        )
+        has_ticks = (
+            (data_dir / "agg_trade").exists() and any((data_dir / "agg_trade").iterdir())
+            if (data_dir / "agg_trade").exists()
+            else False
+        )
+        has_orderbook = (
+            ((data_dir / "orderbook").exists() and any((data_dir / "orderbook").iterdir()))
+            or ((data_dir / "order_book").exists() and any((data_dir / "order_book").iterdir()))
+            if (data_dir / "orderbook").exists() or (data_dir / "order_book").exists()
+            else False
+        )
+        has_taker_flow = (
+            (data_dir / "taker_flow").exists() and any((data_dir / "taker_flow").iterdir())
+            if (data_dir / "taker_flow").exists()
+            else False
+        )
+
         catalogs.append(
             {
                 "path": summary["catalog_path"],
+                "name": name,
                 "exists": summary.get("exists", False),
                 "total_instruments": summary.get("total_instruments", 0),
+                "total_bars": total_bars,
+                "bar_interval": summary.get("bar_interval"),
+                "market_type": summary.get("market_type", "unknown"),
+                "first_date": summary.get("first_date"),
+                "last_date": summary.get("last_date"),
+                "symbols": symbols,
+                "symbol_counts": symbol_counts,
+                "has_funding": has_funding,
+                "has_premium_index": has_premium_index,
+                "has_ticks": has_ticks,
+                "has_orderbook": has_orderbook,
+                "has_taker_flow": has_taker_flow,
                 "error": summary.get("error"),
             }
         )
+
     return {
         "default": resolved.catalog_path,
         "catalogs": catalogs,
+        "all_symbols": sorted(all_symbols_set),
     }
 
 
@@ -197,10 +329,14 @@ def load_catalog_bars(
     cfg = settings()
     raw_id = instrument_id or cfg.instrument_id
     resolved_id = normalize_instrument_id(raw_id)
-    interval = bar_interval or cfg.bar_interval
+    resolved_path = resolve_catalog_path(catalog_path)
+    interval = bar_interval
+    if not interval:
+        desc = describe_catalog_cached(str(resolved_path))
+        interval = desc.get("bar_interval") or cfg.bar_interval
     bar_type = nautilus_bar_type(resolved_id, interval)
     catalog = NautilusParquetCatalog(
-        resolve_catalog_path(catalog_path),
+        resolved_path,
         spot_fees=cfg.spot_fee_schedule(),
         usdm_fees=cfg.usdm_fee_schedule(),
     )

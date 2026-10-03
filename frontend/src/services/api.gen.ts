@@ -86,14 +86,28 @@ export interface JobLogResponse {
 
 export interface CatalogSummary {
   path: string;
+  name: string;
   exists: boolean;
   total_instruments: number;
+  total_bars: number;
+  bar_interval: string | null;
+  market_type: string;
+  first_date: string | null;
+  last_date: string | null;
+  symbols: string[];
+  symbol_counts: Record<string, number>;
+  has_funding: boolean;
+  has_premium_index: boolean;
+  has_ticks: boolean;
+  has_orderbook: boolean;
+  has_taker_flow: boolean;
   error: string | null;
 }
 
 export interface CatalogsResponse {
   default: string;
   catalogs: CatalogSummary[];
+  all_symbols: string[];
 }
 
 export interface ReportItem {
@@ -134,9 +148,14 @@ export interface CatalogInstrument {
 
 export interface CatalogResponse {
   catalog_path: string;
+  name: string;
   exists: boolean;
   bar_interval: string | null;
+  market_type: string;
   total_instruments: number | null;
+  total_bars: number;
+  first_date: string | null;
+  last_date: string | null;
   instruments: CatalogInstrument[];
   error: string | null;
 }

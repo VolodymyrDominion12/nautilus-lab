@@ -63,18 +63,19 @@ class BinancePublicFunding:
     ) -> list[FundingSnapshot]:
         if start >= end:
             raise ValueError("start must be before end")
-        rows = self._fetch_funding_rows(symbol=symbol, start=start, end=end)
+        clean_symbol = symbol.removesuffix("-PERP")
+        rows = self._fetch_funding_rows(symbol=clean_symbol, start=start, end=end)
         if not rows:
             return []
         index_by_hour: dict[datetime, Decimal] = {}
         if self._with_index_prices:
-            index_by_hour = self._fetch_index_prices(symbol=symbol, start=start, end=end)
+            index_by_hour = self._fetch_index_prices(symbol=clean_symbol, start=start, end=end)
         snapshots: list[FundingSnapshot] = []
         for ts, rate, mark in rows:
             index = index_by_hour.get(_floor_to_hour(ts))
             snapshots.append(
                 FundingSnapshot(
-                    instrument=symbol,
+                    instrument=clean_symbol,
                     funding_rate=rate,
                     mark_price=mark,
                     index_price=index,

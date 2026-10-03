@@ -122,6 +122,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     ingest.add_argument(
+        "--interval",
+        choices=("1m", "5m", "15m", "1h", "4h", "1d"),
+        default=None,
+        help="Bar interval (default: settings bar_interval)",
+    )
+    ingest.add_argument(
+        "--premium-index",
+        action="store_true",
+        help=(
+            "Ingest USD-M premium index klines instead of price klines "
+            "(stored under catalog/data/premium_index/<SYMBOL>/<INTERVAL>/)"
+        ),
+    )
+    ingest.add_argument(
         "--depth",
         action="store_true",
         help=(
@@ -482,8 +496,14 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
         if args.symbols
         else cfg.binance_symbols
     )
+    if getattr(args, "interval", None):
+        cfg = cfg.model_copy(update={"bar_interval": args.interval})
     if getattr(args, "funding", False):
         return _run_ingest_funding(cfg, symbols=symbols, start=default_start, end=end)
+    if getattr(args, "premium_index", False):
+        return _run_ingest_premium_index(
+            cfg, symbols=symbols, interval=cfg.bar_interval, start=default_start, end=end
+        )
     if getattr(args, "trades", False):
         minutes = getattr(args, "live_ticks", None)
         if minutes is not None:
@@ -601,13 +621,45 @@ def _run_ingest_funding(
     lab already ingests work unchanged; there is no separate perp symbol mapping.
     """
     use_case = ingest_funding_use_case(cfg)
-    for symbol in symbols:
+    for raw_symbol in symbols:
+        symbol = raw_symbol.removesuffix("-PERP").upper()
         report = use_case.execute(funding_ingest_request(cfg, start=start, end=end, symbol=symbol))
         print(
             f"symbol={symbol} funding={report.snapshots_written} "
             f"missing_index_price={report.missing_index_price} "
             f"first={report.first_ts.isoformat()} last={report.last_ts.isoformat()} "
             f"catalog={report.catalog_path}"
+        )
+    return 0
+
+
+def _run_ingest_premium_index(
+    cfg: Settings,
+    *,
+    symbols: list[str],
+    interval: str,
+    start: datetime,
+    end: datetime,
+) -> int:
+    """Ingest USD-M premium index klines per symbol and interval."""
+    from pathlib import Path
+
+    from nautilus_lab.infrastructure.binance_premium_index import BinancePublicPremiumIndex
+    from nautilus_lab.infrastructure.premium_index_catalog import ParquetPremiumIndexCatalog
+
+    client = BinancePublicPremiumIndex()
+    catalog = ParquetPremiumIndexCatalog(Path(cfg.catalog_path))
+    for raw_symbol in symbols:
+        symbol = raw_symbol.removesuffix("-PERP").upper()
+        bars = client.fetch(symbol=symbol, interval=interval, start=start, end=end)
+        if not bars:
+            print(f"symbol={symbol} interval={interval} premium_index=0 bars (no data/pre-listing)")
+            continue
+        written = catalog.write(bars, symbol=symbol, interval=interval)
+        print(
+            f"symbol={symbol} interval={interval} premium_index={written} "
+            f"first={bars[0].ts_utc.isoformat()} last={bars[-1].ts_utc.isoformat()} "
+            f"catalog={cfg.catalog_path}"
         )
     return 0
 

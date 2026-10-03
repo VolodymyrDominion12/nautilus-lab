@@ -38,8 +38,17 @@ _SPOT_SPECS: dict[str, tuple[str, str, int, str, str]] = {
 }
 
 _PERP_SPECS: dict[str, tuple[str, str, int, str, str]] = {
-    "ETHUSDT-PERP.SIM": ("ETH", "USDT", 2, "0.01", "0.001"),
     "BTCUSDT-PERP.SIM": ("BTC", "USDT", 1, "0.1", "0.001"),
+    "ETHUSDT-PERP.SIM": ("ETH", "USDT", 2, "0.01", "0.001"),
+    "SOLUSDT-PERP.SIM": ("SOL", "USDT", 2, "0.01", "0.01"),
+    "BNBUSDT-PERP.SIM": ("BNB", "USDT", 2, "0.01", "0.01"),
+    "XRPUSDT-PERP.SIM": ("XRP", "USDT", 4, "0.0001", "0.1"),
+    "ADAUSDT-PERP.SIM": ("ADA", "USDT", 4, "0.0001", "1"),
+    "DOGEUSDT-PERP.SIM": ("DOGE", "USDT", 5, "0.00001", "1"),
+    "AVAXUSDT-PERP.SIM": ("AVAX", "USDT", 3, "0.001", "1"),
+    "DOTUSDT-PERP.SIM": ("DOT", "USDT", 3, "0.001", "0.1"),
+    "MATICUSDT-PERP.SIM": ("MATIC", "USDT", 4, "0.0001", "1"),
+    "LINKUSDT-PERP.SIM": ("LINK", "USDT", 3, "0.001", "0.01"),
 }
 
 
@@ -153,7 +162,7 @@ def _crypto_perpetual(instrument_id: str, *, fees: FeeSchedule) -> CryptoPerpetu
         max_quantity=Quantity.from_str("1000000"),
         min_quantity=Quantity.from_str(size_inc),
         max_price=Price.from_str("1000000"),
-        min_price=Price.from_str("0.01"),
+        min_price=Price.from_str(price_inc),
         margin_init=Decimal("0.01"),
         margin_maint=Decimal("0.005"),
         maker_fee=fees.maker,

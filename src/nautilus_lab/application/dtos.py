@@ -190,6 +190,19 @@ class FundingIngestReport:
     #: but the basis gate cannot be evaluated on those rows, so the count is reported
     #: instead of hidden behind a fabricated index price.
     missing_index_price: int = 0
+    #: Settlements whose mark price stayed unknown (no `markPrice` in the response and
+    #: no 1h mark kline to join). Same rule as the index: counted, never invented.
+    missing_mark_price: int = 0
+    #: Settlements whose mark came from `markPriceKlines` because the funding response
+    #: had none — the pre-2023 history.
+    mark_from_klines: int = 0
+    #: Rows the exchange returned without a usable time or rate. The only rows dropped.
+    dropped_malformed: int = 0
+    #: Whole days between the requested start and the first stored settlement. A
+    #: perpetual listed after `start` explains a gap; a gap on an old perp does not,
+    #: and that is how the 2020-2023 history loss went unnoticed. Reported, so the
+    #: caller can see it on every run.
+    late_start_days: int = 0
 
 
 @dataclass(frozen=True, slots=True)

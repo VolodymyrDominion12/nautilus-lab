@@ -25,17 +25,24 @@ class FundingSnapshot:
     `(mark - index) / index` identically zero — a gate that can never fire and never
     complains. `None` here means "index unknown", which callers must treat as
     *no information*, never as "no divergence".
+
+    `mark_price` is optional for the same reason. Binance's funding history returns an
+    empty `markPrice` for settlements older than late 2023 (measured: every ingested
+    series began on 2023-10-31 while 2020 was requested). Requiring a mark made the
+    adapter drop those rows without a word, so the whole 2020-2023 funding history —
+    the 2021 high-funding regime included — silently vanished. The settlement itself
+    (time + rate) is the event; the mark is context and may be unknown.
     """
 
     instrument: str
     funding_rate: Decimal
-    mark_price: Decimal
+    mark_price: Decimal | None
     index_price: Decimal | None
     ts_utc: datetime
 
     def basis(self) -> Decimal | None:
         """`(mark - index) / index`, or None when it cannot be computed honestly."""
-        if self.index_price is None or self.index_price <= 0:
+        if self.mark_price is None or self.index_price is None or self.index_price <= 0:
             return None
         return (self.mark_price - self.index_price) / self.index_price
 
@@ -160,12 +167,13 @@ class FundingCashAndCarry:
         if basis is None:
             # An unusable snapshot must not crash the run, and must not be read as a
             # flat basis (0/0 is not "no divergence", it is "we do not know").
+            missing = "mark price" if snapshot.mark_price is None else "index price"
             if self._open:
                 self._open = False
                 self._periods_held = 0
-                explain(Verdict.EMIT, "flat", "index price unknown: close the carry")
-                return self._flat(ts, "missing index price")
-            explain(Verdict.SKIP, None, "index price unknown: basis cannot be judged")
+                explain(Verdict.EMIT, "flat", f"{missing} unknown: close the carry")
+                return self._flat(ts, f"missing {missing}")
+            explain(Verdict.SKIP, None, f"{missing} unknown: basis cannot be judged")
             return None
 
         if self._open:

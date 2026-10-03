@@ -31,9 +31,11 @@ _SCHEMA = pa.schema(
         pa.field("ts_utc", pa.timestamp("us", tz="UTC"), nullable=False),
         pa.field("instrument", pa.string(), nullable=False),
         pa.field("funding_rate", pa.string(), nullable=False),
-        pa.field("mark_price", pa.string(), nullable=False),
-        # Nullable by design: "index unknown" must survive a round trip as unknown,
-        # not come back as a number that makes the basis look flat.
+        # Nullable by design, both prices: "unknown" must survive a round trip as
+        # unknown, not come back as a number that makes the basis look flat. Binance
+        # serves no mark for pre-2023 settlements; a non-nullable mark is what used to
+        # make the adapter drop that whole history.
+        pa.field("mark_price", pa.string(), nullable=True),
         pa.field("index_price", pa.string(), nullable=True),
     ]
 )
@@ -75,7 +77,9 @@ class ParquetFundingCatalog:
                 "ts_utc": [item.ts_utc for item in ordered],
                 "instrument": [item.instrument for item in ordered],
                 "funding_rate": [str(item.funding_rate) for item in ordered],
-                "mark_price": [str(item.mark_price) for item in ordered],
+                "mark_price": [
+                    None if item.mark_price is None else str(item.mark_price) for item in ordered
+                ],
                 "index_price": [
                     None if item.index_price is None else str(item.index_price) for item in ordered
                 ],
@@ -98,7 +102,10 @@ class ParquetFundingCatalog:
         target = self.series_path(symbol)
         if not target.exists():
             return []
-        rows = pq.read_table(target, schema=_SCHEMA).to_pylist()
+        # No `schema=` here: files written before the mark became nullable carry a
+        # non-nullable field, and forcing the new schema onto them is a needless
+        # failure point. The columns are the same; the reader below handles None.
+        rows = pq.read_table(target, columns=[field.name for field in _SCHEMA]).to_pylist()
         snapshots: list[FundingSnapshot] = []
         for row in rows:
             ts = row["ts_utc"]
@@ -107,11 +114,12 @@ class ParquetFundingCatalog:
             if end is not None and ts >= end:
                 continue
             raw_index = row["index_price"]
+            raw_mark = row["mark_price"]
             snapshots.append(
                 FundingSnapshot(
                     instrument=str(row["instrument"]),
                     funding_rate=Decimal(str(row["funding_rate"])),
-                    mark_price=Decimal(str(row["mark_price"])),
+                    mark_price=None if raw_mark is None else Decimal(str(raw_mark)),
                     index_price=None if raw_index is None else Decimal(str(raw_index)),
                     ts_utc=ts,
                 )

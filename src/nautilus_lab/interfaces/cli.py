@@ -608,6 +608,10 @@ def _run_ingest_agg_trades(
     return 0
 
 
+#: Days a funding series may start after `--start` before the ingest warns about it.
+_FUNDING_LATE_START_WARN_DAYS = 7
+
+
 def _run_ingest_funding(
     cfg: Settings,
     *,
@@ -627,9 +631,22 @@ def _run_ingest_funding(
         print(
             f"symbol={symbol} funding={report.snapshots_written} "
             f"missing_index_price={report.missing_index_price} "
+            f"missing_mark_price={report.missing_mark_price} "
+            f"mark_from_klines={report.mark_from_klines} "
+            f"dropped_malformed={report.dropped_malformed} "
             f"first={report.first_ts.isoformat()} last={report.last_ts.isoformat()} "
             f"catalog={report.catalog_path}"
         )
+        if report.late_start_days > _FUNDING_LATE_START_WARN_DAYS:
+            # Not an error: a perpetual listed after `--start` starts late by design.
+            # But an old perpetual starting late is how 2020-2023 went missing once,
+            # so the gap is said out loud on every run instead of read off a date.
+            print(
+                f"WARNING symbol={symbol} funding starts {report.late_start_days} days after "
+                f"the requested start ({start.date().isoformat()}). Expected only if the "
+                "perpetual was listed later.",
+                flush=True,
+            )
     return 0
 
 

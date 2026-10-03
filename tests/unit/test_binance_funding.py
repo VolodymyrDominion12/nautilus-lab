@@ -6,10 +6,12 @@ from decimal import Decimal
 
 import pytest
 
+from nautilus_lab.domain.errors import HistoryTruncatedError
 from nautilus_lab.domain.ports import JsonHttpClient
 from nautilus_lab.infrastructure.binance_funding import (
     FUNDING_RATE_URL,
     INDEX_PRICE_KLINES_URL,
+    MARK_PRICE_KLINES_URL,
     BinancePublicFunding,
 )
 
@@ -34,6 +36,11 @@ class _MockFundingHttpClient(JsonHttpClient):
 
 def _funding_row(ms: int, rate: str, mark: str) -> dict[str, str | int]:
     return {"symbol": "ETHUSDT", "fundingTime": ms, "fundingRate": rate, "markPrice": mark}
+
+
+def _old_funding_row(ms: int, rate: str) -> dict[str, str | int]:
+    """A pre-2023 settlement as Binance serves it: the mark price is an empty string."""
+    return {"symbol": "ETHUSDT", "fundingTime": ms, "fundingRate": rate, "markPrice": ""}
 
 
 def _index_row(open_ms: int, price: str) -> list[object]:
@@ -246,3 +253,198 @@ def test_default_client_is_the_resilient_one() -> None:
     from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
 
     assert isinstance(BinancePublicFunding()._client, ResilientJsonClient)
+
+
+# --- pre-2023 history: no mark price in the response -----------------------------
+#
+# Regression for the silent loss measured on 2026-10-03: every ingested funding series
+# began on 2023-10-31 although 2020-01-01 was requested, because rows with
+# `markPrice: ""` failed the Decimal parse and were skipped without a count.
+
+_T2020 = 1_577_836_800_000  # 2020-01-01T00:00Z
+_H = 3_600_000
+
+
+def test_settlements_without_a_mark_are_kept_and_marked_from_klines() -> None:
+    client = _MockFundingHttpClient(
+        {
+            FUNDING_RATE_URL: [
+                [
+                    _old_funding_row(_T2020, "0.00010000"),
+                    _old_funding_row(_T2020 + 8 * _H, "0.00020000"),
+                ]
+            ],
+            INDEX_PRICE_KLINES_URL: [[_index_row(_T2020, "7195.1")]],
+            MARK_PRICE_KLINES_URL: [
+                [_index_row(_T2020, "7200.5"), _index_row(_T2020 + 8 * _H, "7210.0")]
+            ],
+        }
+    )
+    feed = BinancePublicFunding(client)
+    snapshots = feed.fetch_history(
+        symbol="ETHUSDT",
+        start=datetime(2020, 1, 1, tzinfo=UTC),
+        end=datetime(2020, 1, 2, tzinfo=UTC),
+    )
+
+    assert [item.funding_rate for item in snapshots] == [Decimal("0.0001"), Decimal("0.0002")]
+    assert [item.mark_price for item in snapshots] == [Decimal("7200.5"), Decimal("7210.0")]
+    assert snapshots[0].index_price == Decimal("7195.1")
+    assert snapshots[1].index_price is None
+    assert feed.last_stats.rows_seen == 2
+    assert feed.last_stats.dropped_malformed == 0
+    assert feed.last_stats.mark_from_klines == 2
+    assert feed.last_stats.missing_mark_price == 0
+
+
+def test_a_mark_the_klines_cannot_supply_stays_unknown_not_invented() -> None:
+    client = _MockFundingHttpClient(
+        {
+            FUNDING_RATE_URL: [[_old_funding_row(_T2020, "0.0001")]],
+            INDEX_PRICE_KLINES_URL: [[_index_row(_T2020, "7195.1")]],
+            MARK_PRICE_KLINES_URL: [[]],
+        }
+    )
+    feed = BinancePublicFunding(client)
+    snapshots = feed.fetch_history(
+        symbol="ETHUSDT",
+        start=datetime(2020, 1, 1, tzinfo=UTC),
+        end=datetime(2020, 1, 2, tzinfo=UTC),
+    )
+
+    assert len(snapshots) == 1, "the settlement itself must survive a missing mark"
+    assert snapshots[0].mark_price is None
+    assert snapshots[0].basis() is None
+    assert feed.last_stats.missing_mark_price == 1
+
+
+def test_mark_klines_are_requested_only_over_the_span_that_lacks_a_mark() -> None:
+    client = _MockFundingHttpClient(
+        {
+            FUNDING_RATE_URL: [
+                [
+                    _old_funding_row(_T2020 + 8 * _H, "0.0001"),
+                    _funding_row(_T2020 + 16 * _H, "0.0001", "7300"),
+                ]
+            ],
+            INDEX_PRICE_KLINES_URL: [[]],
+            MARK_PRICE_KLINES_URL: [[_index_row(_T2020 + 8 * _H, "7210")]],
+        }
+    )
+    BinancePublicFunding(client).fetch_history(
+        symbol="ETHUSDT",
+        start=datetime(2020, 1, 1, tzinfo=UTC),
+        end=datetime(2020, 1, 3, tzinfo=UTC),
+    )
+
+    (params,) = client.params_for(MARK_PRICE_KLINES_URL)
+    assert params["symbol"] == "ETHUSDT"
+    assert params["interval"] == "1h"
+    assert params["startTime"] == str(_T2020 + 8 * _H)
+    assert params["endTime"] == str(_T2020 + 9 * _H - 1)
+
+
+def test_no_mark_klines_request_when_every_settlement_has_a_mark() -> None:
+    client = _MockFundingHttpClient(
+        {
+            FUNDING_RATE_URL: [[_funding_row(_T0, "0.0001", "2280.5")]],
+            INDEX_PRICE_KLINES_URL: [[]],
+        }
+    )
+    BinancePublicFunding(client).fetch_history(
+        symbol="ETHUSDT",
+        start=datetime(2024, 1, 1, tzinfo=UTC),
+        end=datetime(2024, 1, 2, tzinfo=UTC),
+    )
+    assert client.params_for(MARK_PRICE_KLINES_URL) == []
+
+
+@pytest.mark.parametrize("raw_mark", ["", "   ", "0", "-1", "NaN", "abc", None])
+def test_unusable_marks_become_none(raw_mark: str | None) -> None:
+    row: dict[str, object] = {"symbol": "ETHUSDT", "fundingTime": _T0, "fundingRate": "0.0001"}
+    if raw_mark is not None:
+        row["markPrice"] = raw_mark
+    client = _MockFundingHttpClient({FUNDING_RATE_URL: [[row]]})
+    snapshots = BinancePublicFunding(
+        client, with_index_prices=False, with_mark_prices=False
+    ).fetch_history(
+        symbol="ETHUSDT",
+        start=datetime(2024, 1, 1, tzinfo=UTC),
+        end=datetime(2024, 1, 2, tzinfo=UTC),
+    )
+    assert len(snapshots) == 1
+    assert snapshots[0].mark_price is None
+
+
+def test_malformed_rows_are_counted() -> None:
+    client = _MockFundingHttpClient(
+        {
+            FUNDING_RATE_URL: [
+                [
+                    "invalid_item",
+                    {"symbol": "ETHUSDT", "fundingTime": _T0},
+                    _funding_row(_T8, "not-a-number", "2280.5"),
+                    _funding_row(_T16, "0.0002", "2290.0"),
+                ]
+            ],
+        }
+    )
+    feed = BinancePublicFunding(client, with_index_prices=False)
+    feed.fetch_history(
+        symbol="ETHUSDT",
+        start=datetime(2024, 1, 1, tzinfo=UTC),
+        end=datetime(2024, 1, 2, tzinfo=UTC),
+    )
+    assert feed.last_stats.rows_seen == 4
+    assert feed.last_stats.dropped_malformed == 3
+
+
+def test_running_out_of_funding_pages_raises_instead_of_truncating() -> None:
+    pages = [[_funding_row(_T0 + i * 28_800_000, "0.0001", "2280.5")] for i in range(3)]
+    client = _MockFundingHttpClient({FUNDING_RATE_URL: pages})
+    feed = BinancePublicFunding(client, page_limit=1, max_funding_pages=2, with_index_prices=False)
+    with pytest.raises(HistoryTruncatedError, match="funding history for ETHUSDT"):
+        feed.fetch_history(
+            symbol="ETHUSDT",
+            start=datetime(2024, 1, 1, tzinfo=UTC),
+            end=datetime(2024, 2, 1, tzinfo=UTC),
+        )
+
+
+def test_running_out_of_price_pages_raises_instead_of_truncating() -> None:
+    client = _MockFundingHttpClient(
+        {
+            FUNDING_RATE_URL: [[_funding_row(_T0, "0.0001", "2280.5")]],
+            INDEX_PRICE_KLINES_URL: [
+                [_index_row(_T0, "2280.2")],
+                [_index_row(_T0 + _H, "2280.3")],
+            ],
+        }
+    )
+    feed = BinancePublicFunding(client, page_limit=1, max_price_pages=1)
+    with pytest.raises(HistoryTruncatedError, match="indexPriceKlines"):
+        feed.fetch_history(
+            symbol="ETHUSDT",
+            start=datetime(2024, 1, 1, tzinfo=UTC),
+            end=datetime(2024, 1, 2, tzinfo=UTC),
+        )
+
+
+def test_a_full_last_page_that_reaches_the_window_end_is_not_truncation() -> None:
+    # Two settlements, page size 1, budget 2: the second page is full but its last
+    # settlement is the last one in the window, so the loop is done, not cut short.
+    client = _MockFundingHttpClient(
+        {
+            FUNDING_RATE_URL: [
+                [_funding_row(_T0, "0.0001", "2280.5")],
+                [_funding_row(_T8, "0.0001", "2280.5")],
+            ]
+        }
+    )
+    feed = BinancePublicFunding(client, page_limit=1, max_funding_pages=2, with_index_prices=False)
+    snapshots = feed.fetch_history(
+        symbol="ETHUSDT",
+        start=datetime(2024, 1, 1, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 8, 0, 0, 1000, tzinfo=UTC),
+    )
+    assert len(snapshots) == 2

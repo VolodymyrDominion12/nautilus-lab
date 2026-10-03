@@ -17,12 +17,16 @@ _START = datetime(2025, 1, 1, tzinfo=UTC)
 
 
 def _snapshot(
-    hours: int, *, rate: str = "0.0001", mark: str = "2280.5", index: str | None = "2280.2"
+    hours: int,
+    *,
+    rate: str = "0.0001",
+    mark: str | None = "2280.5",
+    index: str | None = "2280.2",
 ) -> FundingSnapshot:
     return FundingSnapshot(
         instrument="ETHUSDT",
         funding_rate=Decimal(rate),
-        mark_price=Decimal(mark),
+        mark_price=None if mark is None else Decimal(mark),
         index_price=None if index is None else Decimal(index),
         ts_utc=_START + timedelta(hours=hours),
     )
@@ -193,3 +197,93 @@ def test_use_case_refuses_a_non_research_mode(tmp_path: Path) -> None:
                 end=_START + timedelta(days=1),
             )
         )
+
+
+# --- pre-2023 settlements (no mark price) -------------------------------------
+
+
+def test_missing_mark_price_survives_the_round_trip_as_missing(tmp_path: Path) -> None:
+    catalog = ParquetFundingCatalog(tmp_path)
+    catalog.write([_snapshot(0, mark=None)], symbol="ETHUSDT")
+    loaded = catalog.load(symbol="ETHUSDT")
+    assert len(loaded) == 1
+    assert loaded[0].mark_price is None
+    assert loaded[0].funding_rate == Decimal("0.0001")
+
+
+def test_a_catalog_written_with_the_old_non_nullable_schema_still_loads(tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    old_schema = pa.schema(
+        [
+            pa.field("ts_utc", pa.timestamp("us", tz="UTC"), nullable=False),
+            pa.field("instrument", pa.string(), nullable=False),
+            pa.field("funding_rate", pa.string(), nullable=False),
+            pa.field("mark_price", pa.string(), nullable=False),
+            pa.field("index_price", pa.string(), nullable=True),
+        ]
+    )
+    catalog = ParquetFundingCatalog(tmp_path)
+    target = catalog.series_path("ETHUSDT")
+    target.parent.mkdir(parents=True)
+    table = pa.Table.from_pydict(
+        {
+            "ts_utc": [_START],
+            "instrument": ["ETHUSDT"],
+            "funding_rate": ["0.0001"],
+            "mark_price": ["2280.5"],
+            "index_price": [None],
+        },
+        schema=old_schema,
+    )
+    pq.write_table(table, target)
+
+    catalog.write([_snapshot(8, mark=None)], symbol="ETHUSDT")
+    loaded = catalog.load(symbol="ETHUSDT")
+    assert [item.mark_price for item in loaded] == [Decimal("2280.5"), None]
+
+
+class _StatsFeed(_StubFeed):
+    """A feed that, like `BinancePublicFunding`, says what it could not keep or fill."""
+
+    def __init__(self, snapshots: list[FundingSnapshot]) -> None:
+        super().__init__(snapshots)
+        from nautilus_lab.infrastructure.binance_funding import FundingFetchStats
+
+        self.last_stats = FundingFetchStats(
+            rows_seen=5, dropped_malformed=1, mark_from_klines=2, missing_mark_price=1
+        )
+
+
+def test_use_case_reports_mark_gaps_drops_and_a_late_start(tmp_path: Path) -> None:
+    feed = _StatsFeed([_snapshot(24 * 30, mark=None), _snapshot(24 * 30 + 8)])
+    use_case = IngestFundingHistory(feed, ParquetFundingCatalog(tmp_path), catalog_path="x")
+    report = use_case.execute(
+        FundingIngestRequest(
+            mode=TradingMode.RESEARCH,
+            symbol="ETHUSDT",
+            start=_START,
+            end=_START + timedelta(days=60),
+        )
+    )
+    assert report.missing_mark_price == 1
+    assert report.mark_from_klines == 2
+    assert report.dropped_malformed == 1
+    # The series starts 30 days after the requested start: said, not hidden.
+    assert report.late_start_days == 30
+
+
+def test_a_feed_without_stats_reports_zeros(tmp_path: Path) -> None:
+    use_case = IngestFundingHistory(
+        _StubFeed([_snapshot(0)]), ParquetFundingCatalog(tmp_path), catalog_path="x"
+    )
+    report = use_case.execute(
+        FundingIngestRequest(
+            mode=TradingMode.RESEARCH,
+            symbol="ETHUSDT",
+            start=_START,
+            end=_START + timedelta(days=1),
+        )
+    )
+    assert (report.mark_from_klines, report.dropped_malformed, report.late_start_days) == (0, 0, 0)

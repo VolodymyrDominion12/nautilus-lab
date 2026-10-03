@@ -14,7 +14,7 @@ from nautilus_lab.domain.signals import SignalSide
 def _snapshot(
     *,
     funding_rate: Decimal = Decimal("0.0005"),
-    mark_price: Decimal = Decimal("50000"),
+    mark_price: Decimal | None = Decimal("50000"),
     index_price: Decimal | None = Decimal("50000"),
     ts: datetime | None = None,
 ) -> FundingSnapshot:
@@ -326,3 +326,27 @@ def test_funding_abort_entry_and_is_open_sync() -> None:
     )
     assert sig_retry is not None
     assert sig_retry.leg_a.side == SignalSide.BUY
+
+
+def test_unknown_mark_means_unknown_basis_not_a_flat_one() -> None:
+    # Pre-2023 Binance settlements carry no mark. The settlement is kept, but its
+    # basis is "unknown", never 0: a flat basis would let the entry gate pass blind.
+    snapshot = _snapshot(mark_price=None)
+    assert snapshot.basis() is None
+
+    robot = FundingCashAndCarry(
+        spot_id="BTC/USDT.SIM", perp_id="BTCUSDT-PERP.SIM", params=FundingParams()
+    )
+    assert robot.on_funding(snapshot) is None
+    (trace,) = robot.last_trace
+    assert trace.note == "mark price unknown: basis cannot be judged"
+
+
+def test_unknown_mark_closes_an_open_carry() -> None:
+    robot = FundingCashAndCarry(
+        spot_id="BTC/USDT.SIM", perp_id="BTCUSDT-PERP.SIM", params=FundingParams()
+    )
+    signal = robot.on_funding(_snapshot(mark_price=None), is_open=True)
+    assert signal is not None
+    assert signal.leg_a.side is SignalSide.FLAT
+    assert signal.reason == "missing mark price"

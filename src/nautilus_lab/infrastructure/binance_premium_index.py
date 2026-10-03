@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from nautilus_lab.domain.errors import HistoryTruncatedError
 from nautilus_lab.domain.ports import JsonHttpClient
 from nautilus_lab.domain.premium_index import PremiumIndexBar
 
@@ -92,6 +93,14 @@ class BinancePublicPremiumIndex:
             cursor = datetime.fromtimestamp((last_open_ms + 1) / 1000, tz=UTC)
             if cursor <= start:
                 cursor = start + timedelta(milliseconds=1)
+        else:
+            # The budget ran out on a full page: the exchange still has candles. A
+            # short series stored as if complete is worse than a failed ingest.
+            if cursor < end:
+                raise HistoryTruncatedError(
+                    f"premiumIndexKlines for {query_symbol} {interval} still had rows "
+                    f"after {_MAX_PAGES} pages (stopped at {cursor.isoformat()})"
+                )
 
         # Deduplicate and sort defensively
         unique: dict[datetime, PremiumIndexBar] = {bar.ts_utc: bar for bar in bars}

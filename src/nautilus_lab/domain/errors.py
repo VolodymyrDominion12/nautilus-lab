@@ -66,3 +66,12 @@ class LiveTradingDisabledError(RuntimeError):
 
 class PaperTradingNotReadyError(RuntimeError):
     """Paper node is not wired; research backtests are the supported path."""
+
+
+class HistoryTruncatedError(DomainError):
+    """A paginated history hit its page budget while the exchange still had rows.
+
+    Returning what was fetched so far would store a series that looks complete and is
+    cut short at an arbitrary date — the failure mode the page cap exists to bound,
+    not to hide.
+    """

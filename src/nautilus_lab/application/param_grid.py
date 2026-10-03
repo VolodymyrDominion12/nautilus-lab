@@ -119,8 +119,8 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
                     funding_holding_periods=holding_periods,
                 )
         return
-    for donchian in (20, 40, 60):
-        for band_k in (Decimal("2"), Decimal("2.5")):
+    for donchian in (20, 40, 60, 90, 120):
+        for band_k in (Decimal("2"), Decimal("2.5"), Decimal("3")):
             yield SelectedParams(
                 fast_ema=base.fast_ema,
                 slow_ema=base.slow_ema,

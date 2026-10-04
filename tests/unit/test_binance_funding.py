@@ -400,7 +400,9 @@ def test_malformed_rows_are_counted() -> None:
 
 
 def test_running_out_of_funding_pages_raises_instead_of_truncating() -> None:
-    pages = [[_funding_row(_T0 + i * 28_800_000, "0.0001", "2280.5")] for i in range(3)]
+    pages: list[object] = [
+        [_funding_row(_T0 + i * 28_800_000, "0.0001", "2280.5")] for i in range(3)
+    ]
     client = _MockFundingHttpClient({FUNDING_RATE_URL: pages})
     feed = BinancePublicFunding(client, page_limit=1, max_funding_pages=2, with_index_prices=False)
     with pytest.raises(HistoryTruncatedError, match="funding history for ETHUSDT"):

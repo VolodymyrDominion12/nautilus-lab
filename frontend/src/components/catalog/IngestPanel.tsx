@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Download, Plus, RefreshCw, Square } from 'lucide-react';
 
 import { cancelIngest, runIngest } from '../../services/api';
-import { ingestLogQuery } from '../../services/queries';
+import { ingestLogQuery, statusQuery } from '../../services/queries';
 import { DEFAULT_FORM, buildIngestRequest, ingestWarnings, startMessage } from '../../lib/ingestForm';
 import type { IngestFormState } from '../../lib/ingestForm';
 import { IngestForm } from './IngestForm';
@@ -38,6 +38,15 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
   const pollingSince = useRef(0);
 
   const logQuery = useQuery(ingestLogQuery(polling));
+  const statusRes = useQuery(statusQuery(selectedCatalogPath));
+
+  useEffect(() => {
+    if (statusRes.data?.ingest_running && !polling) {
+      setPolling(true);
+      setIngestRunning(true);
+      pollingSince.current = 0;
+    }
+  }, [statusRes.data?.ingest_running, polling]);
 
   useEffect(() => {
     const res = logQuery.data;
@@ -103,7 +112,11 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
           days, ticks and live depth.
         </p>
 
-        <IngestForm form={form} onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))} />
+        <IngestForm
+          form={form}
+          onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+          selectedCatalogPath={selectedCatalogPath}
+        />
 
         <button
           type="button"

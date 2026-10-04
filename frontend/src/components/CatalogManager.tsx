@@ -92,6 +92,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
             catalogs={allCatalogs}
             selectedCatalogPath={selectedCatalogPath}
             onSelectCatalog={onCatalogChange}
+            onOpenIngest={() => setViewMode('ingest')}
           />
 
           {chartInstrument && (
@@ -170,6 +171,17 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
             </div>
           )}
 
+          <IngestPanel
+            selectedCatalogPath={selectedCatalogPath}
+            onFinished={refresh}
+            onError={setActionError}
+          />
+        </div>
+      )}
+
+      {/* Mode 4: Standalone Ingestion & Download Panel */}
+      {viewMode === 'ingest' && (
+        <div className="flex flex-col gap-6">
           <IngestPanel
             selectedCatalogPath={selectedCatalogPath}
             onFinished={refresh}

@@ -3,6 +3,7 @@ import {
   Calendar,
   CheckCircle2,
   Database,
+  Download,
 } from 'lucide-react';
 import type { CatalogSummary } from '../../services/api';
 
@@ -10,12 +11,14 @@ interface CatalogCardsHubProps {
   catalogs: CatalogSummary[];
   selectedCatalogPath: string;
   onSelectCatalog: (path: string) => void;
+  onOpenIngest?: () => void;
 }
 
 export const CatalogCardsHub: React.FC<CatalogCardsHubProps> = ({
   catalogs,
   selectedCatalogPath,
   onSelectCatalog,
+  onOpenIngest,
 }) => {
   const [marketFilter, setMarketFilter] = useState<'all' | 'spot' | 'perp'>('all');
   const [intervalFilter, setIntervalFilter] = useState<string>('all');
@@ -109,6 +112,17 @@ export const CatalogCardsHub: React.FC<CatalogCardsHubProps> = ({
                 </button>
               ))}
             </div>
+          )}
+
+          {onOpenIngest && (
+            <button
+              type="button"
+              onClick={onOpenIngest}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-xl transition-colors shadow-sm ml-auto"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download & Ingest Data</span>
+            </button>
           )}
         </div>
       </div>

@@ -59,10 +59,11 @@ const inputClass =
 interface IngestFormProps {
   form: IngestFormState;
   onChange: (patch: Partial<IngestFormState>) => void;
+  selectedCatalogPath?: string;
 }
 
 /** Source, market, series, symbols, interval and window of an ingest, plus warnings. */
-export const IngestForm: React.FC<IngestFormProps> = ({ form, onChange }) => {
+export const IngestForm: React.FC<IngestFormProps> = ({ form, onChange, selectedCatalogPath }) => {
   const allowed = SERIES_BY_SOURCE[form.source];
   const warnings = ingestWarnings(form);
 
@@ -171,10 +172,20 @@ export const IngestForm: React.FC<IngestFormProps> = ({ form, onChange }) => {
         </div>
       )}
 
-      {form.source === 'archive' && (
+      {form.source === 'archive' ? (
         <p className="text-[11px] text-gray-500">
           Writes to <span className="font-mono text-gray-300">{archiveTarget(form)}</span> and
           stores a quality report beside it.
+        </p>
+      ) : (
+        <p className="text-[11px] text-gray-500">
+          Target catalog:{' '}
+          <span className="font-mono text-gray-300">
+            {selectedCatalogPath ? selectedCatalogPath.split('/').pop() : 'catalog'}
+          </span>
+          {usesInterval(form.series) && (
+            <span className="text-gray-400"> ({form.interval} bars)</span>
+          )}
         </p>
       )}
 

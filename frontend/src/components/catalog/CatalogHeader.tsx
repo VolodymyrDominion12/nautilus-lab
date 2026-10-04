@@ -1,9 +1,9 @@
 import React from 'react';
-import { BarChart2, Database, LayoutGrid, RefreshCw, Table } from 'lucide-react';
+import { BarChart2, Database, Download, LayoutGrid, RefreshCw, Table } from 'lucide-react';
 
 import type { CatalogResponse, CatalogSummary } from '../../services/api';
 
-export type CatalogViewMode = 'cards' | 'matrix' | 'details';
+export type CatalogViewMode = 'cards' | 'matrix' | 'details' | 'ingest';
 
 interface CatalogHeaderProps {
   catalog: CatalogResponse | undefined;
@@ -144,6 +144,18 @@ export const CatalogHeader: React.FC<CatalogHeaderProps> = ({
             >
               <BarChart2 className="w-3.5 h-3.5" />
               <span>Inspector</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onViewModeChange('ingest')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                viewMode === 'ingest'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download & Ingest</span>
             </button>
           </div>
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Layers } from 'lucide-react';
 
-import type { DataHealthInstrument } from '../../services/api';
+import type { DataHealthInstrument, DataSeriesCoverage, SeriesQuality } from '../../services/api';
 import type { CatalogInstrument } from './InstrumentCards';
 
 interface SeriesCoverageProps {
@@ -14,6 +14,56 @@ interface SeriesCoverageProps {
  * the engine reads a missing optional series as an empty one, so "the bars are here" says
  * nothing about whether a tick-level filter would have had any data behind it.
  */
+const DAY_MS = 86_400_000;
+/** A side series starting this long after its bars is a hole, not a listing date. */
+const LATE_START_DAYS = 30;
+
+/** Rows and the first day of a side series; red when it starts well after the bars. */
+const SideSeriesCell: React.FC<{
+  series: (DataSeriesCoverage & { catalog?: string }) | undefined;
+  barsFirst: string | null;
+  missing: React.ReactNode;
+}> = ({ series, barsFirst, missing }) => {
+  if (!series?.present) return <>{missing}</>;
+  const late =
+    series.first != null &&
+    barsFirst != null &&
+    Date.parse(series.first) - Date.parse(barsFirst) > LATE_START_DAYS * DAY_MS;
+  return (
+    <span
+      className={late ? 'text-red-400' : 'text-emerald-400'}
+      title={`${series.first ?? '?'} → ${series.last ?? '?'}${series.catalog ? ` (in ${series.catalog})` : ''}${late ? ' — starts long after the bars: check for a gap' : ''}`}
+    >
+      {series.rows?.toLocaleString() ?? 'yes'}
+      <span className="text-gray-500"> · {series.first?.slice(0, 10) ?? '?'}</span>
+    </span>
+  );
+};
+
+const QUALITY_STYLE: Record<SeriesQuality['status'], string> = {
+  ok: 'text-emerald-400',
+  warn: 'text-amber-300',
+  fail: 'text-red-400',
+};
+
+const QualityCell: React.FC<{ quality: SeriesQuality | null | undefined }> = ({ quality }) => {
+  if (!quality) return <span className="text-gray-600">—</span>;
+  const details = [
+    `${quality.missing_bars} missing bars in ${quality.gap_count} gaps`,
+    `${quality.zero_volume} zero-volume bars`,
+    `${quality.extreme_move_count} moves > 50%`,
+    `${quality.partial_dropped} partial bars dropped`,
+    quality.relisting_suspects.length > 0
+      ? `re-used ticker suspected at ${quality.relisting_suspects.map((item) => item.ts.slice(0, 10)).join(', ')}`
+      : '',
+  ].filter(Boolean);
+  return (
+    <span className={QUALITY_STYLE[quality.status]} title={details.join('\n')}>
+      {quality.status}
+    </span>
+  );
+};
+
 export const SeriesCoverage: React.FC<SeriesCoverageProps> = ({ health, instruments }) => {
   if (health.length === 0) return null;
   const seriesRows = health.map((item) => {
@@ -51,8 +101,9 @@ export const SeriesCoverage: React.FC<SeriesCoverageProps> = ({ health, instrume
               <th className="text-right p-1.5">ticks</th>
               <th className="text-right p-1.5">depth</th>
               <th className="text-left p-1.5">ticks until</th>
-              <th className="text-right p-1.5">funding</th>
-              <th className="text-right p-1.5">prem index</th>
+              <th className="text-right p-1.5">funding · from</th>
+              <th className="text-right p-1.5">prem index · from</th>
+              <th className="text-right p-1.5">QC</th>
             </tr>
           </thead>
           <tbody className="text-gray-300">
@@ -95,22 +146,21 @@ export const SeriesCoverage: React.FC<SeriesCoverageProps> = ({ health, instrume
                   {item.ticks.last ? item.ticks.last.slice(0, 10) : '—'}
                 </td>
                 <td className="p-1.5 text-right">
-                  {item.funding.present ? (
-                    <span className="text-emerald-400">
-                      {item.funding.rows?.toLocaleString() ?? 'yes'}
-                    </span>
-                  ) : (
-                    <span className="text-amber-400">missing</span>
-                  )}
+                  <SideSeriesCell
+                    series={item.funding}
+                    barsFirst={item.bars.first}
+                    missing={<span className="text-amber-400">missing</span>}
+                  />
                 </td>
                 <td className="p-1.5 text-right">
-                  {item.premium_index?.present ? (
-                    <span className="text-emerald-400">
-                      {item.premium_index.rows?.toLocaleString() ?? 'yes'}
-                    </span>
-                  ) : (
-                    <span className="text-gray-600">—</span>
-                  )}
+                  <SideSeriesCell
+                    series={item.premium_index}
+                    barsFirst={item.bars.first}
+                    missing={<span className="text-gray-600">—</span>}
+                  />
+                </td>
+                <td className="p-1.5 text-right">
+                  <QualityCell quality={item.quality} />
                 </td>
               </tr>
             ))}

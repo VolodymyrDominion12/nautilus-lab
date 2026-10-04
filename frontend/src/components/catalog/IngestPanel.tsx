@@ -3,8 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Download, Plus, RefreshCw, Square } from 'lucide-react';
 
 import { cancelIngest, runIngest } from '../../services/api';
-import type { IngestSeries } from '../../services/api';
 import { ingestLogQuery } from '../../services/queries';
+import { DEFAULT_FORM, buildIngestRequest, ingestWarnings, startMessage } from '../../lib/ingestForm';
+import type { IngestFormState } from '../../lib/ingestForm';
+import { IngestForm } from './IngestForm';
 
 interface IngestPanelProps {
   selectedCatalogPath: string;
@@ -13,20 +15,11 @@ interface IngestPanelProps {
   onError: (message: string) => void;
 }
 
-function startMessage(series: IngestSeries, incremental: boolean): string {
-  if (series === 'trades') {
-    return 'Fetching aggregated trades (ticks) — needed by the tick-level VPIN and Hawkes filters...\n';
-  }
-  if (series === 'funding') return 'Fetching funding settlements for the perpetual...\n';
-  if (series === 'premium_index') {
-    return 'Fetching premium index klines (basis mark vs index) for perpetual contracts...\n';
-  }
-  if (series === 'depth') {
-    return 'Opening the Binance depth WebSocket — this records until you press Stop...\n';
-  }
-  return incremental
-    ? 'Incremental update: fetching bars after the last stored timestamp...\n'
-    : 'Launching Binance klines download into the Parquet catalog...\n';
+const SUMMARY_LINE = /^symbol=|^WARNING |^NOTE |FAILED:|^archive cache:/;
+
+/** Lines of the log worth reading first: per-symbol results, warnings, failures. */
+function summaryLines(log: string): string[] {
+  return log.split('\n').filter((line) => SUMMARY_LINE.test(line));
 }
 
 /** The ingest form, its start/stop buttons and the streamed log of the running job. */
@@ -35,11 +28,7 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
   onFinished,
   onError,
 }) => {
-  const [symbols, setSymbols] = useState('ETHUSDT,BTCUSDT');
-  const [startDate, setStartDate] = useState('2024-01-01');
-  const [endDate, setEndDate] = useState('');
-  const [interval, setInterval] = useState('1d');
-  const [ingestSeries, setIngestSeries] = useState<IngestSeries>('klines');
+  const [form, setForm] = useState<IngestFormState>(DEFAULT_FORM);
   const [ingestLog, setIngestLog] = useState('');
   /** Button state: true from the click until the server reports the job idle. */
   const [ingestRunning, setIngestRunning] = useState(false);
@@ -63,29 +52,14 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
     }
   }, [logQuery.data, logQuery.dataUpdatedAt, polling, onFinished]);
 
+  const blocked = ingestWarnings(form).includes('Start must be before end.');
+
   const startIngest = async (incremental: boolean) => {
     onError('');
     setIngestRunning(true);
-    setIngestLog(startMessage(ingestSeries, incremental));
+    setIngestLog(startMessage(form, incremental));
     try {
-      const response = await runIngest({
-        symbols: symbols.trim(),
-        // `--incremental` walks forward from the last stored bar, which only the bar
-        // series has: for the others the whole requested window is re-read. A depth
-        // capture has no window at all — it starts when it starts.
-        start:
-          incremental && ingestSeries === 'klines'
-            ? undefined
-            : ingestSeries === 'depth'
-              ? undefined
-              : startDate || undefined,
-        end: ingestSeries === 'depth' ? undefined : endDate || undefined,
-        catalog: selectedCatalogPath || undefined,
-        incremental: incremental && ingestSeries === 'klines',
-        series: ingestSeries,
-        interval:
-          ingestSeries === 'klines' || ingestSeries === 'premium_index' ? interval : undefined,
-      });
+      const response = await runIngest(buildIngestRequest(form, selectedCatalogPath, incremental));
       if (response.status === 'started') {
         pollingSince.current = Date.now();
         setPolling(true);
@@ -95,7 +69,9 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
       }
     } catch (err) {
       setIngestRunning(false);
-      setIngestLog((prev) => `${prev}\nError: ${err instanceof Error ? err.message : err}\n`);
+      const message = err instanceof Error ? err.message : String(err);
+      setIngestLog((prev) => `${prev}\nError: ${message}\n`);
+      onError(message);
     }
   };
 
@@ -112,6 +88,9 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
     }
   };
 
+  const summary = summaryLines(ingestLog);
+  const canIncrement = form.source === 'rest' && form.series === 'klines';
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl flex flex-col gap-4">
@@ -120,204 +99,83 @@ export const IngestPanel: React.FC<IngestPanelProps> = ({
           <h3 className="text-lg font-bold text-gray-100">Ingest Binance data</h3>
         </div>
         <p className="text-xs text-gray-400">
-          Public endpoints only, no API keys. One catalog holds every series; each ingest kind
-          writes its own tree, so bars, ticks, funding, and premium index can be fetched independently.
+          Public data only, no API keys. History comes from the archive; REST is for the newest
+          days, ticks and live depth.
         </p>
 
-        <div className="flex flex-col gap-3 mt-2">
-          <div>
-            <label className="text-xs font-medium text-gray-300 block mb-1">Series</label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-              {(
-                [
-                  ['klines', 'Klines', 'OHLCV bars (spot / perp)'],
-                  ['premium_index', 'Prem Index', 'perp basis mark vs index'],
-                  ['funding', 'Funding', 'perp settlements'],
-                  ['trades', 'Trades', 'ticks for VPIN/Hawkes'],
-                  ['depth', 'Depth', 'live L2 snapshots'],
-                ] as const
-              ).map(([value, label, hint]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setIngestSeries(value)}
-                  title={hint}
-                  className={`px-2 py-2 rounded-xl text-xs font-medium border transition-colors ${
-                    ingestSeries === value
-                      ? 'bg-blue-600/15 text-blue-300 border-blue-500/40'
-                      : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-gray-200'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <span className="text-[10px] text-gray-500 block mt-1">
-              {ingestSeries === 'klines'
-                ? 'The bar series every robot reads (spot or perp); supports incremental updates.'
-                : ingestSeries === 'premium_index'
-                  ? 'Perpetual mark vs index basis spread into data/premium_index/. Essential for funding & basis carry.'
-                  : ingestSeries === 'trades'
-                    ? 'Aggregated trades into data/agg_trade/ — one file per UTC day. Enables the tick-level VPIN and Hawkes filters.'
-                    : ingestSeries === 'funding'
-                      ? 'Funding settlements into data/funding/. Always walks the whole requested window.'
-                      : 'Live L2 order-book capture over a WebSocket into data/orderbook/. It has no start/end window and runs until you stop it, so keep the start/end fields empty.'}
-            </span>
-          </div>
+        <IngestForm form={form} onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))} />
 
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-medium text-gray-300">Symbols</label>
-              <div className="flex items-center gap-1 text-[10px]">
-                <span className="text-gray-500">Presets:</span>
-                <button
-                  type="button"
-                  onClick={() => setSymbols('BTCUSDT,ETHUSDT')}
-                  className="px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 hover:text-white hover:bg-gray-700 transition-colors"
-                >
-                  Top 2
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSymbols(
-                      'BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,ADAUSDT,AVAXUSDT,DOTUSDT,MATICUSDT,LINKUSDT',
-                    )
-                  }
-                  className="px-1.5 py-0.5 rounded bg-blue-950/70 text-blue-300 border border-blue-800/40 hover:bg-blue-900/60 transition-colors"
-                >
-                  11 Spot
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSymbols(
-                      'BTCUSDT-PERP,ETHUSDT-PERP,SOLUSDT-PERP,BNBUSDT-PERP,XRPUSDT-PERP,DOGEUSDT-PERP,ADAUSDT-PERP,AVAXUSDT-PERP,DOTUSDT-PERP,MATICUSDT-PERP,LINKUSDT-PERP',
-                    )
-                  }
-                  className="px-1.5 py-0.5 rounded bg-purple-950/70 text-purple-300 border border-purple-800/40 hover:bg-purple-900/60 transition-colors"
-                >
-                  11 Perps
-                </button>
-              </div>
-            </div>
-            <input
-              type="text"
-              value={symbols}
-              onChange={(e) => setSymbols(e.target.value)}
-              placeholder="ETHUSDT,BTCUSDT or BTCUSDT-PERP"
-              className="w-full bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 font-mono"
-            />
-            <span className="text-[10px] text-gray-600">
-              USDT pairs only — the catalog maps them to *.SIM instruments.
-            </span>
-          </div>
-
-          {(ingestSeries === 'klines' || ingestSeries === 'premium_index') && (
-            <div>
-              <label className="text-xs font-medium text-gray-300 block mb-1">Bar interval</label>
-              <div className="grid grid-cols-6 gap-1">
-                {(['1d', '4h', '1h', '15m', '5m', '1m'] as const).map((intv) => (
-                  <button
-                    key={intv}
-                    type="button"
-                    onClick={() => setInterval(intv)}
-                    className={`py-1.5 rounded-lg text-xs font-mono font-medium border transition-colors ${
-                      interval === intv
-                        ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50'
-                        : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-gray-200'
-                    }`}
-                  >
-                    {intv}
-                  </button>
-                ))}
-              </div>
-            </div>
+        <button
+          type="button"
+          onClick={() => startIngest(false)}
+          disabled={ingestRunning || !form.symbols.trim() || blocked}
+          className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800 text-white font-medium rounded-xl flex items-center justify-center gap-2"
+        >
+          {ingestRunning ? (
+            <RefreshCw className="w-5 h-5 animate-spin" />
+          ) : (
+            <Download className="w-5 h-5" />
           )}
+          {form.source === 'archive' ? 'Ingest from archive' : 'Fetch via REST'}
+        </button>
 
-          <div>
-            <label className="text-xs font-medium text-gray-300 block mb-1">Start date UTC</label>
-            <input
-              type="text"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              placeholder="2024-01-01"
-              className="w-full bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 font-mono"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-gray-300 block mb-1">
-              End date UTC (exclusive)
-            </label>
-            <input
-              type="text"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              placeholder="leave empty for now"
-              className="w-full bg-gray-950 border border-gray-800 text-gray-100 text-sm rounded-xl p-2.5 font-mono"
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={() => startIngest(false)}
-            disabled={ingestRunning || !symbols.trim()}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800 text-white font-medium rounded-xl flex items-center justify-center gap-2"
-          >
-            {ingestRunning ? (
-              <RefreshCw className="w-5 h-5 animate-spin" />
-            ) : (
-              <Download className="w-5 h-5" />
-            )}
-            {ingestSeries === 'klines'
-              ? 'Full ingest (klines)'
-              : ingestSeries === 'premium_index'
-                ? 'Fetch premium index'
-                : ingestSeries === 'trades'
-                  ? 'Fetch aggregated trades'
-                  : ingestSeries === 'funding'
-                    ? 'Fetch funding history'
-                    : 'Start live depth capture'}
-          </button>
-
+        {canIncrement && (
           <button
             type="button"
             onClick={() => startIngest(true)}
-            disabled={ingestRunning || !symbols.trim() || ingestSeries !== 'klines'}
-            title={
-              ingestSeries === 'klines'
-                ? 'Fetch only bars newer than the last stored one'
-                : 'Only the bar series supports incremental updates'
-            }
+            disabled={ingestRunning || !form.symbols.trim()}
+            title="Fetch only bars newer than the last stored one"
             className="w-full py-3 bg-blue-700 hover:bg-blue-600 disabled:bg-gray-800 disabled:text-gray-500 text-white font-medium rounded-xl flex items-center justify-center gap-2"
           >
             <Plus className="w-5 h-5" />
             Update bars (incremental)
           </button>
+        )}
 
-          {ingestRunning && (
-            <button
-              type="button"
-              onClick={cancel}
-              className="w-full py-2 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 text-sm font-medium rounded-xl flex items-center justify-center gap-2"
-            >
-              <Square className="w-3.5 h-3.5" />
-              Stop ingest
-            </button>
-          )}
-        </div>
+        {ingestRunning && (
+          <button
+            type="button"
+            onClick={cancel}
+            className="w-full py-2 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 text-sm font-medium rounded-xl flex items-center justify-center gap-2"
+          >
+            <Square className="w-3.5 h-3.5" />
+            Stop ingest
+          </button>
+        )}
       </div>
 
-      <div className="lg:col-span-2 bg-[#0a0f18] border border-gray-800 rounded-2xl flex flex-col overflow-hidden h-[400px]">
-        <div className="bg-gray-900/80 px-4 py-2.5 border-b border-gray-800 flex justify-between items-center">
-          <span className="text-xs font-mono text-gray-400">Ingest log</span>
-          <span className="text-[11px] font-mono text-gray-500">
-            {ingestRunning ? 'streaming…' : 'idle'}
-          </span>
-        </div>
-        <div className="p-4 flex-1 overflow-y-auto font-mono text-xs text-emerald-400 whitespace-pre-wrap">
-          {ingestLog || 'Ready to download data.\n'}
+      <div className="lg:col-span-2 flex flex-col gap-4">
+        {summary.length > 0 && (
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 max-h-[220px] overflow-y-auto">
+            <h4 className="text-xs font-bold text-gray-300 mb-2">Result per symbol</h4>
+            <ul className="font-mono text-[11px] space-y-0.5">
+              {summary.map((line, index) => (
+                <li
+                  key={`${index}-${line}`}
+                  className={
+                    /FAILED|quality=fail/.test(line)
+                      ? 'text-red-400'
+                      : /^WARNING|quality=warn/.test(line)
+                        ? 'text-amber-300'
+                        : 'text-gray-300'
+                  }
+                >
+                  {line}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="bg-[#0a0f18] border border-gray-800 rounded-2xl flex flex-col overflow-hidden h-[400px]">
+          <div className="bg-gray-900/80 px-4 py-2.5 border-b border-gray-800 flex justify-between items-center">
+            <span className="text-xs font-mono text-gray-400">Ingest log</span>
+            <span className="text-[11px] font-mono text-gray-500">
+              {ingestRunning ? 'streaming…' : 'idle'}
+            </span>
+          </div>
+          <div className="p-4 flex-1 overflow-y-auto font-mono text-xs text-emerald-400 whitespace-pre-wrap">
+            {ingestLog || 'Ready to download data.\n'}
+          </div>
         </div>
       </div>
     </div>

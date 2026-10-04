@@ -130,6 +130,8 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
         <CatalogCoverageMatrix
           catalogs={allCatalogs}
           allSymbols={catalogsResult.data?.all_symbols ?? []}
+          fundingCoverage={catalogsResult.data?.funding_coverage}
+          premiumCoverage={catalogsResult.data?.premium_coverage}
           selectedCatalogPath={selectedCatalogPath}
           onSelectCatalog={onCatalogChange}
         />

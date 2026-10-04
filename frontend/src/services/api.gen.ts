@@ -91,6 +91,7 @@ export interface CatalogSummary {
   total_instruments: number;
   total_bars: number;
   bar_interval: string | null;
+  intervals: string[];
   market_type: string;
   first_date: string | null;
   last_date: string | null;
@@ -108,6 +109,8 @@ export interface CatalogsResponse {
   default: string;
   catalogs: CatalogSummary[];
   all_symbols: string[];
+  funding_coverage: Record<string, SeriesSpan>;
+  premium_coverage: Record<string, SeriesSpan>;
 }
 
 export interface ReportItem {
@@ -234,6 +237,14 @@ export interface SettingsResponse {
   settings: Record<string, string>;
 }
 
+/** Where one side series of one symbol starts and ends, and in which catalog. */
+export interface SeriesSpan {
+  first: string | null;
+  last: string | null;
+  rows: number | null;
+  catalog: string;
+}
+
 // ---- requests ----------------------------------------------------------------------------
 
 export interface ResearchRunRequest {
@@ -274,6 +285,8 @@ export interface IngestRunRequest {
   incremental?: boolean;
   series?: string;
   interval?: string | null;
+  source?: string;
+  market?: string | null;
 }
 
 export interface SettingsUpdate {

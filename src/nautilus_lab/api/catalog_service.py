@@ -6,11 +6,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.settings import Settings
-from nautilus_lab.infrastructure.timeframe import interval_from_bar_type, nautilus_bar_type
+from nautilus_lab.infrastructure.timeframe import (
+    NAUTILUS_BAR_SPEC,
+    interval_from_bar_type,
+    nautilus_bar_type,
+)
 from nautilus_lab.interfaces.composition import settings
 
 
@@ -84,8 +90,110 @@ def discover_catalog_paths(cfg: Settings | None = None) -> list[str]:
     return paths
 
 
+def _file_stamp(stem_part: str) -> datetime:
+    """`2020-01-01T23-59-59-999000064Z` (a Nautilus file-name bound) -> UTC datetime."""
+    day, _, clock = stem_part.removesuffix("Z").partition("T")
+    hours, minutes, seconds, fraction = clock.split("-")
+    micros = int(fraction[:6].ljust(6, "0"))
+    parsed = datetime.fromisoformat(f"{day}T{hours}:{minutes}:{seconds}")
+    return parsed.replace(microsecond=micros, tzinfo=UTC)
+
+
+def _instrument_id_from_dir(name: str) -> str:
+    """Bar directory id -> instrument id. Nautilus drops the `/` of spot ids on disk."""
+    if name.endswith("-PERP.SIM") or "/" in name:
+        return name
+    symbol = name.removesuffix(".SIM")
+    if symbol.endswith("USDT") and len(symbol) > len("USDT"):
+        return f"{symbol.removesuffix('USDT')}/USDT.SIM"
+    return name
+
+
+def _describe_from_files(resolved: Path) -> dict[str, Any] | None:
+    """Describe a catalog from Parquet footers and file names, reading no bar.
+
+    The full describe loads every bar of every instrument to count them. With the
+    archive universe (hundreds of symbols per catalog) that is minutes of work on a
+    timer-polled endpoint (docs/34, F7). Row counts come from the footers; first and
+    last bar from the `<first>_<last>.parquet` names Nautilus gives its files. Returns
+    None when the layout is not the expected one, so the caller can fall back.
+    """
+    bar_root = resolved / "data" / "bar"
+    if not bar_root.is_dir():
+        return None
+    cfg = settings()
+    spot_fees, perp_fees = cfg.spot_fee_schedule(), cfg.usdm_fee_schedule()
+    instruments_info: list[dict[str, Any]] = []
+    intervals: dict[str, int] = {}
+    for bar_dir in sorted(path for path in bar_root.iterdir() if path.is_dir()):
+        files = sorted(bar_dir.glob("*.parquet"))
+        if not files:
+            continue
+        interval = interval_from_bar_type(bar_dir.name)
+        intervals[interval] = intervals.get(interval, 0) + 1
+        dir_id = bar_dir.name[: bar_dir.name.index(f"-{NAUTILUS_BAR_SPEC[interval]}-")]
+        instrument_id = _instrument_id_from_dir(dir_id)
+        firsts: list[datetime] = []
+        lasts: list[datetime] = []
+        rows = 0
+        for file in files:
+            first_part, _, last_part = file.stem.partition("_")
+            firsts.append(_file_stamp(first_part))
+            lasts.append(_file_stamp(last_part))
+            metadata = pq.ParquetFile(file).metadata
+            rows += int(metadata.num_rows) if metadata is not None else 0
+        is_perp = instrument_id.endswith("-PERP.SIM")
+        fees = perp_fees if is_perp else spot_fees
+        instruments_info.append(
+            {
+                "instrument_id": instrument_id,
+                "raw_symbol": instrument_id.removesuffix(".SIM"),
+                "bars_count": rows,
+                "first_date": min(firsts).isoformat(),
+                "last_date": max(lasts).isoformat(),
+                "quote_currency": "USDT",
+                "maker_fee": float(fees.maker),
+                "taker_fee": float(fees.taker),
+            }
+        )
+    if not instruments_info:
+        return None
+    perp = all(item["instrument_id"].endswith("-PERP.SIM") for item in instruments_info)
+    spot = all("/" in item["instrument_id"] for item in instruments_info)
+    first_dates = sorted(item["first_date"] for item in instruments_info)
+    last_dates = sorted(item["last_date"] for item in instruments_info)
+    return {
+        "catalog_path": str(resolved),
+        "name": resolved.name,
+        "exists": True,
+        # One interval per catalog is the convention. A mixed catalog reports its main
+        # interval (readers need a real one) and lists all of them, so the page can
+        # say "this catalog mixes 1d and 4h" instead of hiding it (docs/34, F4).
+        "bar_interval": max(intervals, key=lambda item: intervals[item]),
+        "intervals": sorted(intervals),
+        "market_type": "perp" if perp else "spot" if spot else "mixed",
+        "instruments": instruments_info,
+        "total_instruments": len(instruments_info),
+        "total_bars": sum(int(item["bars_count"]) for item in instruments_info),
+        "first_date": first_dates[0],
+        "last_date": last_dates[-1],
+    }
+
+
 def describe_catalog(catalog_path: str | None = None) -> dict[str, Any]:
     resolved = resolve_catalog_path(catalog_path)
+    if resolved.exists():
+        try:
+            fast = _describe_from_files(resolved)
+        except (OSError, ValueError, KeyError):
+            fast = None
+        if fast is not None:
+            return fast
+    return _describe_by_loading(resolved)
+
+
+def _describe_by_loading(resolved: Path) -> dict[str, Any]:
+    """The original describe: loads every bar. Fallback for an unexpected layout."""
     default_interval = settings().bar_interval
     name = resolved.name
     if not resolved.exists():
@@ -247,6 +355,7 @@ def list_catalogs(cfg: Settings | None = None) -> dict[str, Any]:
                 "total_instruments": summary.get("total_instruments", 0),
                 "total_bars": total_bars,
                 "bar_interval": summary.get("bar_interval"),
+                "intervals": summary.get("intervals") or [],
                 "market_type": summary.get("market_type", "unknown"),
                 "first_date": summary.get("first_date"),
                 "last_date": summary.get("last_date"),
@@ -261,11 +370,68 @@ def list_catalogs(cfg: Settings | None = None) -> dict[str, Any]:
             }
         )
 
+    funding, premium = side_series_coverage([str(item["path"]) for item in catalogs])
     return {
         "default": resolved.catalog_path,
         "catalogs": catalogs,
-        "all_symbols": sorted(all_symbols_set),
+        "all_symbols": sorted(all_symbols_set | set(funding)),
+        "funding_coverage": funding,
+        "premium_coverage": premium,
     }
+
+
+def series_span(path: Path, column: str = "ts_utc") -> dict[str, Any]:
+    """First/last timestamp and row count of one event-series file (one column read)."""
+    table = pq.read_table(path, columns=[column])
+    if table.num_rows == 0:
+        return {"first": None, "last": None, "rows": 0}
+    stats = pc.min_max(table.column(column)).as_py()
+    low, high = stats.get("min"), stats.get("max")
+    return {
+        "first": low.isoformat() if low is not None else None,
+        "last": high.isoformat() if high is not None else None,
+        "rows": int(table.num_rows),
+    }
+
+
+_COVERAGE_CACHE: dict[tuple[str, ...], tuple[float, tuple[dict[str, Any], dict[str, Any]]]] = {}
+_COVERAGE_TTL_SECONDS = 30.0
+
+
+def side_series_coverage(
+    catalog_paths: list[str],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Per-symbol funding and premium-index spans across catalogs (earliest wins).
+
+    Funding lives where the funding ingest put it, which is not necessarily the catalog
+    whose bars a page shows; the coverage matrix needs the answer per symbol.
+    """
+    key = tuple(sorted(catalog_paths))
+    now = time.monotonic()
+    cached = _COVERAGE_CACHE.get(key)
+    if cached is not None and now - cached[0] < _COVERAGE_TTL_SECONDS:
+        return cached[1]
+    funding: dict[str, dict[str, Any]] = {}
+    premium: dict[str, dict[str, Any]] = {}
+    for raw in catalog_paths:
+        root = Path(raw) / "data"
+        for target, pattern in (
+            (funding, "funding/*/funding.parquet"),
+            (premium, "premium_index/*/*/premium_index.parquet"),
+        ):
+            for file in root.glob(pattern):
+                symbol = file.parent.name if target is funding else file.parent.parent.name
+                try:
+                    span = series_span(file)
+                except (OSError, ValueError):
+                    continue
+                span["catalog"] = Path(raw).name
+                current = target.get(symbol)
+                if current is None or (span["first"] or "9") < (current["first"] or "9"):
+                    target[symbol] = span
+    result = (funding, premium)
+    _COVERAGE_CACHE[key] = (now, result)
+    return result
 
 
 # Describing a catalog loads every bar of every instrument from Parquet. The dashboard
@@ -283,6 +449,7 @@ def invalidate_catalog_cache(catalog_path: str | None = None) -> None:
     against the cwd and the other against the project root would leave an ingest's cache entry
     in place, and the dashboard would keep reporting the pre-ingest bar counts.
     """
+    _COVERAGE_CACHE.clear()
     if catalog_path is None:
         _CATALOG_CACHE.clear()
         return

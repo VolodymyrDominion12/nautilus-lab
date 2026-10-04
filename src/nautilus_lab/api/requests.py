@@ -50,6 +50,12 @@ class IngestRunRequest(BaseModel):
     #: `premium_index` pulls Binance USD-M premium index candles.
     series: str = "klines"
     interval: str | None = None
+    #: `rest` walks the public REST endpoints (`lab ingest`); `archive` reads the
+    #: SHA256-verified monthly files of data.binance.vision (`lab ingest-archive`),
+    #: delisted symbols included. Archive is the source for history.
+    source: str = "rest"
+    #: Archive klines only: `spot` or `um` (USD-M perpetuals). Symbols may be `all`.
+    market: str | None = None
 
 
 class SettingsUpdate(BaseModel):

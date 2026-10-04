@@ -17,6 +17,7 @@ ticks, so the payload stays cheap enough to poll.
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -24,12 +25,18 @@ from typing import Any
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from nautilus_lab.api.catalog_service import describe_catalog_cached, resolve_catalog_path
+from nautilus_lab.api.catalog_service import (
+    describe_catalog_cached,
+    discover_catalog_paths,
+    resolve_catalog_path,
+    side_series_coverage,
+)
 from nautilus_lab.infrastructure.agg_trades_catalog import ParquetAggTradesCatalog
 from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
 from nautilus_lab.infrastructure.orderbook_catalog import ParquetOrderBookCatalog
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
+from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
 from nautilus_lab.interfaces.composition import settings
 
 #: Describing coverage stats every shard of the tick series. The dashboard polls, and a
@@ -171,6 +178,33 @@ def _orderbook_health(root: Path, symbol: str) -> dict[str, Any]:
     return _sharded_health(ParquetOrderBookCatalog(root).series_dir(symbol))
 
 
+def _quality_reports(root: Path) -> dict[str, Any]:
+    """`<catalog>/quality.json` written by the archive ingest; {} when absent or unreadable."""
+    target = root / "quality.json"
+    if not target.exists():
+        return {}
+    try:
+        loaded = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _funding_elsewhere(symbol: str) -> dict[str, Any] | None:
+    """Funding for `symbol` from any catalog, when the selected one has none.
+
+    The funding ingest writes perps' settlements wherever it was pointed; reporting
+    "missing" for a perp whose funding sits in a sibling catalog sent people to
+    re-ingest data they already had (docs/34, F3).
+    """
+    paths = [str(resolve_catalog_path(item)) for item in discover_catalog_paths()]
+    funding, _premium = side_series_coverage(paths)
+    span = funding.get(symbol)
+    if span is None:
+        return None
+    return {"present": True, **span}
+
+
 def describe_data_health(catalog_path: str | None = None) -> dict[str, Any]:
     """Coverage of every series tree one catalog holds, for each of its instruments."""
     resolved = resolve_catalog_path(catalog_path)
@@ -185,6 +219,7 @@ def describe_data_health(catalog_path: str | None = None) -> dict[str, Any]:
         "last": None,
         "bytes": 0,
     }
+    quality = _quality_reports(resolved)
     rows: list[dict[str, Any]] = []
     for instrument in instruments:
         instrument_id = str(instrument.get("instrument_id", ""))
@@ -203,13 +238,23 @@ def describe_data_health(catalog_path: str | None = None) -> dict[str, Any]:
             "orderbook": dict(empty_shards),
             "funding": {"present": False, "rows": None, "first": None, "last": None},
             "premium_index": {"present": False, "rows": None, "first": None, "last": None},
+            "quality": None,
         }
+        try:
+            entry["quality"] = quality.get(nautilus_bar_type(instrument_id, bar_interval))
+        except ValueError:
+            entry["quality"] = None
         if symbol:
+            # Funding and premium are keyed by the plain symbol (`BTCUSDT`), also for a
+            # perp whose side-series symbol is `BTCUSDT-PERP`.
+            plain = symbol.removesuffix("-PERP")
             entry["taker_flow"] = _taker_flow_health(resolved, symbol, bar_interval)
             entry["ticks"] = _ticks_health(resolved, symbol)
             entry["orderbook"] = _orderbook_health(resolved, symbol)
-            entry["funding"] = _funding_health(resolved, symbol)
-            entry["premium_index"] = _premium_index_health(resolved, symbol, bar_interval)
+            entry["funding"] = _funding_health(resolved, plain)
+            if not entry["funding"]["present"]:
+                entry["funding"] = _funding_elsewhere(plain) or entry["funding"]
+            entry["premium_index"] = _premium_index_health(resolved, plain, bar_interval)
         rows.append(entry)
     return {
         "catalog_path": str(resolved),

@@ -122,6 +122,8 @@ class CatalogSummary(ApiModel):
     total_instruments: int = 0
     total_bars: int = 0
     bar_interval: str | None = None
+    #: Every bar interval the catalog holds; more than one means a mixed catalog.
+    intervals: list[str] = []
     market_type: str = "unknown"
     first_date: str | None = None
     last_date: str | None = None
@@ -135,10 +137,25 @@ class CatalogSummary(ApiModel):
     error: str | None = None
 
 
+class SeriesSpan(ApiModel):
+    """Where one side series of one symbol starts and ends, and in which catalog."""
+
+    first: str | None = None
+    last: str | None = None
+    rows: int | None = None
+    catalog: str = ""
+
+
 class CatalogsResponse(ApiModel):
     default: str
     catalogs: list[CatalogSummary]
     all_symbols: list[str] = []
+    #: Funding coverage per symbol across every catalog. Funding is a perp series that
+    #: may live in a different catalog than the bars it is read with, so a per-catalog
+    #: flag cannot answer "is there funding for SOL, and since when".
+    funding_coverage: dict[str, SeriesSpan] = {}
+    #: Premium index coverage per symbol (earliest interval found), across catalogs.
+    premium_coverage: dict[str, SeriesSpan] = {}
 
 
 class ReportItem(ApiModel):

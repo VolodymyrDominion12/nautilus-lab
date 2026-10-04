@@ -144,6 +144,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
 
+    archive = sub.add_parser(
+        "ingest-archive",
+        help=(
+            "Download history from the Binance public archive (data.binance.vision): "
+            "SHA256-verified, cached, delisted symbols included"
+        ),
+    )
+    archive.add_argument("--market", choices=("spot", "um"), default="spot")
+    archive.add_argument("--dataset", choices=("klines", "funding", "premium"), default="klines")
+    archive.add_argument("--interval", choices=("1m", "5m", "15m", "1h", "4h", "1d"), default="1d")
+    archive.add_argument(
+        "--symbols",
+        default="BTCUSDT,ETHUSDT",
+        help="Comma-separated symbols, or 'all' for every *USDT crypto symbol in the archive",
+    )
+    archive.add_argument("--start", default="2019-01-01", help="UTC start (YYYY-MM-DD)")
+    archive.add_argument("--end", default=None, help="UTC end exclusive (default: now)")
+    archive.add_argument(
+        "--catalog",
+        default=None,
+        help=(
+            "Target catalog. Default: catalog_spot_<interval> / catalog_perp_<interval>; "
+            "funding goes to every existing catalog_perp_* (comma list allowed)"
+        ),
+    )
+    archive.add_argument(
+        "--cache-dir", default="data/raw/binance_vision", help="Local archive cache"
+    )
+    archive.add_argument("--workers", type=int, default=8, help="Parallel downloads")
+    archive.add_argument(
+        "--no-prices",
+        action="store_true",
+        help="Funding only: skip the 1h mark/index joins (the backtest does not need them)",
+    )
+
     research = sub.add_parser("research", help="Run a simulated backtest (default path)")
     research.add_argument("--bars", type=int, default=3000, help="Synthetic bar count")
     research.add_argument(
@@ -461,6 +496,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "ingest":
             return _run_ingest(cfg, args)
+        if args.command == "ingest-archive":
+            return _run_ingest_archive(cfg, args)
         if args.command == "research":
             return _run_research(cfg, args)
         if args.command == "paper":
@@ -544,6 +581,134 @@ def _run_ingest(cfg: Settings, args: argparse.Namespace) -> int:
             f"catalog={report.catalog_path}"
         )
     return 0
+
+
+def _run_ingest_archive(cfg: Settings, args: argparse.Namespace) -> int:
+    """History from the Binance archive, one series per symbol, with a QC verdict each.
+
+    A symbol that has no data in the window (listed later, delisted earlier) is
+    reported and skipped; the run goes on. The exit code is 2 when any symbol failed,
+    so a scheduled run can alert on it.
+    """
+    from pathlib import Path
+
+    from nautilus_lab.application.ingest_archive import IngestArchive
+    from nautilus_lab.domain.errors import DomainError
+    from nautilus_lab.domain.universe import candidate_symbols
+    from nautilus_lab.infrastructure.archive_source import (
+        BinanceVisionSource,
+        JsonQualityStore,
+        ensure_instrument,
+    )
+    from nautilus_lab.infrastructure.binance_vision import BinanceVisionArchive, Dataset, Market
+    from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
+    from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
+    from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
+    from nautilus_lab.infrastructure.premium_index_catalog import ParquetPremiumIndexCatalog
+    from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
+    from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
+
+    require_simulated_mode(cfg.trading_mode)
+    start = parse_utc(args.start)
+    end = parse_utc(args.end) if args.end else datetime.now(UTC)
+    market = "um" if args.dataset in {"funding", "premium"} else args.market
+    archive = BinanceVisionArchive(Path(args.cache_dir), max_workers=args.workers)
+
+    if args.symbols.strip().lower() == "all":
+        dataset = {
+            "klines": Dataset.KLINES,
+            "funding": Dataset.FUNDING_RATE,
+            "premium": Dataset.PREMIUM_INDEX_KLINES,
+        }[args.dataset]
+        symbols = candidate_symbols(archive.list_symbols(Market(market), dataset))
+        print(f"archive {market}/{dataset.value}: {len(symbols)} candidate symbols", flush=True)
+    else:
+        symbols = [
+            item.strip().upper().removesuffix("-PERP")
+            for item in args.symbols.split(",")
+            if item.strip()
+        ]
+
+    kind = "spot" if market == "spot" else "perp"
+    if args.catalog:
+        targets = [item.strip() for item in args.catalog.split(",") if item.strip()]
+    elif args.dataset == "funding":
+        found = sorted(str(path) for path in Path.cwd().glob("catalog_perp_*") if path.is_dir())
+        targets = found or ["catalog_perp_1d"]
+    else:
+        targets = [f"catalog_{kind}_{args.interval}"]
+
+    source = BinanceVisionSource(archive)
+    failures = 0
+    for symbol in symbols:
+        for target in targets:
+            root = Path(target)
+            use_case = IngestArchive(
+                source,
+                mode=cfg.trading_mode,
+                bars=NautilusParquetCatalog(
+                    root, spot_fees=cfg.spot_fee_schedule(), usdm_fees=cfg.usdm_fee_schedule()
+                ),
+                taker_flow=ParquetTakerFlowCatalog(root),
+                funding=ParquetFundingCatalog(root),
+                premium=ParquetPremiumIndexCatalog(root),
+                quality=JsonQualityStore(root),
+                ensure_instrument=ensure_instrument,
+            )
+            try:
+                if args.dataset == "klines":
+                    instrument_id = (
+                        binance_symbol_to_instrument_id(symbol)
+                        if market == "spot"
+                        else f"{symbol}-PERP.SIM"
+                    )
+                    report = use_case.klines(
+                        market=market,
+                        symbol=symbol,
+                        interval=args.interval,
+                        start=start,
+                        end=end,
+                        instrument_id=instrument_id,
+                        bar_type=nautilus_bar_type(instrument_id, args.interval),
+                    )
+                elif args.dataset == "funding":
+                    report = use_case.funding(
+                        symbol=symbol, start=start, end=end, with_prices=not args.no_prices
+                    )
+                else:
+                    report = use_case.premium_index(
+                        symbol=symbol, interval=args.interval, start=start, end=end
+                    )
+            except DomainError as exc:
+                failures += 1
+                print(f"symbol={symbol} catalog={target} FAILED: {exc}", flush=True)
+                continue
+            print(f"{report.summary_line()} catalog={target}", flush=True)
+            if report.missing_months:
+                print(
+                    f"WARNING symbol={symbol} archive has no file for "
+                    f"{', '.join(report.missing_months[:12])}"
+                    + (" ..." if len(report.missing_months) > 12 else ""),
+                    flush=True,
+                )
+            # Only funding is expected to start with the perpetual; for bars a late
+            # first bar is a listing date and needs no warning.
+            if args.dataset == "funding" and report.late_start_days > _FUNDING_LATE_START_WARN_DAYS:
+                print(
+                    f"NOTE symbol={symbol} funding starts {report.late_start_days} days after "
+                    f"{start.date().isoformat()} (listing date or archive gap)",
+                    flush=True,
+                )
+            # Funding is one series per symbol: written once per target catalog only
+            # so each perp catalog carries it; nothing else to repeat.
+            if args.dataset != "funding":
+                break
+    print(
+        f"archive cache: hits={archive.cache_hits} downloads={archive.downloads} "
+        f"dir={archive.cache_dir} failures={failures}",
+        flush=True,
+    )
+    return 2 if failures else 0
 
 
 def _run_collect_live_ticks(

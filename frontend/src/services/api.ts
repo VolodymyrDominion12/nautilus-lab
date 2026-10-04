@@ -381,6 +381,10 @@ export async function runIngest(params: {
   incremental?: boolean;
   series?: IngestSeries;
   interval?: string;
+  /** `archive` = data.binance.vision (history, verified); `rest` = public REST/WebSocket. */
+  source?: 'archive' | 'rest';
+  /** Archive klines only: spot or USD-M perpetuals. */
+  market?: 'spot' | 'um';
 }): Promise<ActionResult> {
   return parseJson(
     await fetch(apiUrl('/api/catalog/ingest'), {
@@ -485,8 +489,23 @@ export interface DataHealthInstrument {
   ticks: TickCoverage;
   /** L2 depth snapshots, captured live — day-sharded like the ticks. */
   orderbook: TickCoverage;
-  funding: DataSeriesCoverage;
+  /** Funding may come from a sibling catalog; `catalog` names it when it does. */
+  funding: DataSeriesCoverage & { catalog?: string };
   premium_index?: DataSeriesCoverage;
+  /** QC verdict written by the archive ingest (`<catalog>/quality.json`), if any. */
+  quality?: SeriesQuality | null;
+}
+
+export interface SeriesQuality {
+  status: 'ok' | 'warn' | 'fail';
+  bars: number;
+  expected_bars: number;
+  missing_bars: number;
+  gap_count: number;
+  zero_volume: number;
+  extreme_move_count: number;
+  relisting_suspects: { ts: string; ratio: string }[];
+  partial_dropped: number;
 }
 
 export interface DataHealthResponse {

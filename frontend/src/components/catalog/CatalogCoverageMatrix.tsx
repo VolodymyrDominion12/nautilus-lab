@@ -1,17 +1,36 @@
 import React, { useMemo, useState } from 'react';
-import { Check, Search, Table } from 'lucide-react';
+import { Search, Table } from 'lucide-react';
 import type { CatalogSummary } from '../../services/api';
+import type { SeriesSpan } from '../../services/api.gen';
 
 interface CatalogCoverageMatrixProps {
   catalogs: CatalogSummary[];
   allSymbols?: string[];
+  /** Per-symbol spans across all catalogs (from /api/catalogs). */
+  fundingCoverage?: Record<string, SeriesSpan>;
+  premiumCoverage?: Record<string, SeriesSpan>;
   selectedCatalogPath: string;
   onSelectCatalog: (path: string) => void;
 }
 
+/** A side-series cell: the year it starts, with the full span on hover. */
+const SpanCell: React.FC<{ span: SeriesSpan | undefined }> = ({ span }) =>
+  span?.first ? (
+    <span
+      className="inline-block px-2 py-0.5 rounded-full bg-emerald-950/60 text-emerald-400 border border-emerald-800/40 text-[11px]"
+      title={`${span.first.slice(0, 10)} → ${span.last?.slice(0, 10) ?? '?'} · ${span.rows ?? '?'} rows · ${span.catalog}`}
+    >
+      {span.first.slice(0, 7)}
+    </span>
+  ) : (
+    <span className="text-gray-700">—</span>
+  );
+
 export const CatalogCoverageMatrix: React.FC<CatalogCoverageMatrixProps> = ({
   catalogs,
   allSymbols = [],
+  fundingCoverage = {},
+  premiumCoverage = {},
   selectedCatalogPath,
   onSelectCatalog,
 }) => {
@@ -141,14 +160,6 @@ export const CatalogCoverageMatrix: React.FC<CatalogCoverageMatrixProps> = ({
           </thead>
           <tbody className="divide-y divide-gray-800/60 text-gray-300">
             {filteredSymbols.map((sym) => {
-              // Check funding or premium availability across catalogs
-              const hasFundingAnywhere = catalogs.some(
-                (c) => c.has_funding && (c.symbols?.some((s) => s.includes(sym)) ?? true),
-              );
-              const hasPremiumAnywhere = catalogs.some(
-                (c) => c.has_premium_index && (c.symbols?.some((s) => s.includes(sym)) ?? true),
-              );
-
               return (
                 <tr key={sym} className="hover:bg-gray-800/40 transition-colors">
                   <td className="p-3 font-bold text-gray-200 flex items-center gap-1.5">
@@ -188,26 +199,12 @@ export const CatalogCoverageMatrix: React.FC<CatalogCoverageMatrixProps> = ({
                     );
                   })}
 
-                  {/* Funding Rate indicator */}
+                  {/* Side series: the month each starts, per symbol, across catalogs */}
                   <td className="text-center p-2">
-                    {hasFundingAnywhere ? (
-                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-950/70 text-emerald-400 border border-emerald-800/50">
-                        <Check className="w-3 h-3" />
-                      </span>
-                    ) : (
-                      <span className="text-gray-700">—</span>
-                    )}
+                    <SpanCell span={fundingCoverage[sym]} />
                   </td>
-
-                  {/* Premium Index indicator */}
                   <td className="text-center p-2">
-                    {hasPremiumAnywhere ? (
-                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-950/70 text-indigo-400 border border-indigo-800/50">
-                        <Check className="w-3 h-3" />
-                      </span>
-                    ) : (
-                      <span className="text-gray-700">—</span>
-                    )}
+                    <SpanCell span={premiumCoverage[sym]} />
                   </td>
                 </tr>
               );
@@ -218,7 +215,7 @@ export const CatalogCoverageMatrix: React.FC<CatalogCoverageMatrixProps> = ({
 
       <div className="flex items-center justify-between text-[11px] text-gray-500 font-mono pt-1">
         <span>Click any column header or cell to select that catalog dataset.</span>
-        <span>Green pills show bar counts; checkmarks indicate auxiliary rate coverage.</span>
+        <span>Green pills show bar counts; Funding/Premium show the month each series starts.</span>
       </div>
     </div>
   );

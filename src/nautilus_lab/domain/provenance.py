@@ -41,6 +41,9 @@ class RunManifest:
     #: Hash of the run's walk-forward terms (docs/27 R-2); set after the fold windows
     #: are known, compared with `research/preregistrations/`.
     preregistration_sha256: str | None = None
+    #: QC verdict of the catalog series the run read: `ok`, `warn`, `fail` (only with
+    #: ALLOW_FAILED_DATA) or `unknown` (no report: ingested before QC existed).
+    data_quality: str | None = None
 
     @property
     def reproducible(self) -> bool:
@@ -58,6 +61,8 @@ class RunManifest:
             )
         if self.lock_sha256 is None:
             found.append("uv.lock not found: dependency versions not pinned in the record")
+        if self.data_quality == "fail":
+            found.append("the data failed its quality check (run allowed by ALLOW_FAILED_DATA)")
         return tuple(found)
 
     def summary_line(self) -> str:
@@ -75,6 +80,8 @@ class RunManifest:
             parts.append(f"catalog={_short(self.catalog_fingerprint)}({self.catalog_files} files)")
         if self.preregistration_sha256 is not None:
             parts.append(f"terms={_short(self.preregistration_sha256)}")
+        if self.data_quality is not None:
+            parts.append(f"data={self.data_quality}")
         return " ".join(parts)
 
     def as_dict(self) -> dict[str, object]:
@@ -89,6 +96,7 @@ class RunManifest:
             "catalog_fingerprint": self.catalog_fingerprint,
             "catalog_files": self.catalog_files,
             "preregistration_sha256": self.preregistration_sha256,
+            "data_quality": self.data_quality,
         }
 
     @classmethod
@@ -111,6 +119,7 @@ class RunManifest:
             catalog_fingerprint=_optional_str(payload, "catalog_fingerprint"),
             catalog_files=files,
             preregistration_sha256=_optional_str(payload, "preregistration_sha256"),
+            data_quality=_optional_str(payload, "data_quality"),
         )
 
 

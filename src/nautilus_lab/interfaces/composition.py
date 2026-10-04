@@ -58,6 +58,7 @@ from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_fundi
 from nautilus_lab.infrastructure.orderbook_catalog import ParquetOrderBookCatalog
 from nautilus_lab.infrastructure.preregistration_store import JsonPreregistrationStore
 from nautilus_lab.infrastructure.provenance import collect_manifest
+from nautilus_lab.infrastructure.quality_gate import QualityGate, quality_status
 from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.taker_flow_catalog import ParquetTakerFlowCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
@@ -97,8 +98,14 @@ def decision_log_writer(cfg: Settings) -> JsonlDecisionLogWriter:
 
 
 def research_feed(cfg: Settings, *, path: str | None = None) -> ResearchBarFeed:
-    """Bars plus the taker-flow join. One place, so no run silently loses the join."""
-    return ResearchBarFeed(catalog(cfg, path=path), taker_flow=taker_flow_catalog(cfg, path=path))
+    """Bars plus the taker-flow join and the QC gate. One place, so no run skips either."""
+    return ResearchBarFeed(
+        catalog(cfg, path=path),
+        taker_flow=taker_flow_catalog(cfg, path=path),
+        quality_gate=QualityGate(
+            Path(path or cfg.catalog_path), allow_failed=cfg.allow_failed_data
+        ),
+    )
 
 
 def notifier(cfg: Settings | None = None) -> AlertNotifier:
@@ -262,10 +269,19 @@ def run_manifest(cfg: Settings, *, with_catalog: bool) -> RunManifest:
 
     `with_catalog=False` for synthetic bars: no catalog is read, so none is fingerprinted.
     """
-    return collect_manifest(
+    manifest = collect_manifest(
         settings=cfg.model_dump(mode="json"),
         catalog_paths=[cfg.catalog_path] if with_catalog else (),
     )
+    if not with_catalog:
+        return manifest
+    # The QC verdict of the series this run reads, so a result on `unknown` (REST-era)
+    # or `warn` data can be told apart from one on clean data in the journal.
+    try:
+        bar_type = nautilus_bar_type(cfg.instrument_id, cfg.bar_interval)
+    except ValueError:
+        return manifest
+    return replace(manifest, data_quality=quality_status(Path(cfg.catalog_path), bar_type))
 
 
 def journal_paths(cfg: Settings) -> tuple[Path, Path]:

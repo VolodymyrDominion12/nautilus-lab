@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -33,9 +33,19 @@ class ResearchBarFeed:
     tick-rule proxy — the defect this path exists to close.
     """
 
-    def __init__(self, catalog: BarCatalog, *, taker_flow: TakerFlowCatalog | None = None) -> None:
+    def __init__(
+        self,
+        catalog: BarCatalog,
+        *,
+        taker_flow: TakerFlowCatalog | None = None,
+        quality_gate: Callable[[str], str] | None = None,
+    ) -> None:
         self._catalog = catalog
         self._taker_flow = taker_flow
+        # Checked before a catalog series is read (infrastructure/quality_gate.py): a
+        # series whose QC failed raises instead of being backtested. Synthetic bars
+        # have no catalog and are never checked.
+        self._quality_gate = quality_gate
 
     @staticmethod
     def _slice_days(bars: list[OhlcvBar], days: int | None) -> list[OhlcvBar]:
@@ -59,6 +69,8 @@ class ResearchBarFeed:
         if request.source is BarOrigin.SYNTHETIC:
             return _synthetic(request)
         start, end = _stress_window(request)
+        if self._quality_gate is not None:
+            self._quality_gate(request.bar_type)
         bars = self._catalog.load(
             bar_type=request.bar_type,
             start=start,
@@ -109,6 +121,8 @@ class ResearchBarFeed:
         raw: dict[str, list[OhlcvBar]] = {}
         for instrument_id in ids:
             bar_type = nautilus_bar_type(instrument_id, interval)
+            if self._quality_gate is not None:
+                self._quality_gate(bar_type)
             loaded = self._catalog.load(bar_type=bar_type, start=start, end=end)
             raw[instrument_id] = loaded
         if request.days and request.days > 0 and raw:

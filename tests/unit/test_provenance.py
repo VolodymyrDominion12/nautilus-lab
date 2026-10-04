@@ -263,3 +263,15 @@ def test_report_reads_revisions_from_a_journal(tmp_path: Path) -> None:
     journal.append("session_resume", "s1", {"provenance": {"code_revision": "b2"}})
     (summary,) = live_paper_report.collect(journal)
     assert summary.revisions == ["a1", "b2"]
+
+
+def test_data_quality_is_recorded_shown_and_round_tripped() -> None:
+    manifest = RunManifest(code_revision="a" * 40, code_dirty=False, data_quality="warn")
+    assert "data=warn" in manifest.summary_line()
+    assert RunManifest.from_dict(json.loads(json.dumps(manifest.as_dict()))) == manifest
+    failed = replace(manifest, data_quality="fail")
+    assert any("quality check" in item for item in failed.warnings())
+    # A journal line written before the field existed still loads.
+    old = manifest.as_dict()
+    del old["data_quality"]
+    assert RunManifest.from_dict(old).data_quality is None

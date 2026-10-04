@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from nautilus_lab.application.catalog_queries import incremental_ingest_start
 from nautilus_lab.application.dtos import (
@@ -177,6 +178,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--no-prices",
         action="store_true",
         help="Funding only: skip the 1h mark/index joins (the backtest does not need them)",
+    )
+
+    refresh = sub.add_parser(
+        "refresh-data",
+        help=(
+            "Nightly refresh: re-ingest every catalog_<spot|perp>_<interval> from the archive, "
+            "then report QC and staleness (Telegram/webhook when configured)"
+        ),
+    )
+    refresh.add_argument(
+        "--add-new",
+        action="store_true",
+        help="Ingest every *USDT symbol of the archive, not only those already in a catalog",
+    )
+    refresh.add_argument("--spot-start", default="2019-01-01")
+    refresh.add_argument("--perp-start", default="2020-01-01")
+    refresh.add_argument("--cache-dir", default="data/raw/binance_vision")
+    refresh.add_argument("--workers", type=int, default=8)
+    refresh.add_argument("--stale-days", type=int, default=3)
+    refresh.add_argument(
+        "--quiet-ok", action="store_true", help="Notify only when something is wrong"
     )
 
     research = sub.add_parser("research", help="Run a simulated backtest (default path)")
@@ -498,6 +520,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_ingest(cfg, args)
         if args.command == "ingest-archive":
             return _run_ingest_archive(cfg, args)
+        if args.command == "refresh-data":
+            return _run_refresh_data(cfg, args)
         if args.command == "research":
             return _run_research(cfg, args)
         if args.command == "paper":
@@ -709,6 +733,110 @@ def _run_ingest_archive(cfg: Settings, args: argparse.Namespace) -> int:
         flush=True,
     )
     return 2 if failures else 0
+
+
+def _catalog_instruments(root: Path) -> list[str]:
+    """Instrument ids of a catalog from its bar directory names (no Parquet read)."""
+    from nautilus_lab.infrastructure.timeframe import NAUTILUS_BAR_SPEC
+
+    bar_root = root / "data" / "bar"
+    if not bar_root.is_dir():
+        return []
+    found: list[str] = []
+    for entry in bar_root.iterdir():
+        for spec in NAUTILUS_BAR_SPEC.values():
+            marker = f"-{spec}-"
+            if marker in entry.name:
+                found.append(entry.name[: entry.name.index(marker)])
+                break
+    return found
+
+
+def _run_refresh_data(cfg: Settings, args: argparse.Namespace) -> int:
+    """Re-ingest the archive catalogs, then say how healthy and fresh the data is.
+
+    Exit code 0 when every series is ok/warn and fresh, 2 otherwise — so a scheduler
+    (deploy/refresh_data.sh, cron, systemd) can tell a bad night from a good one.
+    """
+    from nautilus_lab.application.data_refresh import plan_targets, summarize
+    from nautilus_lab.infrastructure.quality_gate import quality_reports
+    from nautilus_lab.interfaces.composition import notifier
+
+    require_simulated_mode(cfg.trading_mode)
+    catalogs = {
+        path.name: _catalog_instruments(path)
+        for path in sorted(Path.cwd().glob("catalog_*"))
+        if path.is_dir()
+    }
+    targets = plan_targets(catalogs)
+    if not targets:
+        print("refresh-data: no catalog_<spot|perp>_<interval> catalogs to refresh", flush=True)
+        return 0
+
+    def archive_args(**overrides: object) -> argparse.Namespace:
+        base: dict[str, object] = {
+            "market": "spot",
+            "dataset": "klines",
+            "interval": "1d",
+            "symbols": "all",
+            "start": args.perp_start,
+            "end": None,
+            "catalog": None,
+            "cache_dir": args.cache_dir,
+            "workers": args.workers,
+            # The backtest reads funding rates only; the 1h mark/index joins double the
+            # downloads of a nightly run for no consumer.
+            "no_prices": True,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    failed_steps = 0
+    perp_symbols: set[str] = set()
+    perp_intervals: set[str] = set()
+    for target in targets:
+        print(f"\n=== refresh {target.catalog}: {len(target.symbols)} symbols ===", flush=True)
+        code = _run_ingest_archive(
+            cfg,
+            archive_args(
+                market=target.market,
+                interval=target.interval,
+                symbols="all" if args.add_new else ",".join(target.symbols),
+                start=args.spot_start if target.market == "spot" else args.perp_start,
+                catalog=target.catalog,
+            ),
+        )
+        failed_steps += int(code != 0)
+        if target.market == "um":
+            perp_symbols.update(target.symbols)
+            perp_intervals.add(target.interval)
+    if perp_symbols:
+        symbols = "all" if args.add_new else ",".join(sorted(perp_symbols))
+        print("\n=== refresh funding ===", flush=True)
+        failed_steps += int(
+            _run_ingest_archive(cfg, archive_args(dataset="funding", symbols=symbols)) != 0
+        )
+        for interval in sorted(perp_intervals):
+            print(f"\n=== refresh premium index {interval} ===", flush=True)
+            failed_steps += int(
+                _run_ingest_archive(
+                    cfg, archive_args(dataset="premium", interval=interval, symbols=symbols)
+                )
+                != 0
+            )
+
+    reports = {target.catalog: quality_reports(Path(target.catalog)) for target in targets}
+    summary = summarize(
+        reports,
+        now=datetime.now(UTC),
+        stale_after=timedelta(days=args.stale_days),
+        ingest_failures=failed_steps,
+    )
+    message = summary.message()
+    print(f"\n{message}", flush=True)
+    if not (summary.healthy and args.quiet_ok):
+        notifier(cfg).notify(message, level="INFO" if summary.healthy else "ERROR")
+    return 0 if summary.healthy else 2
 
 
 def _run_collect_live_ticks(

@@ -213,6 +213,9 @@ class Settings(BaseSettings):
     trials_ledger_path: str = "research/trials.jsonl"
     # Registered test terms, one JSON file each (docs/27 R-2): `lab research --register`.
     preregistrations_dir: str = "research/preregistrations"
+    # Data quality (docs/34 P2): a catalog series whose QC verdict is `fail` is refused
+    # by every backtest. True only to study the defect itself, never for a result.
+    allow_failed_data: bool = False
 
     # Decision Log for Live Paper API (infrastructure/decision_log_writer.py)
     decision_log_enabled: bool = False

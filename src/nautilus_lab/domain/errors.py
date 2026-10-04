@@ -75,3 +75,12 @@ class HistoryTruncatedError(DomainError):
     cut short at an arbitrary date — the failure mode the page cap exists to bound,
     not to hide.
     """
+
+
+class DataQualityError(DomainError):
+    """A bar series failed its quality check and the run was not allowed to read it.
+
+    The archive ingest writes a QC verdict per series (`<catalog>/quality.json`). A
+    `fail` there — a hole of more than 1% of the bars, or a ticker re-used by another
+    coin — means a backtest on it measures the data defect, not the strategy.
+    """

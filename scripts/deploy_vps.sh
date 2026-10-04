@@ -31,7 +31,7 @@ git archive --format=tar HEAD | ssh "$VPS" "
     mkdir -p $REMOTE_DIR && cd $REMOTE_DIR
     tar -xf -
     echo $REV > DEPLOYED_REVISION
-    mkdir -p data reports catalog
+    mkdir -p data reports catalog catalog_spot_1d catalog_perp_1d
     test -f .env || { echo 'missing .env on the server: cp deploy/vps.env.example .env and edit it'; exit 1; }
     test -f deploy/.env || { echo 'missing deploy/.env: cp deploy/compose.env.example deploy/.env and edit it'; exit 1; }
     # An exposed dashboard without a lock hands the API token to anyone (deploy/Caddyfile).

@@ -46,6 +46,10 @@ services:
       - ../data:/app/data
       - ../reports:/app/reports
       - ../catalog:/app/catalog
+      # Archive catalogs (docs/34). Create them on the host before `up` (mkdir), or
+      # Docker creates them as root and the app user cannot write into them.
+      - ../catalog_spot_1d:/app/catalog_spot_1d
+      - ../catalog_perp_1d:/app/catalog_perp_1d
     # Not published: only Caddy reaches it, over the compose network.
     expose:
       - "8000"
@@ -114,6 +118,35 @@ services:
       - ../.env:/app/.env:ro
       - ../catalog:/app/catalog
       - ./collect_ticks.sh:/app/deploy/collect_ticks.sh:ro
+    logging: *logging
+
+  # Nightly archive refresh of catalog_spot_1d / catalog_perp_1d + QC report to Telegram
+  # (docs/34 P2; deploy/refresh_data.sh). Opt-in: COMPOSE_PROFILES=refresh. It writes the
+  # catalogs the API reads and the archive cache under data/raw/binance_vision.
+  refresher:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+      args:
+        LAB_REVISION: ${LAB_REVISION:-}
+        APP_UID: ${APP_UID:-1001}
+        APP_GID: ${APP_GID:-1001}
+    restart: unless-stopped
+    profiles: ["refresh"]
+    command: ["/bin/sh", "/app/deploy/refresh_data.sh"]
+    <<: *hardening
+    mem_limit: ${REFRESH_MEM_LIMIT:-1536m}
+    environment:
+      XDG_CACHE_HOME: /tmp/.cache
+      REFRESH_AT_UTC: ${REFRESH_AT_UTC:-01:30}
+      REFRESH_ARGS: ${REFRESH_ARGS:-}
+      REFRESH_ON_START: ${REFRESH_ON_START:-0}
+    volumes:
+      - ../.env:/app/.env:ro
+      - ../data:/app/data
+      - ../catalog_spot_1d:/app/catalog_spot_1d
+      - ../catalog_perp_1d:/app/catalog_perp_1d
+      - ./refresh_data.sh:/app/deploy/refresh_data.sh:ro
     logging: *logging
 
   # Off-server backup of the paper journals, reports and collected ticks (restic; see

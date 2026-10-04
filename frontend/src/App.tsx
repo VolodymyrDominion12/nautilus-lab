@@ -188,6 +188,26 @@ function AppContent() {
     toast.success('Hypothesis loaded into Research Lab!', cfg.notes || cfg.formula);
   };
 
+  /**
+   * A batch cell handed to the Research tab as a candidate.
+   *
+   * A cell can never pass the promotion gate — it runs no overfitting audit and carries no
+   * registration — so the screen that shows its verdict needs a way to re-run it properly.
+   * The handoff carries what the cell was (robot, instrument, folds); the hypothesis text
+   * stays empty on purpose: writing it is the user's promise, not the dashboard's.
+   */
+  const handlePromoteCandidate = (cfg: {
+    robot: string;
+    instrumentId?: string;
+    folds?: number;
+    notes?: string;
+  }) => {
+    setExternalHypoConfig({ ...cfg, promote: true });
+    setSelectedRobot(cfg.robot);
+    setActiveTab('research');
+    toast.success('Клітинка відкрита як кандидат: PBO увімкнено, додайте гіпотезу', cfg.notes);
+  };
+
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-[#080c14] text-gray-100 font-sans">
       <CommandPalette
@@ -252,7 +272,10 @@ function AppContent() {
             }
           />
         ) : batchRoute || activeTab === 'batch' ? (
-          <BatchSection route={batchRoute ?? { page: 'list' }} />
+          <BatchSection
+            route={batchRoute ?? { page: 'list' }}
+            onPromoteCandidate={handlePromoteCandidate}
+          />
         ) : (
           <>
             {activeTab === 'home' && <CommandCenter />}

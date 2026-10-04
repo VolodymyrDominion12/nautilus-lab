@@ -14,11 +14,34 @@ import type { ResearchForm } from '../../lib/researchForm';
 import type { ResearchRunConfig, StrategySpec } from '../../services/api';
 import type { CatalogInstrument } from './BasicControls';
 
+/** What another tab can hand to the research form (an alpha idea, a batch cell). */
+export interface ExternalResearchConfig {
+  robot?: string;
+  formula?: string;
+  notes?: string;
+  /** The instrument the caller was looking at, e.g. the cell's. */
+  instrumentId?: string;
+  folds?: number;
+  /** The caller wants a candidate run: the audit half of the gate included. */
+  promote?: boolean;
+}
+
 interface Options {
   initialRobot: string;
-  externalConfig: { robot?: string; formula?: string; notes?: string } | null;
+  externalConfig: ExternalResearchConfig | null;
   strategies: StrategySpec[];
   catalogInstruments: CatalogInstrument[];
+}
+
+/** The form fields an external config pins, so a handoff cannot be silently ignored. */
+function applyExternal(form: ResearchForm, external: ExternalResearchConfig | null): ResearchForm {
+  if (!external) return form;
+  const patch: Partial<ResearchForm> = {};
+  if (external.robot) patch.robot = external.robot;
+  if (external.instrumentId) patch.instrumentId = external.instrumentId;
+  if (external.folds && external.folds >= 2) patch.folds = external.folds;
+  if (external.promote) patch.promote = true;
+  return Object.keys(patch).length > 0 ? { ...form, ...patch } : form;
 }
 
 function storage(): Storage | undefined {
@@ -40,10 +63,9 @@ export function useResearchForm({
   strategies,
   catalogInstruments,
 }: Options) {
-  const [form, setForm] = useState<ResearchForm>(() => {
-    const restored = restoreForm(loadSavedForm(storage()), initialRobot);
-    return externalConfig?.robot ? { ...restored, robot: externalConfig.robot } : restored;
-  });
+  const [form, setForm] = useState<ResearchForm>(() =>
+    applyExternal(restoreForm(loadSavedForm(storage()), initialRobot), externalConfig),
+  );
   const update = useCallback(
     (patch: Partial<ResearchForm>) => setForm((current) => ({ ...current, ...patch })),
     [],

@@ -136,6 +136,10 @@ export interface PreflightInput {
   fullSample: boolean;
   useOptuna: boolean;
   pbo: boolean;
+  /** Hypothesis text for pre-registration; empty = no registration. */
+  register?: string;
+  /** Candidate mode: the walk-forward plus the overfitting audit in one run. */
+  promote?: boolean;
   windowMode: 'fraction' | 'custom';
   isStart: string;
   isEnd: string;
@@ -172,6 +176,41 @@ export const preflight = (input: PreflightInput): PreflightIssue[] => {
     issues.push({
       level: 'error',
       message: `Robot "${input.robot}" is not wired to the backtest engine; the run will fail closed.`,
+    });
+  }
+
+  // The register/promote switches have the same rules the backend enforces (docs/27 R-2):
+  // a registration describes a walk-forward, and the gate's fold half needs one too.
+  if (input.register?.trim() && input.folds < 2) {
+    issues.push({
+      level: 'error',
+      message:
+        'Pre-registration describes a walk-forward: it needs 2 folds or more, because the promotion gate reads the fold count.',
+    });
+  }
+  if (input.register?.trim() && input.source === 'synthetic') {
+    issues.push({
+      level: 'error',
+      message: 'Synthetic bars are a smoke test, not a hypothesis worth registering.',
+    });
+  }
+  if (input.promote && input.pbo) {
+    issues.push({
+      level: 'error',
+      message:
+        'Candidate mode already runs the overfitting audit; turn off the PBO-only run.',
+    });
+  }
+  if (input.promote && input.folds < 2) {
+    issues.push({
+      level: 'error',
+      message: 'Candidate mode needs 2 folds or more: the gate compares fold results.',
+    });
+  }
+  if (input.promote && input.fullSample) {
+    issues.push({
+      level: 'error',
+      message: 'Candidate mode is a walk-forward; full-sample is a single in-sample run.',
     });
   }
 

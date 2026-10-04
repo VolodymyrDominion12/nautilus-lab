@@ -275,6 +275,8 @@ export interface ResearchRunRequest {
   oos_start?: string | null;
   oos_end?: string | null;
   param_overrides?: Record<string, string>;
+  register?: string | null;
+  promote?: boolean;
 }
 
 export interface IngestRunRequest {

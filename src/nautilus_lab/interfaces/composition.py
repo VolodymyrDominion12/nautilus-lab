@@ -297,6 +297,7 @@ def overfit_audit_request(
     source: BarOrigin = BarOrigin.CATALOG,
     blocks: int = 8,
     stress_slice: str | None = None,
+    days: int | None = None,
 ) -> OverfitAuditRequest:
     return OverfitAuditRequest(
         backtest=research_request(
@@ -304,6 +305,7 @@ def overfit_audit_request(
             bar_count=bar_count,
             robot=robot,
             source=source,
+            days=days,
             stress_slice=stress_slice,
         ),
         blocks=blocks,

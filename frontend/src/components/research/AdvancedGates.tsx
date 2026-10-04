@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import { InfoTooltip } from '../InfoTooltip';
+import { PreregistrationFields } from './PreregistrationFields';
 import { sliceOverlapsCatalog } from '../../lib/research';
 import type { ResearchForm } from '../../lib/researchForm';
 import type { StressSliceInfo } from '../../services/api';
@@ -42,6 +43,8 @@ export const AdvancedGates: React.FC<AdvancedGatesProps> = ({
     journal,
     notify,
     fullSample,
+    register,
+    promote,
   } = form;
   return (
     <div>
@@ -263,6 +266,8 @@ export const AdvancedGates: React.FC<AdvancedGatesProps> = ({
               <InfoTooltip term="full_sample" size="xs" />
             </div>
           )}
+
+          <PreregistrationFields register={register} promote={promote} source={source} update={update} />
 
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-1.5">

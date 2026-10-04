@@ -13,12 +13,19 @@ from typing import Any, TextIO, cast
 from nautilus_lab.api.experiment_history import archive_job_result
 from nautilus_lab.api.serializers import build_job_result, pct, serialize_backtest
 from nautilus_lab.api.settings_coerce import apply_setting_overrides
-from nautilus_lab.application.dtos import BacktestReport, MultiWindowReport, WalkForwardReport
+from nautilus_lab.application.dtos import (
+    BacktestReport,
+    MultiWindowReport,
+    OverfitAuditReport,
+    WalkForwardReport,
+)
 from nautilus_lab.application.journal import JournalEntry, record_run
+from nautilus_lab.application.preregistration import register, research_terms, verdict_for
 from nautilus_lab.application.promotion_gate import GateVerdict, class_for_robot, evaluate_gate
 from nautilus_lab.application.run_walk_forward import window_return
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.errors import JournalFormatError
+from nautilus_lab.domain.preregistration import PreregistrationVerdict
 from nautilus_lab.domain.provenance import RunManifest
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
@@ -28,6 +35,7 @@ from nautilus_lab.interfaces.composition import (
     notifier,
     overfit_audit_request,
     overfit_audit_use_case,
+    preregistration_store,
     research_request,
     research_use_case,
     run_manifest,
@@ -70,6 +78,15 @@ class ResearchJobConfig:
     oos_end: str | None = None
     param_overrides: dict[str, str] | None = None
     tearsheet_path: str | None = None
+    #: Hypothesis text: write the walk-forward's terms down *before* running it (docs/27
+    #: R-2). Only a later run whose terms hash the same can be promoted, so this is what
+    #: turns "we tried things until one worked" into a test.
+    register: str | None = None
+    #: Candidate mode: after the walk-forward, also run the PBO/CSCV audit and judge the
+    #: gate on both halves. The gate needs `folds` *and* `pbo`/`dsr`, and no single
+    #: `lab research` invocation produces both, so a cell could never be promoted from
+    #: the dashboard (docs/35 §3). Expensive on purpose: this is the one deliberate look.
+    promote: bool = False
 
 
 class _Tee(io.TextIOBase):
@@ -215,12 +232,22 @@ def _print_walk_forward(report: WalkForwardReport) -> None:
         print(f"tearsheet_saved={report.out_of_sample.tearsheet_path}")
 
 
-def _print_multi_window(report: MultiWindowReport, robot: str | None = None) -> GateVerdict:
+def _print_multi_window(
+    report: MultiWindowReport,
+    robot: str | None = None,
+    *,
+    preregistration: PreregistrationVerdict | None = None,
+    audit: OverfitAuditReport | None = None,
+) -> GateVerdict:
     """Print the walk-forward report and return its promotion verdict.
 
     The verdict is returned, not only printed, so the caller can put it in
     `last_run.json`: the dashboard needs a label it can sort and aggregate by, and a
     line of log text is not that (docs/35 §3).
+
+    `preregistration` and `audit` are the other two halves of the gate. The audit is
+    normally None here (it is a separate, expensive run); the candidate path passes both so
+    every check is measured and the verdict can actually read PROMOTE.
     """
     print(report.notes)
     for fold in report.folds:
@@ -244,9 +271,46 @@ def _print_multi_window(report: MultiWindowReport, robot: str | None = None) -> 
     )
     print(report.summary_line())
     strategy_cls = class_for_robot(robot) if robot else None
-    gate = evaluate_gate(report, None, strategy_class=strategy_cls)
+    if preregistration is not None:
+        print(preregistration.summary_line())
+    gate = evaluate_gate(
+        report,
+        audit,
+        preregistration=preregistration,
+        strategy_class=strategy_cls,
+    )
     print(gate.summary_line())
     return gate
+
+
+def _run_candidate_audit(
+    cfg: Settings, job: ResearchJobConfig, robot: RobotName
+) -> OverfitAuditReport:
+    """The PBO/CSCV half of the gate, on the same window the walk-forward just used.
+
+    The gate needs both halves (`folds` from the walk-forward, `pbo`/`dsr` from the audit)
+    and no single `lab research` invocation produces both, so before this the dashboard
+    could never reach a PROMOTE verdict — the `promote` mode is that missing path, and it
+    is deliberately a separate, explicit action because it re-runs the grid per block.
+    """
+    audit = overfit_audit_use_case(cfg).execute(
+        overfit_audit_request(
+            cfg,
+            bar_count=job.bars if job.source == "synthetic" else 0,
+            robot=robot,
+            source=BarOrigin.CATALOG if job.source != "synthetic" else BarOrigin.SYNTHETIC,
+            blocks=job.pbo_blocks,
+            stress_slice=job.stress_slice,
+            days=job.days,
+        )
+    )
+    print(audit.notes)
+    print(
+        f"pbo audit: blocks={audit.blocks} configurations={audit.configuration_count} "
+        f"{audit.summary_line()}"
+    )
+    print(audit.deflated_sharpe.summary_line())
+    return audit
 
 
 def execute_research(
@@ -274,6 +338,35 @@ def execute_research(
                 "full_sample and use_optuna are mutually exclusive: full-sample is one "
                 "in-sample run, Optuna needs a walk-forward split to select on. Drop one."
             )
+        # The same rules the CLI enforces for `--register`, so one dashboard run and one
+        # terminal run cannot mean different things (docs/27 R-2).
+        if job.register:
+            if job.folds < 2:
+                raise ValueError("register needs folds >= 2: the promotion gate reads folds")
+            if job.source == "synthetic":
+                raise ValueError(
+                    "register is for catalog data; synthetic bars are not a test of anything"
+                )
+            if job.pbo:
+                raise ValueError(
+                    "register describes the walk-forward; the pbo-only run is a separate "
+                    "audit. Use promote=true to have both measured in one run."
+                )
+        if job.promote:
+            if job.pbo:
+                raise ValueError("promote already runs the pbo audit; drop the pbo-only run")
+            if job.folds < 2:
+                raise ValueError(
+                    "promote needs folds >= 2: the gate's fold half comes from a "
+                    "multi-window walk-forward"
+                )
+            if job.full_sample:
+                raise ValueError("promote runs a walk-forward, not a full-sample run")
+            if not job.register:
+                print(
+                    "note: promote without register leaves `preregistered` not measured, so "
+                    "the verdict can be INCOMPLETE or REJECT but never PROMOTE"
+                )
 
         if job.pbo:
             if job.tearsheet_path and job.generate_tearsheet:
@@ -439,8 +532,43 @@ def execute_research(
         use_case = walk_forward_use_case(cfg)
 
         if job.folds > 1:
+            # The clock starts before anything is measured: a registration dated after it
+            # cannot certify the run (the gate reads `LATE` and refuses).
+            run_started_at = datetime.now(UTC)
+            if job.register:
+                # Written before the first backtest, from the same windows the run will use:
+                # the terms are a promise about what will be tested, so they cannot depend
+                # on a result. `plan_multi` computes the rolling split without running.
+                terms = research_terms(wf_request, use_case.plan_multi(wf_request))
+                registration, where = register(
+                    terms,
+                    hypothesis=job.register,
+                    registered_at=run_started_at,
+                    store=preregistration_store(cfg),
+                )
+                print(
+                    f"preregistration written: {where} terms={registration.terms_sha256[:12]} "
+                    f"grid={len(terms.grid)} folds={terms.folds}"
+                )
+                # The measurement starts *after* the terms are on disk. Registering and
+                # running inside one job is legitimate — the promise is written before any
+                # result exists — but the gate compares timestamps, so this instant must be
+                # strictly later than the registration, not the job's start.
+                run_started_at = datetime.now(UTC)
             multi = use_case.execute_multi(wf_request)
-            gate = _print_multi_window(multi, robot=robot.value)
+            audit = _run_candidate_audit(cfg, job, robot) if job.promote else None
+            preregistration = verdict_for(
+                wf_request,
+                [fold.window for fold in multi.folds],
+                preregistration_store(cfg),
+                run_started_at=run_started_at,
+            )
+            gate = _print_multi_window(
+                multi,
+                robot=robot.value,
+                preregistration=preregistration,
+                audit=audit,
+            )
             tearsheet_path = None
             for fold in multi.folds:
                 if fold.out_of_sample.tearsheet_path:
@@ -451,6 +579,7 @@ def execute_research(
                 robot=robot.value,
                 source=job.source,
                 multi_window=multi,
+                pbo=audit,
                 promotion_gate=gate,
                 tearsheet_path=tearsheet_path,
                 report_label="Out-of-sample multi-window walk-forward",

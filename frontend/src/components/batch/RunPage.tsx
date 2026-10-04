@@ -5,7 +5,7 @@ import { buildBatchHash, rowWarnings, STATUS_CLASS, type RunTab } from '../../li
 import { TONE_TEXT, formatDateTime, formatPct, toNumber, toneOf } from '../../lib/format';
 import { DecisionLogPanel } from '../DecisionLogPanel';
 import { EquityCurveChart } from '../EquityCurveChart';
-import { GateBadge } from './GateBadge';
+import { GateSummary } from './GateSummary';
 import { SelectionRanking } from './SelectionCandidates';
 import { RunAnalysisTab } from './RunAnalysisTab';
 import { RunTradesTab } from './RunTradesTab';
@@ -13,6 +13,12 @@ import { RunTradesTab } from './RunTradesTab';
 interface RunPageProps {
   batchId: string;
   cellId: string;
+  onPromoteCandidate?: (cfg: {
+    robot: string;
+    instrumentId?: string;
+    folds?: number;
+    notes?: string;
+  }) => void;
   fold?: number;
   tab?: RunTab;
 }
@@ -30,7 +36,13 @@ const TABS: { key: RunTab; label: string }[] = [
  * Fold and tab live in the address (`#/run/<batch>/<cell>?fold=2&tab=analysis`), so a
  * link to "fold 2's blocked entries" can be sent to someone as it is.
  */
-export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = 'trades' }) => {
+export const RunPage: React.FC<RunPageProps> = ({
+  batchId,
+  cellId,
+  fold,
+  tab = 'trades',
+  onPromoteCandidate,
+}) => {
   const [run, setRun] = useState<RunPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -122,36 +134,23 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
           </span>
         )}
         <span className={`text-xs font-mono ${STATUS_CLASS[cell.status] ?? ''}`}>{cell.status}</span>
-        <GateBadge gate={gate} size="md" />
       </header>
 
       {gate && (
-        <div className="flex flex-col gap-1">
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono">
-            {gate.checks.map((check) => (
-              <span
-                key={check.name}
-                title={check.detail}
-                className={
-                  check.status === 'pass'
-                    ? 'text-emerald-400/80'
-                    : check.status === 'fail'
-                      ? 'text-red-400/80'
-                      : 'text-gray-500'
-                }
-              >
-                {check.name}={check.status}
-              </span>
-            ))}
-          </div>
-          {gate.label !== 'PROMOTE' && (
-            <p className="text-[11px] text-gray-500">
-              Клітинка пакета не рахує PBO/DSR і не має пререєстрації, тож її вердикт не може
-              бути PROMOTE. Кандидата переганяють окремо: Research Lab із PBO і 6 фолдами, а
-              пререєстрація — `lab research --folds 6 --register &lt;гіпотеза&gt;` до прогону.
-            </p>
-          )}
-        </div>
+        <GateSummary
+          gate={gate}
+          onPromoteCandidate={
+            onPromoteCandidate
+              ? () =>
+                  onPromoteCandidate({
+                    robot: cell.robot,
+                    instrumentId: cell.instrument_id,
+                    folds: run.folds.length > 1 ? run.folds.length : undefined,
+                    notes: `${cellId}: ${cell.instrument_id}`,
+                  })
+              : undefined
+          }
+        />
       )}
 
       {cell.error && <div className="text-xs text-red-400">{cell.error}</div>}

@@ -701,3 +701,32 @@ const summaryBase: ResearchSummary = {
   const errored = verdictFor({ ...summaryBase, is_error: true, error_message: 'boom' });
   check('an errored run carries no evidence', errored.evidence === 'none');
 }
+
+// ---- preflight — the candidate switches (register / promote) mirror the backend rules
+check(
+  'a registration without a walk-forward is blocked',
+  errorsOf({ ...baseInput, register: 'H: …', folds: 1 }).some((m) => m.includes('2 folds or more')),
+);
+check(
+  'registering a synthetic smoke test is blocked',
+  errorsOf({ ...baseInput, source: 'synthetic', register: 'H: …' }).some((m) =>
+    m.includes('not a hypothesis worth registering'),
+  ),
+);
+check(
+  'candidate mode alongside the pbo-only run is blocked',
+  errorsOf({ ...baseInput, promote: true, pbo: true }).some((m) => m.includes('already runs')),
+);
+check(
+  'candidate mode needs folds to compare',
+  errorsOf({ ...baseInput, promote: true, folds: 1 }).some((m) => m.includes('2 folds or more')),
+);
+check(
+  'candidate mode is not a full-sample run',
+  errorsOf({ ...baseInput, promote: true, fullSample: true }).some((m) => m.includes('full-sample')),
+);
+check(
+  'an empty hypothesis box is not a registration',
+  errorsOf({ ...baseInput, register: '   ', folds: 1 }).length === 0,
+  errorsOf({ ...baseInput, register: '   ', folds: 1 }).join(' | '),
+);

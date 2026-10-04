@@ -39,6 +39,10 @@ export interface ResearchForm {
   overrideParams: boolean;
   paramOverrides: Record<string, string>;
   instrumentId: string;
+  /** Hypothesis text: the walk-forward's terms are written down before it runs. */
+  register: string;
+  /** Candidate mode: also run the PBO/CSCV audit, so the gate has both halves. */
+  promote: boolean;
 }
 
 export const FORM_STORAGE_KEY = 'nautilus-lab:research-form:v2';
@@ -69,6 +73,8 @@ export const FORM_DEFAULTS: Omit<ResearchForm, 'robot'> = {
   overrideParams: false,
   paramOverrides: {},
   instrumentId: '',
+  register: '',
+  promote: false,
 };
 
 /** The saved form, completed with defaults. A field the saved copy lacks is not lost. */
@@ -181,6 +187,10 @@ export function toRunParams(
     optuna_trials: form.useOptuna ? form.optunaTrials : undefined,
     pbo: form.usePbo,
     pbo_blocks: form.usePbo ? form.pboBlocks : undefined,
+    // Empty text is not a registration: send nothing rather than an empty hypothesis the
+    // backend would have to refuse.
+    register: form.register.trim() || undefined,
+    promote: form.promote,
     bar_vpin: form.barVpin,
     tick_vpin: form.tickVpin,
     hawkes: form.hawkes,

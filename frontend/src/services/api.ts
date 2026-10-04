@@ -89,6 +89,10 @@ export interface ResearchRunParams {
   catalog_path?: string;
   instrument_id?: string;
   bar_interval?: string;
+  /** Hypothesis text: pre-register this walk-forward before running it. */
+  register?: string;
+  /** Candidate mode: run the PBO/CSCV audit as well and judge the gate on both halves. */
+  promote?: boolean;
   is_start?: string;
   is_end?: string;
   oos_start?: string;

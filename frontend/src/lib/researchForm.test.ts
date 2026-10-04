@@ -178,3 +178,26 @@ test('spec defaults skip empty values and parameters without an env name', () =>
     ]),
   ).toEqual({ A: '5' });
 });
+
+describe('the candidate switches', () => {
+  test('no registration is sent by default', () => {
+    const params = toRunParams(base, 'ETHUSDT.SIM', 'catalog');
+    expect(params.register).toBeUndefined();
+    expect(params.promote).toBe(false);
+  });
+
+  test('the hypothesis reaches the payload, trimmed, and candidate mode with it', () => {
+    const params = toRunParams(
+      { ...base, register: '  H: ema тримає перевагу  ', promote: true },
+      'ETHUSDT.SIM',
+      'catalog',
+    );
+    expect(params.register).toBe('H: ema тримає перевагу');
+    expect(params.promote).toBe(true);
+  });
+
+  test('whitespace is not a hypothesis', () => {
+    const params = toRunParams({ ...base, register: '   ' }, 'ETHUSDT.SIM', 'catalog');
+    expect(params.register).toBeUndefined();
+  });
+});

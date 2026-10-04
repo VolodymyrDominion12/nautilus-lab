@@ -65,6 +65,8 @@ def _job_from_payload(payload: dict[str, Any], reports_dir: Path) -> ResearchJob
         oos_end=str(payload["oos_end"]) if payload.get("oos_end") else None,
         param_overrides={str(k): str(v) for k, v in param_overrides.items()},
         tearsheet_path=tearsheet_path,
+        register=str(payload["register"]) if payload.get("register") else None,
+        promote=bool(payload.get("promote", False)),
     )
 
 

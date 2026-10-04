@@ -37,6 +37,10 @@ class ResearchRunRequest(BaseModel):
     oos_start: str | None = None
     oos_end: str | None = None
     param_overrides: dict[str, str] = {}
+    #: Hypothesis text: pre-register this walk-forward before running it (docs/27 R-2).
+    register: str | None = None
+    #: Candidate mode: also run the PBO/CSCV audit and judge the gate on both halves.
+    promote: bool = False
 
 
 class IngestRunRequest(BaseModel):

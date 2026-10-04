@@ -23,7 +23,7 @@ import { ResearchBanners } from './research/ResearchBanners';
 import { RunConditions } from './research/RunConditions';
 import { RunControls } from './research/RunControls';
 import { TearsheetPanel } from './research/TearsheetPanel';
-import { useResearchForm } from './research/useResearchForm';
+import { useResearchForm, type ExternalResearchConfig } from './research/useResearchForm';
 import { useResearchRun } from './research/useResearchRun';
 import { BacktestDetailsModal } from './BacktestDetailsModal';
 
@@ -36,7 +36,7 @@ interface ResearchLabProps {
   hawkesRobots?: string[];
   /** Named stress windows with their real dates, from the backend. */
   stressSlices?: StressSliceInfo[];
-  externalConfig?: { robot?: string; formula?: string; notes?: string } | null;
+  externalConfig?: ExternalResearchConfig | null;
   onClearExternalConfig?: () => void;
 }
 
@@ -137,6 +137,8 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
       fullSample,
       useOptuna: form.useOptuna,
       pbo: usePbo,
+      register: form.register,
+      promote: form.promote,
       windowMode,
       isStart,
       isEnd,

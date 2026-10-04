@@ -104,6 +104,9 @@ function AppContent() {
     robot?: string;
     formula?: string;
     notes?: string;
+    promote?: boolean;
+    instrumentId?: string;
+    folds?: number;
   } | null>(null);
 
   // Track background jobs transition to notify on completion

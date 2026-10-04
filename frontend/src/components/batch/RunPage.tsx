@@ -321,7 +321,7 @@ export const RunPage: React.FC<RunPageProps> = ({
         />
       )}
       {tab === 'decisions' &&
-        (decisionFold ? (
+        (decisionFold && decisionFold.session_id ? (
           <div className="flex flex-col gap-2">
             <span className="text-[11px] text-gray-500">
               Фолд {decisionFold.index} (сесія {decisionFold.session_id}) — оберіть інший у таблиці

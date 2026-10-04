@@ -185,7 +185,7 @@ describe('parseVariants', () => {
 
   test('a value may contain «=» and spaces', () => {
     const { variants } = parseVariants('[H0]\nBINANCE_SYMBOLS=["BTCUSDT", "ETHUSDT"]');
-    expect(variants[0].env.BINANCE_SYMBOLS).toBe('["BTCUSDT", "ETHUSDT"]');
+    expect(variants[0]?.env.BINANCE_SYMBOLS).toBe('["BTCUSDT", "ETHUSDT"]');
   });
 });
 

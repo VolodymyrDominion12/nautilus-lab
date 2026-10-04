@@ -40,3 +40,33 @@ export const saveStoredBatchForm = (
     // Ignore storage errors
   }
 };
+
+export const ROBOTS = [
+  'regime',
+  'ema',
+  'adaptive_ema',
+  'vpin_momentum',
+  'formulaic_lgbm',
+  'meta_label',
+  'pairs',
+  'funding',
+  'ml_obi',
+] as const;
+
+export const ALL_LAB_SYMBOLS = [
+  'BTCUSDT',
+  'ETHUSDT',
+  'SOLUSDT',
+  'BNBUSDT',
+  'XRPUSDT',
+  'DOGEUSDT',
+  'ADAUSDT',
+  'AVAXUSDT',
+  'DOTUSDT',
+  'LINKUSDT',
+  'MATICUSDT',
+] as const;
+
+export function normalizeSymbol(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9]/g, '').replace(/PERP$/i, '').toUpperCase();
+}

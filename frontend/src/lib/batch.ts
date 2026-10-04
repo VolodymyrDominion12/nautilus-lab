@@ -82,7 +82,7 @@ export interface CandidateScore {
 
 export interface FoldRef {
   index: number;
-  session_id: string;
+  session_id?: string;
   window: {
     in_sample_start?: string;
     in_sample_end?: string;
@@ -209,6 +209,7 @@ export interface PlannedCell {
   catalog: string;
   runnable: boolean;
   blocked: string | null;
+  cost_profile?: string | null;
 }
 
 // ---- table helpers --------------------------------------------------------------------
@@ -401,12 +402,16 @@ export const parseVariants = (
   let current: BatchVariant | null = null;
   const lines = text.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index].trim();
+    const rawLine = lines[index];
+    if (rawLine === undefined) continue;
+    const line = rawLine.trim();
     const where = `рядок ${index + 1}`;
     if (!line || line.startsWith('#')) continue;
     const header = /^\[(.+)\]$/.exec(line);
     if (header) {
-      const name = header[1].trim();
+      const headerName = header[1];
+      if (!headerName) continue;
+      const name = headerName.trim();
       if (!VARIANT_NAME.test(name)) {
         return {
           variants: [],

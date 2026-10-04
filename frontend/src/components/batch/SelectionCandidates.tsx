@@ -59,7 +59,7 @@ export const SelectionCandidates: React.FC<{ fold: FoldRef }> = ({ fold }) => {
   const winner = candidates[0];
   const runnerUp = candidates[1];
   const gap =
-    winner.score != null && runnerUp?.score != null ? winner.score - runnerUp.score : null;
+    winner && winner.score != null && runnerUp?.score != null ? winner.score - runnerUp.score : null;
   const hidden = candidates.length - MAX_ROWS;
 
   return (

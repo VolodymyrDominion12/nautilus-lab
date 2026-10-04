@@ -4,21 +4,16 @@ import { Eye, Play } from 'lucide-react';
 import { launchBatch, type BatchLaunchParams } from '../../services/api';
 import { catalogQuery, catalogsQuery, statusQuery } from '../../services/queries';
 import { parseVariants, type PlannedCell } from '../../lib/batch';
-import { loadStoredBatchForm, saveStoredBatchForm, type StoredBatchForm } from '../../lib/batchForm';
+import {
+  ALL_LAB_SYMBOLS,
+  loadStoredBatchForm,
+  normalizeSymbol,
+  ROBOTS,
+  saveStoredBatchForm,
+  type StoredBatchForm,
+} from '../../lib/batchForm';
 import { BatchPlanPreview } from './BatchPlanPreview';
-
-const ROBOTS = [
-  'regime',
-  'ema',
-  'adaptive_ema',
-  'vpin_momentum',
-  'formulaic_lgbm',
-  'meta_label',
-  'pairs',
-  'funding',
-  'ml_obi',
-];
-const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT'];
+import { BatchMatrixSelectors } from './BatchMatrixSelectors';
 
 interface BatchLaunchFormProps {
   onStarted: (batchId: string) => void;
@@ -34,9 +29,11 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
   const initial = useMemo(() => loadStoredBatchForm(), []);
 
   const [robots, setRobots] = useState<string[]>(
-    initial?.robots ?? ROBOTS.filter((r) => r !== 'ml_obi'),
+    initial?.robots ?? (ROBOTS as readonly string[]).filter((r) => r !== 'ml_obi'),
   );
-  const [symbols, setSymbols] = useState<string[]>(initial?.symbols ?? DEFAULT_SYMBOLS);
+  const [symbols, setSymbols] = useState<string[]>(
+    initial?.symbols ?? [...ALL_LAB_SYMBOLS],
+  );
   const [extraSymbols, setExtraSymbols] = useState(initial?.extraSymbols ?? '');
   const [barInterval, setBarInterval] = useState(initial?.barInterval ?? '1h');
   const [catalog, setCatalog] = useState(initial?.catalog ?? 'catalog');
@@ -51,15 +48,44 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
   const [costProfile, setCostProfile] = useState(initial?.costProfile ?? '');
 
   // Catalogs available in the workspace
-  const catalogs = useQuery(catalogsQuery()).data?.catalogs ?? [];
+  const catalogsResult = useQuery(catalogsQuery());
+  const catalogsData = catalogsResult.data;
+  const catalogs = catalogsData?.catalogs;
+  const allCatalogSymbols = catalogsData?.all_symbols;
 
   // Instruments present in the selected catalog
-  const catalogInstruments = useQuery(catalogQuery(catalog)).data?.instruments ?? [];
+  const catalogQueryRes = useQuery(catalogQuery(catalog));
+  const catalogInstruments = catalogQueryRes.data?.instruments;
+
+  const selectedCat = useMemo(
+    () => catalogs?.find((c) => c.name === catalog || c.path === catalog),
+    [catalogs, catalog],
+  );
+
+  // Symbols present specifically in the chosen catalog
+  const inCatalogSymbols = useMemo(() => {
+    const list: string[] = [];
+    if (selectedCat?.symbol_counts) {
+      list.push(...Object.keys(selectedCat.symbol_counts));
+    }
+    if (selectedCat?.symbols) {
+      list.push(...selectedCat.symbols.map(normalizeSymbol));
+    }
+    if (catalogInstruments?.length) {
+      list.push(...catalogInstruments.map((i) => normalizeSymbol(i.raw_symbol)));
+    }
+    return [...new Set(list.filter(Boolean))];
+  }, [selectedCat, catalogInstruments]);
+
+  // All available symbols across workspace: lab standard universe + catalog symbols
   const availableSymbols = useMemo(() => {
-    if (!catalogInstruments.length) return DEFAULT_SYMBOLS;
-    const raw = catalogInstruments.map((i) => i.raw_symbol).filter(Boolean);
-    return [...new Set([...DEFAULT_SYMBOLS, ...raw])];
-  }, [catalogInstruments]);
+    const combined = [
+      ...ALL_LAB_SYMBOLS,
+      ...(allCatalogSymbols?.map(normalizeSymbol) ?? []),
+      ...inCatalogSymbols,
+    ];
+    return [...new Set(combined.filter(Boolean))];
+  }, [allCatalogSymbols, inCatalogSymbols]);
 
   // Persist form to localStorage
   useEffect(() => {
@@ -108,13 +134,10 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const toggle = (list: string[], item: string, set: (next: string[]) => void) =>
-    set(list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
-
   const params = (dryRun: boolean): BatchLaunchParams => {
     const extra = extraSymbols
       .split(/[\s,]+/)
-      .map((s) => s.trim().toUpperCase())
+      .map(normalizeSymbol)
       .filter(Boolean);
     const env: Record<string, string> = {};
     for (const line of envText.split('\n')) {
@@ -124,7 +147,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
     const parsed = parseVariants(variantsText);
     return {
       robots,
-      symbols: [...new Set([...symbols, ...extra])],
+      symbols: [...new Set([...symbols.map(normalizeSymbol), ...extra])].filter(Boolean),
       interval: barInterval,
       catalog,
       days: typeof days === 'number' && days > 0 ? days : undefined,
@@ -161,12 +184,6 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
     }
   };
 
-  const chip = (active: boolean) =>
-    `px-2.5 py-1 rounded-lg text-[11px] font-mono border transition-colors ${
-      active
-        ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
-        : 'bg-gray-950 text-gray-500 border-gray-800 hover:text-gray-300'
-    }`;
   const input =
     'bg-gray-950 border border-gray-800 rounded-lg px-2 py-1 text-xs font-mono text-gray-200';
 
@@ -174,44 +191,19 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 flex flex-col gap-4">
       <h3 className="text-sm font-bold text-gray-100">Новий пакетний бектест</h3>
 
-      <div className="flex flex-col gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-gray-500">Роботи</span>
-        <div className="flex flex-wrap gap-1.5">
-          {ROBOTS.map((robot) => (
-            <button
-              key={robot}
-              type="button"
-              className={chip(robots.includes(robot))}
-              onClick={() => toggle(robots, robot, setRobots)}
-            >
-              {robot}
-            </button>
-          ))}
-        </div>
-      </div>
+      <BatchMatrixSelectors
+        robots={robots}
+        setRobots={setRobots}
+        symbols={symbols}
+        setSymbols={setSymbols}
+        extraSymbols={extraSymbols}
+        setExtraSymbols={setExtraSymbols}
+        availableSymbols={availableSymbols}
+        inCatalogSymbols={inCatalogSymbols}
+        catalog={catalog}
+      />
 
       <div className="flex flex-wrap items-end gap-4">
-        <div className="flex flex-col gap-2">
-          <span className="text-[10px] uppercase tracking-wide text-gray-500">Інструменти</span>
-          <div className="flex flex-wrap gap-1.5 items-center">
-            {availableSymbols.map((symbol) => (
-              <button
-                key={symbol}
-                type="button"
-                className={chip(symbols.includes(symbol))}
-                onClick={() => toggle(symbols, symbol, setSymbols)}
-              >
-                {symbol}
-              </button>
-            ))}
-            <input
-              className={`${input} w-40`}
-              placeholder="ще: SOLUSDT…"
-              value={extraSymbols}
-              onChange={(e) => setExtraSymbols(e.target.value)}
-            />
-          </div>
-        </div>
         <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
           Таймфрейм
           <select className={input} value={barInterval} onChange={(e) => setBarInterval(e.target.value)}>
@@ -222,7 +214,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
         </label>
         <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
           Каталог
-          {catalogs.length > 0 ? (
+          {catalogs && catalogs.length > 0 ? (
             <select
               className={input}
               value={catalog}
@@ -352,7 +344,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
             інструментів стане в стільки разів більше. Клітинки матимуть ідентифікатори на кшталт{' '}
             <span className="font-mono">
               {robots[0] ?? 'robot'}_{(symbols[0] ?? 'BTCUSDT').replace('USDT', '')}__
-              {parseVariants(variantsText).variants[0].name}
+              {parseVariants(variantsText).variants[0]?.name ?? 'H0'}
             </span>
             .
           </p>

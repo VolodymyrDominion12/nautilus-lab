@@ -97,6 +97,61 @@ def test_walk_forward_selects_on_in_sample_and_reports_out_of_sample() -> None:
     assert last[2] != is_start
 
 
+def test_the_fold_keeps_the_whole_in_sample_ranking() -> None:
+    """The search must keep the losers too — that is what answers "why these parameters".
+
+    Before this, a report named its winner and `tried=4`, so a configuration that won by a
+    mile and one that won by a hair looked identical in the artefact (docs/35 §7, L-2).
+    """
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=200, seed=3)
+
+    class RecordingEngine:
+        def run(
+            self,
+            request: BacktestRequest,
+            folded: list[OhlcvBar],
+            ticks: list[AggTrade] | None = None,
+            books: list[OrderBookSnapshot] | None = None,
+        ) -> BacktestReport:
+            # A distinct, order-visible score per candidate: fast_ema decides the winner.
+            balance = Decimal("100000") + Decimal(request.fast_ema) * Decimal("1000")
+            return BacktestReport(fills=1, positions=1, ending_balance=balance, notes="fake")
+
+        def run_spread(self, *args: object, **kwargs: object) -> BacktestReport:
+            raise AssertionError("spread engine must not run")
+
+    class FixedFeed:
+        def load(self, request: BacktestRequest) -> list[OhlcvBar]:
+            return bars
+
+        def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
+            return {request.instrument_id: bars}
+
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=200,
+        starting_equity=Decimal("100000"),
+        risk=_limits(),
+        robot=RobotName.EMA,
+        fast_ema=10,
+        slow_ema=20,
+    )
+    report = RunWalkForward(RecordingEngine(), FixedFeed()).execute(
+        WalkForwardRequest(backtest=request)
+    )
+
+    assert len(report.candidates) == report.candidates_tried == 4
+    scores = [candidate.score for candidate in report.candidates]
+    assert all(isinstance(score, Decimal) for score in scores)
+    numeric = [score for score in scores if isinstance(score, Decimal)]
+    assert numeric == sorted(numeric, reverse=True), "the ranking must read best first"
+    assert report.candidates[0].label == report.selected.label(), "the winner leads the list"
+    # Every candidate carries the return a human reads, not only the ranking score.
+    assert all(candidate.in_sample_return is not None for candidate in report.candidates)
+    assert report.selection_metric == "pnl", "a score means nothing without its metric"
+
+
 def test_in_sample_score_ranks_missing_balance_last() -> None:
     missing = BacktestReport(fills=0, positions=0, ending_balance=None, notes="")
     present = BacktestReport(fills=0, positions=0, ending_balance=Decimal("1"), notes="")

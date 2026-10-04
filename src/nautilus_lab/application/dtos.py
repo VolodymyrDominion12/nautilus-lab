@@ -282,6 +282,27 @@ class SelectedParams:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateScore:
+    """One configuration the in-sample search ran, and what it scored there.
+
+    The search kept its winner and threw the rest away: a report could say `tried=15` and
+    `selected=donchian=90 …` but never *why* 90 beat 24 and 48, or whether it beat them by
+    a hair. With the runner-ups the selection becomes auditable from the artefact alone —
+    the discipline the project rests on (in-sample chooses, out-of-sample reports) and the
+    question docs/35 §7 L-2 found unanswerable.
+
+    `score` is what the search ranked by (`application/score.py`, metric from
+    `SELECTION_METRIC`); `in_sample_return` is that candidate's return, the number a human
+    reads. Both are None for an Optuna search, which does not keep per-trial parameters
+    (its label names seed + trial index instead).
+    """
+
+    label: str
+    score: Decimal | None = None
+    in_sample_return: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class WalkForwardReport:
     selected: SelectedParams
     candidates_tried: int
@@ -289,6 +310,9 @@ class WalkForwardReport:
     out_of_sample: BacktestReport
     window: WalkForwardWindow
     notes: str
+    candidates: tuple[CandidateScore, ...] = ()
+    #: What the search ranked by (`pnl`, `sharpe`, `calmar`): a score means nothing unnamed.
+    selection_metric: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +331,8 @@ class WalkForwardFold:
     # carries a third of the asset's risk is compared with a third of the asset's move.
     vol_matched_buy_and_hold_return: Decimal | None = None
     oos_bar_count: int = 0
+    candidates: tuple[CandidateScore, ...] = ()
+    selection_metric: str = ""
 
 
 @dataclass(frozen=True, slots=True)

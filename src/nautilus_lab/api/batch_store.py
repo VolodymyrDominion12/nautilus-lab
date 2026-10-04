@@ -326,6 +326,11 @@ def fold_sessions(result: dict[str, Any] | None, cell_path: Path) -> list[dict[s
                     "buy_and_hold_return_raw": fold.get("buy_and_hold_return_raw"),
                     "fills": fold.get("fills"),
                     "selected": fold.get("selected"),
+                    # The in-sample ranking behind `selected`: what answers "why these
+                    # parameters" on the run page (docs/35 §7, L-2).
+                    "candidates": fold.get("candidates") or [],
+                    "candidates_tried": fold.get("candidates_tried"),
+                    "selection_metric": fold.get("selection_metric") or "",
                 }
             )
     if sessions:

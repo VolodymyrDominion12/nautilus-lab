@@ -3,6 +3,7 @@ import { BarChart3, Table2 } from 'lucide-react';
 import { formatPct, toNumber } from '../lib/format';
 import { InfoTooltip } from './InfoTooltip';
 import type { FoldSummary } from '../services/api';
+import { SelectionRanking } from './batch/SelectionCandidates';
 
 interface FoldBreakdownProps {
   folds: FoldSummary[];
@@ -220,6 +221,8 @@ export const FoldBreakdown: React.FC<FoldBreakdownProps> = ({ folds, foldCount }
           . A wide spread means the edge, if any, is not stable.
         </p>
       )}
+
+      <SelectionRanking folds={folds} />
     </div>
   );
 };

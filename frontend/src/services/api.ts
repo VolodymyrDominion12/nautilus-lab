@@ -1,6 +1,13 @@
 import { apiUrl } from '../config';
 import { withWsToken } from '../lib/apiAuth';
-import type { BatchDetail, BatchListRow, BatchRow, FoldRef, PlannedCell } from '../lib/batch';
+import type {
+  BatchDetail,
+  BatchListRow,
+  BatchRow,
+  CandidateScore,
+  FoldRef,
+  PlannedCell,
+} from '../lib/batch';
 import type {
   ActionResult,
   CatalogBarPoint,
@@ -132,6 +139,9 @@ export interface FoldSummary {
   excess_vs_vol_matched_raw?: string | null;
   selected: string;
   candidates_tried: number;
+  /** The in-sample ranking behind `selected`: why these parameters (docs/35 L-2). */
+  candidates?: CandidateScore[];
+  selection_metric?: string;
   fills: number;
   in_sample_fills: number;
   oos_ending_balance: number | null;

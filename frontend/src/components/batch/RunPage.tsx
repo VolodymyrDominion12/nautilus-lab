@@ -6,6 +6,7 @@ import { TONE_TEXT, formatDateTime, formatPct, toNumber, toneOf } from '../../li
 import { DecisionLogPanel } from '../DecisionLogPanel';
 import { EquityCurveChart } from '../EquityCurveChart';
 import { GateBadge } from './GateBadge';
+import { SelectionRanking } from './SelectionCandidates';
 import { RunAnalysisTab } from './RunAnalysisTab';
 import { RunTradesTab } from './RunTradesTab';
 
@@ -278,6 +279,8 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
           </tbody>
         </table>
       </div>
+
+      <SelectionRanking folds={folds} />
 
       <div className="flex gap-1 bg-[#0d131f] border border-gray-800 p-1 rounded-xl self-start">
         {TABS.map((item) => (

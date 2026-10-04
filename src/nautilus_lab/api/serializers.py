@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 from nautilus_lab.application.dtos import (
     BacktestReport,
+    CandidateScore,
     MultiWindowReport,
     OverfitAuditReport,
     WalkForwardFold,
@@ -125,6 +127,8 @@ def serialize_walk_forward(
     return {
         "selected": report.selected.label(),
         "candidates_tried": report.candidates_tried,
+        "candidates": serialize_candidates(report.candidates),
+        "selection_metric": report.selection_metric,
         "window": {
             "in_sample_start": report.window.in_sample_start.isoformat(),
             "in_sample_end": report.window.in_sample_end.isoformat(),
@@ -139,6 +143,22 @@ def serialize_walk_forward(
         "out_of_sample_return_raw": out_of_sample["return_raw"],
         "notes": report.notes,
     }
+
+
+def serialize_candidates(candidates: Sequence[CandidateScore]) -> list[dict[str, Any]]:
+    """The in-sample ranking: every candidate the search ran, best first (docs/35 L-2).
+
+    Without it a report named its winner and its trial count, which answers "what was
+    chosen" but not "why" — the question the in-sample selection exists to answer.
+    """
+    return [
+        {
+            "label": item.label,
+            "score": _optional_float(item.score),
+            "in_sample_return": _optional_float(item.in_sample_return),
+        }
+        for item in candidates
+    ]
 
 
 def serialize_fold(fold: WalkForwardFold) -> dict[str, Any]:
@@ -159,6 +179,8 @@ def serialize_fold(fold: WalkForwardFold) -> dict[str, Any]:
         "excess_vs_vol_matched_raw": decimal_str(vol_excess),
         "selected": fold.selected.label(),
         "candidates_tried": fold.candidates_tried,
+        "candidates": serialize_candidates(fold.candidates),
+        "selection_metric": fold.selection_metric,
         "fills": fold.out_of_sample.fills,
         "in_sample_fills": fold.in_sample.fills,
         "oos_ending_balance": (

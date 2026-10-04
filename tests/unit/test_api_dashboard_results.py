@@ -39,6 +39,7 @@ from nautilus_lab.api.serializers import (
 )
 from nautilus_lab.application.dtos import (
     BacktestReport,
+    CandidateScore,
     MultiWindowReport,
     OverfitAuditReport,
     SelectedParams,
@@ -164,6 +165,59 @@ def test_serialize_fold_losing_to_buy_and_hold_says_so() -> None:
     payload = serialize_fold(_fold(0, "0.01", "0.05"))
     assert payload["beats_buy_and_hold"] is False
     assert payload["excess_return"] == "-4.00%"
+
+
+def test_serialize_fold_carries_the_in_sample_ranking() -> None:
+    """The dashboard answers "why these parameters" from the fold, not from a log line.
+
+    `selected` says what was chosen; `candidates` says how clearly — and `selection_metric`
+    names the scale the scores are on, because a bare number is not evidence (docs/35 L-2).
+    """
+    fold = WalkForwardFold(
+        index=0,
+        selected=_selected(),
+        candidates_tried=3,
+        in_sample=BacktestReport(1, 1, Decimal("100500"), "is"),
+        out_of_sample=BacktestReport(1, 1, Decimal("101000"), "oos"),
+        window=_window(),
+        oos_return=Decimal("0.01"),
+        buy_and_hold_return=Decimal("0.005"),
+        candidates=(
+            CandidateScore("fast_ema=5", Decimal("100400"), Decimal("0.004")),
+            CandidateScore("fast_ema=10", Decimal("100300"), None),
+            CandidateScore("optuna seed=7 trial=3"),
+        ),
+        selection_metric="sharpe",
+    )
+    payload = serialize_fold(fold)
+
+    assert payload["selection_metric"] == "sharpe"
+    assert [item["label"] for item in payload["candidates"]] == [
+        "fast_ema=5",
+        "fast_ema=10",
+        "optuna seed=7 trial=3",
+    ]
+    assert payload["candidates"][0]["score"] == pytest.approx(100400)
+    assert payload["candidates"][0]["in_sample_return"] == pytest.approx(0.004)
+    # An Optuna trial keeps no per-trial numbers: the fields stay None rather than 0.
+    assert payload["candidates"][2]["score"] is None
+    assert payload["candidates"][2]["in_sample_return"] is None
+
+
+def test_serialize_walk_forward_carries_the_in_sample_ranking() -> None:
+    report = WalkForwardReport(
+        selected=_selected(),
+        candidates_tried=1,
+        in_sample=BacktestReport(1, 1, Decimal("100500"), "is"),
+        out_of_sample=BacktestReport(1, 1, Decimal("101000"), "oos"),
+        window=_window(),
+        notes="notes",
+        candidates=(CandidateScore("fast_ema=5", Decimal("100400"), Decimal("0.004")),),
+        selection_metric="calmar",
+    )
+    payload = serialize_walk_forward(report)
+    assert payload["selection_metric"] == "calmar"
+    assert payload["candidates"][0]["label"] == "fast_ema=5"
 
 
 def test_serialize_fold_without_a_baseline_reports_no_verdict() -> None:

@@ -8,6 +8,7 @@ from nautilus_lab.application.dtos import (
     BacktestReport,
     BacktestRequest,
     BarFeed,
+    CandidateScore,
     FundingFeed,
     MultiWindowReport,
     OrderBookFeed,
@@ -347,7 +348,9 @@ class RunWalkForward:
         run_oos: Callable[[BacktestRequest], BacktestReport],
         oos_reference: Sequence[OhlcvBar],
     ) -> WalkForwardFold:
-        best_params, best_is_report, tried = self._select(request, _scoped_is(request, run_is))
+        best_params, best_is_report, tried, candidates = self._select(
+            request, _scoped_is(request, run_is)
+        )
         selected_request = _scoped_oos(
             request, apply_selected(request.backtest, best_params), index
         )
@@ -370,6 +373,8 @@ class RunWalkForward:
                 strategy_volatility=None if oos.metrics is None else oos.metrics.return_volatility,
             ),
             oos_bar_count=len(oos_reference),
+            candidates=candidates,
+            selection_metric=request.backtest.selection_metric.value,
         )
 
     def _select_and_evaluate(
@@ -380,7 +385,9 @@ class RunWalkForward:
         run_is: Callable[[BacktestRequest], BacktestReport],
         run_oos: Callable[[BacktestRequest], BacktestReport],
     ) -> WalkForwardReport:
-        best_params, best_is_report, tried = self._select(request, _scoped_is(request, run_is))
+        best_params, best_is_report, tried, candidates = self._select(
+            request, _scoped_is(request, run_is)
+        )
 
         selected_request = _scoped_oos(request, apply_selected(request.backtest, best_params), None)
         if request.tearsheet_path:
@@ -394,13 +401,15 @@ class RunWalkForward:
             out_of_sample=oos,
             window=window,
             notes=_notes(window, best_params, tried, is_optuna=request.use_optuna),
+            candidates=candidates,
+            selection_metric=request.backtest.selection_metric.value,
         )
 
     def _select(
         self,
         request: WalkForwardRequest,
         run_is: Callable[[BacktestRequest], BacktestReport],
-    ) -> tuple[SelectedParams, BacktestReport, int]:
+    ) -> tuple[SelectedParams, BacktestReport, int, tuple[CandidateScore, ...]]:
         if request.use_optuna:
             from nautilus_lab.application.optuna_optimizer import OptunaParamOptimizer
 
@@ -408,26 +417,36 @@ class RunWalkForward:
                 n_trials=request.optuna_trials,
                 seed=request.backtest.seed,
             )
-            selected = optimizer.optimize(request.backtest, run_is)
+            best, best_report, tried = optimizer.optimize(request.backtest, run_is)
             # Optuna's parameters are not kept per trial; a seeded study replays the same
-            # sequence, so "seed + trial number" names the same attempt across runs.
+            # sequence, so "seed + trial number" names the same attempt across runs. No
+            # scores either: the trial results live in Optuna's study, not in this report.
             seed = request.backtest.seed
-            labels = [f"optuna seed={seed} trial={index}" for index in range(selected[2])]
-        else:
-            selected = self._grid_search_params(request, run_is)
-            labels = [params.label() for params in iter_param_grid(request.backtest)]
+            labels = [f"optuna seed={seed} trial={index}" for index in range(tried)]
+            record_trials(self._trial_ledger, request.backtest, labels)
+            return best, best_report, tried, tuple(CandidateScore(label=label) for label in labels)
+
+        best, best_report, tried, candidates = self._grid_search_params(request, run_is)
+        labels = [params.label() for params in iter_param_grid(request.backtest)]
         record_trials(self._trial_ledger, request.backtest, labels)
-        return selected
+        return best, best_report, tried, candidates
 
     def _grid_search_params(
         self,
         request: WalkForwardRequest,
         run_is: Callable[[BacktestRequest], BacktestReport],
-    ) -> tuple[SelectedParams, BacktestReport, int]:
+    ) -> tuple[SelectedParams, BacktestReport, int, tuple[CandidateScore, ...]]:
+        """Pick the best-scoring grid point and keep every candidate's score (docs/35 L-2).
+
+        The runner-ups are the answer to "why these parameters": without them the artefact
+        showed the winner's label and a count, so a reader could not tell a configuration
+        that won by a mile from one that won by a hair over fourteen others.
+        """
         best_score: Decimal | None = None
         best_params = selected_from_request(request.backtest)
         best_is_report: BacktestReport | None = None
         tried = 0
+        scored: list[CandidateScore] = []
         for params in iter_param_grid(request.backtest):
             tried += 1
             candidate = apply_selected(request.backtest, params)
@@ -437,6 +456,13 @@ class RunWalkForward:
                 metric=request.backtest.selection_metric,
                 starting_equity=request.backtest.starting_equity,
             )
+            scored.append(
+                CandidateScore(
+                    label=params.label(),
+                    score=score,
+                    in_sample_return=window_return(report, request.backtest.starting_equity),
+                )
+            )
             if best_is_report is None or best_score is None or score > best_score:
                 best_score = score
                 best_params = params
@@ -445,7 +471,10 @@ class RunWalkForward:
         if best_is_report is None:
             raise ValueError("parameter grid is empty")
 
-        return best_params, best_is_report, tried
+        # Best first, so the artefact reads as the ranking the search produced. `sort` is
+        # stable, so equal scores keep the grid's own order.
+        ranked = tuple(sorted(scored, key=lambda item: item.score or Decimal("0"), reverse=True))
+        return best_params, best_is_report, tried, ranked
 
 
 def window_return(report: BacktestReport, starting_equity: Decimal) -> Decimal | None:

@@ -72,6 +72,14 @@ export interface BatchListRow {
   imported_from?: string | null;
 }
 
+/** One configuration the in-sample search ran (`application/dtos.py::CandidateScore`). */
+export interface CandidateScore {
+  label: string;
+  /** What the search ranked by; `null` for an Optuna trial, which keeps no per-trial params. */
+  score: number | null;
+  in_sample_return: number | null;
+}
+
 export interface FoldRef {
   index: number;
   session_id: string;
@@ -85,6 +93,11 @@ export interface FoldRef {
   buy_and_hold_return_raw?: string | null;
   fills?: number;
   selected?: string;
+  /** Every candidate the fold's in-sample search ran, best first. */
+  candidates?: CandidateScore[];
+  candidates_tried?: number | null;
+  /** `pnl` | `sharpe` | `calmar` — a score means nothing without the metric it ranks by. */
+  selection_metric?: string;
 }
 
 export interface GateCheck {

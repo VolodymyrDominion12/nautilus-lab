@@ -1,9 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Download, Layers, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
-import { deleteBatch, fetchBatches, importDecisionSweep, restartBatch } from '../../services/api';
+import { Download, Hammer, Layers, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import {
+  deleteBatch,
+  fetchBatches,
+  importDecisionSweep,
+  restartBatch,
+  retryBatch,
+} from '../../services/api';
 import {
   buildBatchHash,
   restartBlockedReason,
+  retryBlockedReason,
   restartHint,
   STATUS_CLASS,
   type BatchListRow,
@@ -26,6 +33,7 @@ export const BatchListPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [restartingId, setRestartingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -74,6 +82,31 @@ export const BatchListPage: React.FC = () => {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setRestartingId(null);
+    }
+  };
+
+  const handleRetry = async (batch: BatchListRow) => {
+    const name = batch.label || batch.id;
+    const failed = batch.counts?.failed ?? 0;
+    const blocked = batch.counts?.blocked ?? 0;
+    const confirmed = window.confirm(
+      `Повторити невдалі клітинки пакета "${name}"?\n\n` +
+        `Буде перезапущено лише ті, у яких немає результату (failed: ${failed}, blocked: ${blocked}). ` +
+        'Клітинки з результатом, їхні числа, журнали рішень і угоди лишаються як є.',
+    );
+    if (!confirmed) return;
+    setRetryingId(batch.id);
+    setError(null);
+    try {
+      const result = await retryBatch(batch.id);
+      if (result.status === 'nothing_to_retry') {
+        setError(result.message ?? 'Немає клітинок без результату.');
+      }
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRetryingId(null);
     }
   };
 
@@ -149,8 +182,10 @@ export const BatchListPage: React.FC = () => {
             <tbody>
               {batches.map((batch) => {
                 const restartReason = restartBlockedReason(batch);
+                const retryReason = retryBlockedReason(batch);
                 const hint = restartHint(batch);
-                const busyHere = deletingId === batch.id || restartingId === batch.id;
+                const busyHere =
+                  deletingId === batch.id || restartingId === batch.id || retryingId === batch.id;
                 return (
                   <tr key={batch.id} className="border-t border-gray-800 hover:bg-gray-800/30">
                     <td className="py-1.5">
@@ -184,6 +219,21 @@ export const BatchListPage: React.FC = () => {
                     <td className="text-gray-400 font-mono">{batch.robots.join(', ')}</td>
                     <td className="text-right py-1.5 pr-2">
                       <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={busyHere || retryReason !== null}
+                          onClick={() => void handleRetry(batch)}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/40 border border-transparent hover:border-emerald-800/60 rounded transition-colors disabled:opacity-40"
+                          title={
+                            retryReason ??
+                            'Догнати лише невдалі клітинки: результат решти лишається на місці'
+                          }
+                        >
+                          <Hammer
+                            className={`w-3.5 h-3.5 ${retryingId === batch.id ? 'animate-spin' : ''}`}
+                          />
+                          <span>Повторити невдалі</span>
+                        </button>
                         <button
                           type="button"
                           disabled={busyHere || restartReason !== null}

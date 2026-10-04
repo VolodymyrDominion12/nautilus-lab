@@ -33,6 +33,7 @@ from nautilus_lab.api.batch_store import (
     request_from_dict,
     request_to_dict,
     reset_batch,
+    retry_batch,
     run_payload,
     write_json,
 )
@@ -416,6 +417,137 @@ def test_a_stale_summary_cache_is_rebuilt_instead_of_served(tmp_path: Path) -> N
     summary = cell_summary(path, {"cell_id": "ema_ETH", "status": OK}, Settings())
     assert summary["summary_version"] == SUMMARY_VERSION
     assert summary["gate"]["label"] == "REJECT"
+
+
+def test_retry_requeues_only_the_cells_without_a_result(tmp_path: Path) -> None:
+    """One timed-out cell must not cost the whole matrix (docs/35 §1 B-4).
+
+    The 2026-10-03 sweep lost four hours to `vpin_momentum_DOGE`; the only re-run the
+    dashboard had was `restart`, which redoes all fifty cells and throws away thirty-four
+    finished ones.
+    """
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema", "regime", "glft"), symbols=("ETHUSDT",), parallel=1)
+    cells = plan_cells(request, exists=_all_exist, wired=["ema", "regime"])
+    batch_id, path = create_batch(reports, request, cells)
+    assert BatchRun(path, python=_fake_python(tmp_path)).run() == 0
+
+    # ema ok, regime failed, glft blocked for want of an adapter.
+    kept = cell_dir(path, "ema_ETH") / "last_run.json"
+    assert kept.is_file()
+    before = kept.read_text(encoding="utf-8")
+
+    # The robot is wired now, so the blocked cell becomes runnable in the fresh plan.
+    replanned = plan_cells(request, exists=_all_exist, wired=["ema", "regime", "glft"])
+    _, requeued = retry_batch(reports, batch_id, replanned)
+
+    assert sorted(requeued) == ["glft_ETH", "regime_ETH"]
+    batch = load_batch(reports, batch_id)
+    assert batch is not None
+    statuses = {cell["cell_id"]: cell["status"] for cell in batch["cells"]}
+    assert statuses["ema_ETH"] == OK, "a finished cell keeps its result"
+    assert statuses["regime_ETH"] == QUEUED, "a failed cell goes back in the queue"
+    assert statuses["glft_ETH"] == QUEUED, "a cell blocked by a missing adapter is runnable now"
+    assert batch["batch_id" if False else "status"] == QUEUED
+    assert batch["retry_count"] == 1
+    assert kept.read_text(encoding="utf-8") == before, "the kept cell's artifact is untouched"
+
+
+def test_retry_drops_the_cached_summary_of_the_cells_it_reruns(tmp_path: Path) -> None:
+    """A retried cell must not answer from the previous attempt's cached row."""
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema", "regime"), symbols=("ETHUSDT",))
+    cells = plan_cells(request, exists=_all_exist, wired=["ema", "regime"])
+    batch_id, path = create_batch(reports, request, cells)
+    assert BatchRun(path, python=_fake_python(tmp_path)).run() == 0
+
+    # Reading the table is what caches a row; both cells get one now.
+    batch_payload(reports, batch_id, Settings())
+    failed_summary = cell_dir(path, "regime_ETH") / "summary.json"
+    kept_summary = cell_dir(path, "ema_ETH") / "summary.json"
+    assert failed_summary.is_file()
+    assert kept_summary.is_file()
+
+    retry_batch(reports, batch_id, plan_cells(request, exists=_all_exist, wired=["ema", "regime"]))
+
+    assert not failed_summary.exists(), "the failed cell's cache must not survive a retry"
+    assert kept_summary.is_file(), "the finished cell's cache is what keeps its row cheap"
+
+
+def test_retry_says_nothing_to_do_instead_of_relaunching(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",))
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, path = create_batch(reports, request, cells)
+    assert BatchRun(path, python=_fake_python(tmp_path)).run() == 0
+
+    replanned = plan_cells(request, exists=_all_exist, wired=["ema"])
+    _, requeued = retry_batch(reports, batch_id, replanned)
+    assert requeued == []
+    batch = load_batch(reports, batch_id)
+    assert batch is not None
+    assert batch["status"] == OK, "a batch with nothing to retry keeps its status"
+
+
+def test_progress_counts_cells_and_estimates_from_finished_ones(tmp_path: Path) -> None:
+    """An eight-hour matrix must say how far it is: the payload carries the numbers."""
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema", "regime"), symbols=("ETHUSDT",))
+    cells = plan_cells(request, exists=_all_exist, wired=["ema", "regime"])
+    batch_id, path = create_batch(reports, request, cells)
+    assert BatchRun(path, python=_fake_python(tmp_path)).run() == 0
+
+    payload = batch_payload(reports, batch_id, Settings())
+    assert payload is not None
+    progress = payload["progress"]
+    assert progress["total"] == 2
+    assert progress["finished"] == 2
+    assert progress["remaining"] == 0
+    assert progress["counts"]["ok"] == 1
+    assert progress["mean_cell_seconds"] is not None
+    assert progress["eta_seconds"] is None, "nothing left to estimate once everything finished"
+    assert progress["elapsed_seconds"] is not None
+
+
+def test_progress_has_no_estimate_before_any_cell_finished(tmp_path: Path) -> None:
+    """No finished cell means no basis for an estimate: None, not a made-up number."""
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",))
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, _ = create_batch(reports, request, cells)
+
+    payload = batch_payload(reports, batch_id, Settings())
+    assert payload is not None
+    progress = payload["progress"]
+    assert progress["eta_seconds"] is None
+    assert progress["mean_cell_seconds"] is None
+    assert progress["remaining"] == 1
+
+
+def test_the_retry_endpoint_refuses_busy_imported_and_blocked_batches(tmp_path: Path) -> None:
+    """The same guard rails as `restart`: a retry must never race or pretend to run."""
+    root = tmp_path
+    (root / "catalog").mkdir()
+    settings = Settings(catalog_path="catalog")
+    client = TestClient(create_app(settings, root=root))
+
+    missing = client.post("/api/batches/nope/retry")
+    assert missing.status_code == 404
+
+    # An imported sweep has no request to re-run.
+    sweep = root / "reports" / "decision-sweep"
+    sweep.mkdir(parents=True)
+    (sweep / "status.json").write_text("[]", encoding="utf-8")
+    imported = client.post("/api/batches/import-sweep").json()["batch_id"]
+    assert client.post(f"/api/batches/{imported}/retry").status_code == 422
+
+    # A finished batch whose cells all have results: nothing to retry, and no relaunch.
+    launched = client.post(
+        "/api/batches",
+        json={"robots": ["glft"], "symbols": ["ETHUSDT"], "dry_run": True},
+    )
+    assert launched.status_code == 200, launched.text
+    assert launched.json()["cells"][0]["runnable"] is False, "glft has no adapter: it blocks"
 
 
 def test_import_sweep_makes_a_batch(tmp_path: Path) -> None:

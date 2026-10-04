@@ -1343,6 +1343,12 @@ export async function restartBatch(
   return parseJson(await fetch(batchPath(batchId, '/restart'), { method: 'POST' }));
 }
 
+export async function retryBatch(
+  batchId: string,
+): Promise<{ status: string; batch_id: string; cells?: string[]; message?: string }> {
+  return parseJson(await fetch(batchPath(batchId, '/retry'), { method: 'POST' }));
+}
+
 export async function importDecisionSweep(): Promise<{ batch_id: string }> {
   return parseJson(await fetch(apiUrl('/api/batches/import-sweep'), { method: 'POST' }));
 }

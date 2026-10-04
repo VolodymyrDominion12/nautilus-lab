@@ -42,6 +42,7 @@ from nautilus_lab.api.batch_store import (
     read_json,
     request_from_dict,
     reset_batch,
+    retry_batch,
     run_payload,
 )
 from nautilus_lab.api.context import Lab, LabContext, python_executable
@@ -315,6 +316,57 @@ def restart_batch(ctx: Lab, batch_id: str) -> dict[str, Any]:
     path = reset_batch(ctx.reports_dir, batch_id, cells)
     _launch(ctx, batch_id, path)
     return {"status": "restarted", "batch_id": batch_id, "cells": _plan_payload(cells)}
+
+
+@router.post("/api/batches/{batch_id}/retry")
+def retry_failed_cells(ctx: Lab, batch_id: str) -> dict[str, Any]:
+    """Run only the cells that have no result; keep the ones that do.
+
+    `restart` re-runs the whole matrix: after one cell hit the four-hour timeout in the
+    2026-10-03 sweep, redoing 34 finished cells to recover a handful cost eight hours. This
+    re-queues failed and cancelled cells, plus the ones a fresh plan now finds runnable, and
+    leaves everything else (artifacts, numbers, status) exactly as it was.
+
+    Refused while any batch is running — cancel it first: a second process would fight the
+    first for the same cores — and for an imported sweep, which kept no runnable request.
+    """
+    try:
+        batch = load_batch(ctx.reports_dir, batch_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"batch {batch_id!r} not found")
+    if batch.get("imported_from"):
+        raise HTTPException(
+            status_code=422,
+            detail="an imported batch keeps no runnable request: launch it as a new batch",
+        )
+    try:
+        request = request_from_dict(batch.get("request") or {})
+    except (ValueError, KeyError, ArithmeticError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"batch {batch_id!r} has no re-runnable request: {exc}"
+        ) from exc
+    busy = _running_batch(ctx)
+    if busy is not None:
+        raise HTTPException(
+            status_code=409, detail=f"batch {busy} is still running, cancel it before retrying"
+        )
+    cells = _planned_cells(ctx, request)
+    path, requeued = retry_batch(ctx.reports_dir, batch_id, cells)
+    if not requeued:
+        return {
+            "status": "nothing_to_retry",
+            "batch_id": batch_id,
+            "message": "every cell has a result; use restart to re-run the whole matrix",
+        }
+    if not any(cell.runnable for cell in cells if cell.cell_id in set(requeued)):
+        raise HTTPException(
+            status_code=422,
+            detail="the cells that have no result are blocked: fix the model or catalog first",
+        )
+    _launch(ctx, batch_id, path)
+    return {"status": "retrying", "batch_id": batch_id, "cells": sorted(requeued)}
 
 
 @router.delete("/api/batches/{batch_id}")

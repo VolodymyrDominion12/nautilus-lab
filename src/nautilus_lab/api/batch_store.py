@@ -310,6 +310,100 @@ def reset_batch(
     return path
 
 
+#: Statuses that produced no result to keep, so a retry has to run them again.
+RETRYABLE_STATUSES: frozenset[str] = frozenset({FAILED, CANCELLED})
+
+
+def retry_batch(
+    reports_dir: Path, batch_id: str, cells: Iterable[BatchCell], *, now: datetime | None = None
+) -> tuple[Path, list[str]]:
+    """Re-queue only the cells that have no result, and keep the ones that do.
+
+    Why this exists: one cell in the 2026-10-03 sweep hit the four-hour timeout, and
+    `restart` — the only re-run the dashboard had — throws away all fifty cells to redo
+    them, eight more hours for a matrix that was already 34/50 done. A retry keeps every
+    finished cell's artifacts and numbers and puts back in the queue:
+
+    * `failed` and `cancelled` cells: they produced no result worth keeping;
+    * `blocked` cells that are runnable now (the model was trained, the catalog arrived).
+
+    A re-queued cell's cached `summary.json` is dropped (only that file, not the directory:
+    the previous attempt's log is what diagnoses the next failure) — otherwise the cache
+    would answer with the old attempt's status and error.
+
+    Returns the batch path and the ids put back in the queue; an empty list means there was
+    nothing to retry, and the caller should say so instead of launching a process.
+    """
+    path = batch_dir(reports_dir, batch_id)
+    batch = load_batch(reports_dir, batch_id)
+    if batch is None:
+        raise FileNotFoundError(path / "batch.json")
+    planned = {cell.cell_id: cell for cell in cells}
+    stored = list(batch.get("cells") or [])
+
+    requeued: list[str] = []
+    updated: list[dict[str, Any]] = []
+    for cell in stored:
+        cell_id = str(cell.get("cell_id"))
+        planned_cell = planned.get(cell_id)
+        status = str(cell.get("status"))
+        runnable_now = planned_cell is not None and planned_cell.runnable
+        if status in RETRYABLE_STATUSES or (status == BLOCKED and runnable_now):
+            requeued.append(cell_id)
+            (cell_dir(path, cell_id) / "summary.json").unlink(missing_ok=True)
+            # A cell that stays blocked keeps a reason the fresh plan just re-checked, so a
+            # retry never clears a block on the strength of an old look at disk.
+            reason = (
+                None
+                if runnable_now
+                else (planned_cell.blocked if planned_cell is not None else cell.get("blocked"))
+            )
+            updated.append(
+                {
+                    **cell,
+                    "status": QUEUED if runnable_now else BLOCKED,
+                    "blocked": reason,
+                    "error": None if runnable_now else cell.get("error"),
+                    "started_at": None,
+                    "finished_at": None,
+                    "returncode": None,
+                }
+            )
+            continue
+        updated.append(cell)
+
+    # A cell the plan knows and the batch does not (the stored request gained a robot, or the
+    # file was edited by hand): add it rather than silently running a different matrix.
+    known = {str(cell.get("cell_id")) for cell in updated}
+    for cell_id, planned_cell in planned.items():
+        if cell_id in known:
+            continue
+        requeued.append(cell_id)
+        updated.append(
+            {
+                **asdict(planned_cell),
+                "status": QUEUED if planned_cell.runnable else BLOCKED,
+                "started_at": None,
+                "finished_at": None,
+                "returncode": None,
+                "error": planned_cell.blocked,
+            }
+        )
+
+    payload: dict[str, Any] = {
+        **batch,
+        "status": QUEUED if requeued else batch.get("status"),
+        "pid": None,
+        "started_at": batch.get("started_at"),
+        "finished_at": None if requeued else batch.get("finished_at"),
+        "retried_at": (now or datetime.now(UTC)).isoformat(),
+        "retry_count": int(batch.get("retry_count") or 0) + 1,
+        "cells": updated,
+    }
+    write_json(path / "batch.json", payload)
+    return path, requeued
+
+
 # --- decisions of one cell ------------------------------------------------------------
 
 
@@ -504,6 +598,57 @@ def cell_summary(batch_path: Path, cell: dict[str, Any], cfg: Settings) -> dict[
     return summary
 
 
+def batch_progress(batch: dict[str, Any]) -> dict[str, Any]:
+    """How far the batch is, and how long the rest will take, from its own timestamps.
+
+    The table already had `started_at`/`finished_at` per cell and rendered none of them, so
+    an eight-hour matrix showed a spinner and no idea whether it was minutes or hours from
+    the end. The estimate is the mean per-cell duration of the cells that *finished* — it is
+    a guess, and it says so by being absent until at least one cell has finished.
+    """
+    cells = list(batch.get("cells") or [])
+    counts: Counter[str] = Counter(str(cell.get("status")) for cell in cells)
+    finished = sum(counts[status] for status in (OK, FAILED, BLOCKED, CANCELLED))
+    durations = [
+        (parsed - started).total_seconds()
+        for cell in cells
+        if (started := _parsed_ts(cell.get("started_at"))) is not None
+        and (parsed := _parsed_ts(cell.get("finished_at"))) is not None
+    ]
+    remaining = len(cells) - finished
+    elapsed = _elapsed_seconds(batch)
+    eta = None
+    if remaining > 0 and durations:
+        eta = (sum(durations) / len(durations)) * remaining
+    return {
+        "total": len(cells),
+        "finished": finished,
+        "remaining": remaining,
+        "counts": dict(counts),
+        "mean_cell_seconds": round(sum(durations) / len(durations), 1) if durations else None,
+        "elapsed_seconds": elapsed,
+        "eta_seconds": eta,
+    }
+
+
+def _parsed_ts(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _elapsed_seconds(batch: dict[str, Any]) -> float | None:
+    started = _parsed_ts(batch.get("started_at"))
+    if started is None:
+        return None
+    end = _parsed_ts(batch.get("finished_at")) or datetime.now(UTC)
+    return (end - started).total_seconds()
+
+
 def batch_payload(reports_dir: Path, batch_id: str, cfg: Settings) -> dict[str, Any] | None:
     batch = load_batch(reports_dir, batch_id)
     if batch is None:
@@ -530,7 +675,12 @@ def batch_payload(reports_dir: Path, batch_id: str, cfg: Settings) -> dict[str, 
                     )
                 }
             )
-    return {**batch, "status": effective_status(batch), "rows": rows}
+    return {
+        **batch,
+        "status": effective_status(batch),
+        "rows": rows,
+        "progress": batch_progress(batch),
+    }
 
 
 def run_payload(

@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, RefreshCw, Square, Trash2 } from 'lucide-reac
 import { cancelBatch, deleteBatch, fetchBatch } from '../../services/api';
 import {
   blockedShare,
+  formatDuration,
   buildBatchHash,
   variantOfCell,
   rowWarnings,
@@ -116,6 +117,30 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
           <span className="text-xs text-gray-400 font-mono bg-gray-900/80 px-2 py-0.5 rounded border border-gray-800">
             {String(batch.request.interval ?? '1h')} · фолди: {String(batch.request.folds ?? '—')}
             {batch.request.days != null ? ` · ${String(batch.request.days)} дн.` : ' · вся історія'}
+          </span>
+        )}
+        {batch?.progress && batch.progress.finished > 0 && (
+          <span
+            className="text-xs font-mono text-cyan-300 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800/60"
+            title={
+              `Клітинок: ${batch.progress.total}, готових: ${batch.progress.finished}` +
+              (batch.progress.mean_cell_seconds != null
+                ? `, у середньому ${formatDuration(batch.progress.mean_cell_seconds)} на клітинку`
+                : ', тривалість ще невідома')
+            }
+          >
+            {batch.progress.finished}/{batch.progress.total}
+            {batch.progress.remaining > 0 && batch.progress.eta_seconds != null
+              ? ` · лишилось ~${formatDuration(batch.progress.eta_seconds)}`
+              : ''}
+            {batch.progress.remaining > 0 && batch.progress.eta_seconds == null
+              ? ' · ETA невідома (жодна клітинка ще не завершилась)'
+              : ''}
+          </span>
+        )}
+        {batch?.progress?.elapsed_seconds != null && (
+          <span className="text-xs text-gray-500 font-mono">
+            триває {formatDuration(batch.progress.elapsed_seconds)}
           </span>
         )}
         <div className="ml-auto flex gap-2">

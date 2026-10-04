@@ -165,6 +165,19 @@ export interface BatchRow {
   };
 }
 
+/** How far a batch is and how long the rest may take (`batch_store.batch_progress`). */
+export interface BatchProgress {
+  total: number;
+  finished: number;
+  remaining: number;
+  counts: Record<string, number>;
+  /** Mean duration of the cells that finished; null until one has. */
+  mean_cell_seconds: number | null;
+  elapsed_seconds: number | null;
+  /** A guess from finished cells, and absent (null) until there is a basis for one. */
+  eta_seconds: number | null;
+}
+
 export interface BatchDetail {
   id: string;
   label: string;
@@ -175,6 +188,7 @@ export interface BatchDetail {
   imported_from?: string | null;
   request: Record<string, unknown>;
   rows: BatchRow[];
+  progress?: BatchProgress;
 }
 
 export interface PlannedCell {
@@ -308,6 +322,32 @@ export const restartBlockedReason = (batch: BatchListRow): string | null => {
     return 'пакет ще виконується: спершу скасуйте його';
   }
   return null;
+};
+
+/** Why a retry is refused, or null when the failed cells can be run again (docs/35 §1 B-4). */
+export const retryBlockedReason = (batch: BatchListRow): string | null => {
+  if (batch.imported_from) {
+    return 'імпортований пакет не має запиту для повторного прогону — запустіть новий';
+  }
+  if (batch.status === 'running' || batch.status === 'queued') {
+    return 'пакет ще виконується: спершу скасуйте його';
+  }
+  const retryable = (batch.counts?.failed ?? 0) + (batch.counts?.cancelled ?? 0);
+  if (retryable === 0) {
+    return 'немає клітинок без результату — «Перезапустити» проганяє всю матрицю';
+  }
+  return null;
+};
+
+/** `2 год 05 хв` from seconds; the batch page shows time, not a float. */
+export const formatDuration = (seconds: number | null): string => {
+  if (seconds == null) return '—';
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours > 0) return `${hours} год ${String(minutes).padStart(2, '0')} хв`;
+  if (minutes > 0) return `${minutes} хв ${String(total % 60).padStart(2, '0')} с`;
+  return `${total} с`;
 };
 
 /** The note under "Створено": that this batch was wiped and re-run in place, and when. */

@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 import {
   blockedShare,
   buildBatchHash,
+  formatDuration,
+  retryBlockedReason,
   parseBatchHash,
   parseVariants,
   variantOfCell,
@@ -192,5 +194,49 @@ describe('variantOfCell', () => {
     expect(variantOfCell('regime_BTC__H1')).toBe('H1');
     expect(variantOfCell('pairs_ETHBTC__COST-x1_5')).toBe('COST-x1_5');
     expect(variantOfCell('regime_BTC')).toBeNull();
+  });
+});
+
+describe('retryBlockedReason', () => {
+  // A whole row, not a partial: the guard reads status, counts and the import marker.
+  const row = (over: Partial<BatchListRow>): BatchListRow => ({
+    id: '20261003_182518_batch',
+    label: 'sweep',
+    created_at: '2026-10-03T18:25:00+00:00',
+    status: 'ok',
+    cells: 50,
+    counts: { ok: 34, failed: 6, blocked: 10 },
+    robots: ['regime'],
+    symbols: ['BTCUSDT'],
+    ...over,
+  });
+
+  test('a batch with failed or cancelled cells can be repaired', () => {
+    expect(retryBlockedReason(row({ counts: { ok: 3, failed: 2 } }))).toBeNull();
+    expect(retryBlockedReason(row({ counts: { ok: 3, cancelled: 1 } }))).toBeNull();
+  });
+
+  test('a batch with nothing to redo says so instead of relaunching everything', () => {
+    expect(retryBlockedReason(row({ counts: { ok: 4, blocked: 1 } }))).toContain(
+      'Перезапустити',
+    );
+  });
+
+  test('a running batch is cancelled first, and an imported one cannot be retried', () => {
+    expect(retryBlockedReason(row({ status: 'running', counts: { failed: 1 } }))).toContain(
+      'скасуйте',
+    );
+    expect(
+      retryBlockedReason(row({ counts: { failed: 1 }, imported_from: 'reports/decision-sweep' })),
+    ).toContain('імпортований');
+  });
+});
+
+describe('formatDuration', () => {
+  test('reads as time, not as a float', () => {
+    expect(formatDuration(45)).toBe('45 с');
+    expect(formatDuration(125)).toBe('2 хв 05 с');
+    expect(formatDuration(7500)).toBe('2 год 05 хв');
+    expect(formatDuration(null)).toBe('—');
   });
 });

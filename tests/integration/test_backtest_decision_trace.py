@@ -43,6 +43,77 @@ class InMemoryDecisionLog:
 
 
 @pytest.mark.integration
+def test_an_entry_carries_the_arithmetic_behind_its_size() -> None:
+    """`qty` alone cannot answer "why this size" — the inputs have to be in the log.
+
+    The size decides the return, and the corpus never recorded a single one of its inputs:
+    no equity at decision time, no risk fraction after Kelly and vol-scaling, no ATR behind
+    the stop. Only the resulting quantity reached the record (docs/35 §7, L-1).
+    """
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=5)
+    log = InMemoryDecisionLog()
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=len(bars),
+        starting_equity=Decimal("10000"),
+        risk=RiskLimits(
+            risk_per_trade=Decimal("0.01"),
+            stop_pct=Decimal("0.02"),
+            max_daily_loss=Decimal("0.02"),
+            max_drawdown=Decimal("0.06"),
+        ),
+        robot=RobotName.REGIME,
+        seed=5,
+        source=BarOrigin.SYNTHETIC,
+        session_id="bt-sizing-test",
+    )
+    NautilusResearchBacktest(decision_log=log).run(request, bars)
+
+    sizing = [
+        item
+        for record in log.records
+        for item in record.steps
+        if item.stage is Stage.PLAN and item.component == "sizing"
+    ]
+    assert sizing, "an entry decision must log how its size was computed"
+
+    entry_fills = [r for r in log.records if r.outcome == "ENTRY_FILLED"]
+    assert entry_fills, "the fixture must produce at least one entry"
+    # The size is decided on the bar (`ENTRY_OPENED`) and filled later as an intrabar record,
+    # which carries the fill itself (price, fee, slippage) and not the arithmetic again.
+    opened = [r for r in log.records if r.outcome == "ENTRY_OPENED"]
+    assert opened, "the entry decision must be logged on its own bar"
+    filled = [item for record in opened for item in record.steps if item.component == "sizing"]
+    assert filled, "the entry bar must carry the sizing step that produced the quantity"
+
+    values = filled[0].values
+    # `TraceValue` is a union, so each number is pinned to Decimal before it is compared:
+    # a size recorded as a float or a string would be a bug in its own right.
+    equity, risk_fraction = values["equity"], values["risk_fraction"]
+    stop_distance, risk_cash, qty = (
+        values["stop_distance"],
+        values["risk_cash"],
+        values["qty"],
+    )
+    assert isinstance(equity, Decimal)
+    assert isinstance(risk_fraction, Decimal)
+    assert isinstance(stop_distance, Decimal)
+    assert isinstance(risk_cash, Decimal)
+    assert isinstance(qty, Decimal)
+    assert equity > 0, "the equity the size was based on"
+    assert Decimal("0") < risk_fraction <= Decimal("1"), "the effective risk fraction"
+    assert stop_distance > 0, "a size without its stop is not reproducible"
+    assert risk_cash == equity * risk_fraction, "risk_cash = equity x risk_fraction"
+    assert qty > 0
+
+    thresholds = filled[0].thresholds or {}
+    assert thresholds["risk_per_trade"] == Decimal("0.01"), "the configured cap it came from"
+    assert isinstance(thresholds["qty_step"], Decimal)
+    assert thresholds["qty_step"] > 0, "the step the quantity was floored to"
+
+
+@pytest.mark.integration
 def test_backtest_records_carry_a_monotonic_bar_seq() -> None:
     """`bar_seq` is how a reader sees a *missed* bar, and the backtest did not write it.
 

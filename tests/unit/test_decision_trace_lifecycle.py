@@ -332,6 +332,85 @@ def test_digest_reports_a_filter_just_short_of_its_threshold_as_a_near_miss() ->
     assert digest.near_misses == 1
 
 
+def test_narrative_speaks_the_size_arithmetic() -> None:
+    """A sizing step must read as the arithmetic, not fall through to the plan wording."""
+    sized = render_narrative(
+        _row(
+            ORIGIN,
+            "ENTRY_OPENED",
+            steps=[
+                {
+                    "stage": "plan",
+                    "component": "sizing",
+                    "verdict": "emit",
+                    "result": "sized",
+                    "values": {
+                        "equity": 10000,
+                        "price": 2600,
+                        "atr": 48.2,
+                        "stop_distance": 96.4,
+                        "risk_fraction": 0.01,
+                        "risk_cash": 100.0,
+                        "qty": 1.03,
+                    },
+                    "thresholds": {"risk_per_trade": 0.01, "qty_step": 0.01},
+                }
+            ],
+        )
+    )
+    assert "equity 10000 × ризик 0.01 = 100" in sized
+    assert "1.03 од." in sized
+    assert "стеля 1× notional" not in sized, "the cap did not bind here"
+
+    capped = render_narrative(
+        _row(
+            ORIGIN,
+            "ENTRY_OPENED",
+            steps=[
+                {
+                    "stage": "plan",
+                    "component": "sizing",
+                    "verdict": "emit",
+                    "result": "sized at the 1x notional cap",
+                    "values": {
+                        "equity": 10000,
+                        "risk_cash": 100.0,
+                        "stop_distance": 16.17,
+                        "risk_fraction": 0.01,
+                        "qty_risk_based": 6.18,
+                        "qty": 2.31,
+                        "notional": 9999.99,
+                        "notional_cap_hit": True,
+                    },
+                    "thresholds": {"qty_step": 0.01},
+                }
+            ],
+        )
+    )
+    assert "стеля 1× notional" in capped, "a capped size must say the cap decided it"
+    assert "6.18 до 2.31" in capped, "and by how much"
+    assert "None" not in capped
+
+    zero = render_narrative(
+        _row(
+            ORIGIN,
+            "ENTRY_BLOCKED_RISK",
+            steps=[
+                {
+                    "stage": "plan",
+                    "component": "sizing",
+                    "verdict": "block",
+                    "result": "sized quantity is 0",
+                    "values": {"risk_cash": 100.0, "stop_distance": 260.0, "qty": 0},
+                    "thresholds": {"qty_step": 1},
+                }
+            ],
+        )
+    )
+    assert "Розмір 0" in zero
+    assert "кроку 1" in zero
+
+
 def test_narrative_speaks_the_entry_filters_not_the_flow_reading() -> None:
     """The entry filters (docs/32) must not be narrated as a VPIN flow reading.
 

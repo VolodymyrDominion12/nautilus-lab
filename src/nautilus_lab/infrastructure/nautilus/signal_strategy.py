@@ -737,7 +737,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         entry: tuple[Decimal, Decimal] | None = None
         refusal: _EntryRefusal | None = None
         if plan.wants_entry:
-            result = self._entry_allowed(current_price, reversing=plan.exit_position)
+            result = self._entry_allowed(current_price, reversing=plan.exit_position, steps=steps)
             if isinstance(result, _EntryRefusal):
                 refusal = result
             else:
@@ -864,9 +864,14 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
 
     def _entry_allowed(
-        self, current_price: Decimal, *, reversing: bool
+        self, current_price: Decimal, *, reversing: bool, steps: list[TraceStep]
     ) -> tuple[Decimal, Decimal] | _EntryRefusal:
-        """(qty, stop distance) for a new entry, or a structured `_EntryRefusal`."""
+        """(qty, stop distance) for a new entry, or a structured `_EntryRefusal`.
+
+        Appends the `plan/sizing` step with the arithmetic behind the size, so "why this
+        size" is answerable from the log. A zero size therefore carries two steps — the
+        arithmetic and the refusal — because they answer different questions.
+        """
         equity = self._equity()
         if equity is None:
             self.log.error("No account equity; skip entry (fail closed)")
@@ -918,10 +923,82 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             risk_fraction=risk_fraction,
             qty_step=self.config.qty_step,
         )
+        sizing = self._sizing_step(
+            equity=equity,
+            price=current_price,
+            distance=distance,
+            risk_fraction=risk_fraction,
+            qty=qty,
+        )
+        steps.append(sizing)
         if qty <= 0:
             self.log.warning("Sized quantity is 0; skip order")
             return _EntryRefusal("sizing", "sized quantity is 0")
         return qty, distance
+
+    def _sizing_step(
+        self,
+        *,
+        equity: Decimal,
+        price: Decimal,
+        distance: Decimal,
+        risk_fraction: Decimal,
+        qty: Decimal,
+    ) -> TraceStep:
+        """How the entry's size was arrived at — the one decision the log never showed.
+
+        `qty` and `stop_distance` reach the record only through the execution step, so the
+        arithmetic behind them was invisible in all 6.1M corpus records: not the equity the
+        size was based on, not the risk fraction after Kelly and vol-scaling, not the ATR
+        behind the stop. "Why this size" is a question the decision log is expected to
+        answer, and it is the question position sizing decides (docs/35 §7, L-1).
+
+        The 1x-notional cap is reported separately from "risk budget is exhausted" because
+        the two mean opposite things for a risk review. The first real run on this step
+        showed a size whose notional was 521 960.18 against equity 521 960.61: the cap had
+        truncated the risk-based 161 units to 120.75. Comparing the *rounded* notional to
+        equity misses that (flooring to `qty_step` always leaves it a hair below), so the
+        comparison uses the unrounded risk-based quantity.
+        """
+        risk_based_qty = (equity * risk_fraction / distance) if distance > 0 else Decimal("0")
+        cap_binds = risk_based_qty > (equity / price) if price > 0 else False
+        notional = price * qty
+        if qty <= 0:
+            result = "sized quantity is 0"
+        elif cap_binds:
+            result = "sized at the 1x notional cap"
+        else:
+            result = "sized"
+        return step(
+            Stage.PLAN,
+            "sizing",
+            Verdict.EMIT if qty > 0 else Verdict.BLOCK,
+            result=result,
+            values={
+                "equity": equity,
+                "price": price,
+                "atr": self._atr.value,
+                "stop_distance": distance,
+                "risk_fraction": risk_fraction,
+                "risk_cash": equity * risk_fraction,
+                "qty_risk_based": risk_based_qty,
+                "qty": qty,
+                "notional": notional,
+                "notional_cap_hit": cap_binds,
+            },
+            thresholds={
+                "risk_per_trade": self._limits.risk_per_trade,
+                "stop_pct": self._limits.stop_pct,
+                "atr_stop_multiplier": self._limits.atr_stop_multiplier,
+                "kelly_fraction": self._limits.kelly_fraction,
+                "vol_scaling_target": self._overlay.vol_scaling_target,
+                "qty_step": self.config.qty_step,
+            },
+            note=(
+                "risk_cash = equity x risk_fraction; qty = risk_cash / stop_distance, "
+                "floored to qty_step and capped at 1x notional"
+            ),
+        )
 
     def on_stop(self) -> None:
         self._flatten()

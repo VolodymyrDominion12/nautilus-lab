@@ -437,6 +437,8 @@ def _strategy(step: Mapping[str, Any]) -> str:
 def _plan(step: Mapping[str, Any]) -> str:
     if step.get("component") == "ratchet":
         return _ratchet(step)
+    if step.get("component") == "sizing":
+        return _sizing(step)
     holding = str(_v(step, "holding") or "?").upper()
     result = step.get("result")
     words = {
@@ -446,6 +448,36 @@ def _plan(step: Mapping[str, Any]) -> str:
         "exit_and_enter": "вихід і вхід у протилежний бік",
     }
     return f"План: {holding} → {words.get(str(result), str(result))}."
+
+
+def _sizing(step: Mapping[str, Any]) -> str:
+    """The size arithmetic: equity, the risk fraction after Kelly/vol, the stop, the qty.
+
+    Without this the log said only what the size *was* (in the execution step), never where
+    it came from — the question position sizing exists to answer (docs/35 §7, L-1).
+    """
+    equity = fmt(_v(step, "equity"))
+    fraction = fmt(_v(step, "risk_fraction"))
+    risk_cash = fmt(_v(step, "risk_cash"))
+    distance = fmt(_v(step, "stop_distance"))
+    # Early bars have no ATR yet and the stop falls back to a percent: say "ATR" only when
+    # there is one, instead of printing "ATR None" (the flaw L-13 fixed for the filters).
+    atr_text = f" (ATR {fmt(_v(step, 'atr'))})" if _v(step, "atr") is not None else ""
+    qty = _v(step, "qty")
+    if step.get("result") == "sized quantity is 0":
+        return (
+            f"Розмір 0: ризик {risk_cash} на стопі {distance} після округлення до кроку "
+            f"{fmt(_t(step, 'qty_step'))} — входу немає."
+        )
+    tail = (
+        f" — стеля 1× notional зрізала {fmt(_v(step, 'qty_risk_based'))} до {fmt(qty)}"
+        if _v(step, "notional_cap_hit")
+        else ""
+    )
+    return (
+        f"Розмір: equity {equity} × ризик {fraction} = {risk_cash}, стоп {distance}"
+        f"{atr_text} → {fmt(qty)} од.{tail}."
+    )
 
 
 def _ratchet(step: Mapping[str, Any]) -> str:

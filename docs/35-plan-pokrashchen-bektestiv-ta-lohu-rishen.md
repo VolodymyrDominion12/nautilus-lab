@@ -519,6 +519,20 @@ result/values/thresholds/note` з фактичними числами й **за�
 | **L-10** (`bar_seq` у бектесті не писався, `bar_seq_gaps=0` у 106/106) | лічильник у `SignalRobot` інкрементується в єдиному писарі `_record_decision_log`, тож жоден шлях не може його забути, а intrabar-запис не збиває послідовність | `test_backtest_records_carry_a_monotonic_bar_seq` — послідовність 1..N і `bar_seq_gaps == 0` на синтетиці без дірок |
 | **L-13** (нарратив фільтрів писав «buy None / sell None — потік нормальний») | гілки `htf_trend`, `vol_expansion`, `regime_legs`, `min_hold_bars` у `application/decision_narrative.py` | `test_narrative_speaks_the_entry_filters_not_the_flow_reading` — бере **справжні** кроки `entry_filters.py`, вимагає відсутності `None` і правильних слів |
 | **L-11** (немає `apy_margin_pct` при `min_net_apy=0`) | закрито як **пояснене**, а не «полагоджене»: відсоток від нульового порогу не існує математично, а сирі `net_apy` і `min_net_apy` у кроці лишаються — доказів не втрачено | `test_a_zero_threshold_has_no_margin_but_keeps_its_numbers` фіксує саме це |
+| **L-1** (у 6.1 млн записів немає жодного числа про розмір позиції) | новий крок `plan/sizing` у **обох** писарях: `signal_strategy` (бектест) і `paper_streamer` (живий термінал), однакові назви полів — `equity`, `risk_fraction`, `risk_cash`, `qty_risk_based`, `stop_distance`, `atr`, `notional`, `notional_cap_hit` + пороги `risk_per_trade`/`stop_pct`/`kelly_fraction`/`vol_scaling_target`/`qty_step`. Нарратив має гілку `_sizing` | `test_an_entry_carries_the_arithmetic_behind_its_size` (реальний прогін: `risk_cash == equity × risk_fraction`, `qty > 0`, крок на барі входу) і `test_both_writers_explain_the_size_the_same_way` (паритет полів між рушієм і терміналом, старий виклик без `steps` не ламається) |
+
+**Перший реальний прогін на кроці сайзингу відразу дав знахідку**, якої доти не було видно з
+жодного логу: у smoke-прогоні `regime` на синтетиці **стеля 1× notional стримує розмір на
+кожному вході** — `risk_fraction=0.005` давав 161.394 од., а стеля зрізала до 120.752, тобто
+`risk_per_trade` там фактично не діє, і жодне регулювання ризику на бар не впливає. Саме тому
+крок пише `qty_risk_based` і `notional_cap_hit` окремо: «бюджет ризику вичерпано» і «розмір
+зрізала стеля» — протилежні за змістом відповіді для ризик-рев'ю. Порівняння йде з
+**неокругленим** розміром: округлення до `qty_step` залишає notional на волосину нижче equity,
+і перша версія перевірки (`notional >= equity`) через це не спрацьовувала на реальному прогоні.
+
+Що лишилось у L-1 на майбутнє: числовий слід **вибору** параметрів на IS (L-2) — у журналі є
+ефективні параметри прогону, але не те, чому обрано саме їх; кандидати лежать у
+`trials/<cell>.jsonl` і в UI не показані.
 
 **L-9 лишається відкритим свідомо** — див. §10, питання 5. Спроба зробити `cointegration`
 вердиктом `BLOCK` валить зафіксований тест `test_pairs_fit_failure_is_explained`, і це не

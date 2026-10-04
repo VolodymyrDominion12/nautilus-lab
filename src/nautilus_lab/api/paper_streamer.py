@@ -969,7 +969,7 @@ class LivePaperSessionManager:
         )
         side = "LONG" if signal.side is SignalSide.BUY else "SHORT"
         fills_before = len(self.fills)
-        message = self._open_position_internal(side, price)
+        message = self._open_position_internal(side, price, result.steps)
         result.events.append(message)
         if len(self.fills) > fills_before:
             fill = self.fills[-1]
@@ -1036,8 +1036,67 @@ class LivePaperSessionManager:
             self._limits(),
         )
 
-    def _open_position_internal(self, side: str, price: Decimal) -> str:
-        """Open a virtual position."""
+    def _sizing_step(
+        self, *, price: Decimal, stop_dist: Decimal, qty: Decimal, is_hold: bool
+    ) -> TraceStep:
+        """The size arithmetic in the same vocabulary the backtest writes (`plan/sizing`).
+
+        The fields match `signal_strategy.py::_sizing_step`, so one reader (`decision_margins`,
+        the trade page, `scripts/trace_diff.py`) serves both. `hold` is the benchmark: it has
+        no risk fraction at all, which is exactly what its step says.
+        """
+        equity = self.current_equity
+        risk_fraction = Decimal("0") if is_hold else self.config.risk_per_trade
+        risk_based_qty = (
+            Decimal("0") if is_hold or stop_dist <= 0 else equity * risk_fraction / stop_dist
+        )
+        cap_binds = (not is_hold) and price > 0 and risk_based_qty > (equity / price)
+        if qty <= 0:
+            result = "sized quantity is 0"
+        elif is_hold:
+            result = "sized the whole account (benchmark)"
+        elif cap_binds:
+            result = "sized at the 1x notional cap"
+        else:
+            result = "sized"
+        return step(
+            Stage.PLAN,
+            "sizing",
+            Verdict.EMIT if qty > 0 else Verdict.BLOCK,
+            result=result,
+            values={
+                "equity": equity,
+                "price": price,
+                "atr": None,
+                "stop_distance": stop_dist,
+                "risk_fraction": risk_fraction,
+                "risk_cash": equity * risk_fraction,
+                "qty_risk_based": risk_based_qty,
+                "qty": qty,
+                "notional": price * qty,
+                "notional_cap_hit": cap_binds,
+            },
+            thresholds={
+                "risk_per_trade": self.config.risk_per_trade,
+                "stop_pct": self.config.stop_pct,
+                "qty_step": self.config.qty_step,
+            },
+            note=(
+                "the live paper terminal has no Kelly or vol-scaling overlay: the risk "
+                "fraction is the configured risk_per_trade"
+            ),
+        )
+
+    def _open_position_internal(
+        self, side: str, price: Decimal, steps: list[TraceStep] | None = None
+    ) -> str:
+        """Open a virtual position.
+
+        `steps`, when given, receives the `plan/sizing` step: the live terminal writes the
+        same record shape as a backtest (docs/28), and the size arithmetic was the one
+        decision neither of them explained (docs/35 §7, L-1). Passing the list in keeps the
+        existing callers — which only want the status message — unchanged.
+        """
         if price <= Decimal("0"):
             return "Failed to open: invalid price"
 
@@ -1051,9 +1110,9 @@ class LivePaperSessionManager:
         is_hold = self.config.robot.lower() == HOLD_ROBOT
         if is_hold:
             # The benchmark holds the whole account (entry fee included), no risk fraction.
-            step = self.config.qty_step
+            step_size = self.config.qty_step
             raw_qty = self.current_equity / (price * (Decimal("1") + self.config.taker_fee))
-            qty = (raw_qty / step).to_integral_value(rounding="ROUND_FLOOR") * step
+            qty = (raw_qty / step_size).to_integral_value(rounding="ROUND_FLOOR") * step_size
         else:
             qty = size_position(
                 # Marked equity, like the backtest: an open loss shrinks the next size.
@@ -1062,6 +1121,10 @@ class LivePaperSessionManager:
                 stop_distance=stop_dist,
                 risk_fraction=risk_fraction,
                 qty_step=self.config.qty_step,
+            )
+        if steps is not None:
+            steps.append(
+                self._sizing_step(price=price, stop_dist=stop_dist, qty=qty, is_hold=is_hold)
             )
         if qty <= Decimal("0"):
             msg = f"Skipped entry {side}: sized quantity is 0"

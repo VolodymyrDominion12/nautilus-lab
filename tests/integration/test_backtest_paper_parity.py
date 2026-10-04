@@ -10,6 +10,7 @@ from nautilus_lab.application.dtos import BacktestRequest
 from nautilus_lab.application.risk import evaluate_entry, size_position, stop_distance
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.decision_log import DecisionRecord
+from nautilus_lab.domain.decision_trace import Stage, TraceStep
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
@@ -123,6 +124,63 @@ def test_backtest_and_live_paper_sizing_parity() -> None:
 
     assert qty_bt > 0
     assert qty_bt == qty_pp, f"Sized quantity disparity: bt={qty_bt} vs paper={qty_pp}"
+
+
+@pytest.mark.integration
+def test_both_writers_explain_the_size_the_same_way() -> None:
+    """The terminal and the engine must log the size arithmetic in one vocabulary.
+
+    `plan/sizing` is what answers "why this size" from a record alone (docs/35 §7, L-1).
+    Two writers produce it — `signal_strategy` for a backtest, `paper_streamer` for the live
+    terminal — and a reader (the trade page, `decision_margins`, `scripts/trace_diff.py`)
+    must not have to know which one wrote the record it is looking at.
+    """
+    price = Decimal("2500")
+    equity = Decimal("10000")
+    manager = LivePaperSessionManager(
+        LivePaperConfig(
+            symbol="ETH/USDT.SIM",
+            robot="ema",
+            starting_equity=equity,
+            risk_per_trade=Decimal("0.01"),
+            stop_pct=Decimal("0.02"),
+        )
+    )
+    manager.is_active = True
+    steps: list[TraceStep] = []
+    manager._open_position_internal("LONG", price, steps)
+
+    assert len(steps) == 1, "opening a position must log the size arithmetic"
+    sizing = steps[0]
+    assert sizing.stage is Stage.PLAN
+    assert sizing.component == "sizing"
+
+    expected = {
+        "equity",
+        "price",
+        "stop_distance",
+        "risk_fraction",
+        "risk_cash",
+        "qty_risk_based",
+        "qty",
+        "notional",
+        "notional_cap_hit",
+    }
+    assert expected <= set(sizing.values), "the same field names the backtest writer uses"
+    risk_cash = sizing.values["risk_cash"]
+    stop_distance = sizing.values["stop_distance"]
+    qty = sizing.values["qty"]
+    qty_risk_based = sizing.values["qty_risk_based"]
+    assert isinstance(risk_cash, Decimal)
+    assert isinstance(stop_distance, Decimal)
+    assert isinstance(qty, Decimal)
+    assert isinstance(qty_risk_based, Decimal)
+    assert risk_cash == equity * Decimal("0.01")
+    assert qty == manager._pos_qty
+    assert qty_risk_based == risk_cash / stop_distance
+
+    # A caller that only wants the status message (the older signature) still gets one.
+    assert isinstance(manager._open_position_internal("LONG", price), str)
 
 
 @pytest.mark.integration

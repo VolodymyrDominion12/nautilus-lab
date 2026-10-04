@@ -39,6 +39,43 @@ _MODEL_ENV: dict[str, tuple[str, str]] = {
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,12}USDT$")
 _ID_RE = re.compile(r"[^A-Za-z0-9_-]+")
+#: A variant name becomes part of the cell id (`regime_BTC__H1`) and of `#/run/...` links.
+_VARIANT_RE = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
+#: A settings name as `Settings` spells it (`DRAWDOWN_COOLDOWN_DAYS`), never lowercase.
+_SETTINGS_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+#: Each variant multiplies robots x symbols, and one cell is minutes to hours of engine time.
+MAX_VARIANTS = 8
+
+
+@dataclass(frozen=True, slots=True)
+class BatchVariant:
+    """One named set of env overrides: a hypothesis to compare against the others.
+
+    Why this exists (docs/32 §4, docs/35 §8): `env` used to apply to every cell of a batch,
+    so comparing four entry-gate hypotheses meant running four batches of several hours and
+    comparing them by eye. A variant makes the hypothesis a *dimension of the matrix*:
+    every cell is run once per variant, side by side, in one artefact.
+
+    `name` is part of the cell id (`regime_BTC__H1`), so it must be short and safe; it is
+    also what the batch table groups and labels by.
+    """
+
+    name: str
+    env: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not _VARIANT_RE.match(self.name):
+            raise ValueError(
+                f"variant name {self.name!r} must match {_VARIANT_RE.pattern} "
+                "(it becomes part of the cell id)"
+            )
+        if not self.env:
+            raise ValueError(f"variant {self.name!r} overrides nothing")
+        for key in self.env:
+            if not _SETTINGS_NAME_RE.match(key):
+                raise ValueError(
+                    f"variant {self.name!r}: env override {key!r} is not a SETTINGS_NAME"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +96,8 @@ class BatchRequest:
     days: int | None = None
     #: Extra settings for every cell (e.g. `DRAWDOWN_COOLDOWN_DAYS=3`), as env overrides.
     env: dict[str, str] = field(default_factory=dict)
+    #: Named override sets; empty = the plain robots x symbols matrix (the old behaviour).
+    variants: tuple[BatchVariant, ...] = ()
     models_dir: str = "models/clean"
 
     def __post_init__(self) -> None:
@@ -80,8 +119,17 @@ class BatchRequest:
         if self.days is not None and self.days <= 0:
             raise ValueError("days must be > 0")
         for key in self.env:
-            if not re.match(r"^[A-Z][A-Z0-9_]*$", key):
+            if not _SETTINGS_NAME_RE.match(key):
                 raise ValueError(f"env override {key!r} is not a SETTINGS_NAME")
+        if len(self.variants) > MAX_VARIANTS:
+            raise ValueError(
+                f"{len(self.variants)} variants is too many: each one multiplies the whole "
+                f"matrix (robots x symbols), and the cap is {MAX_VARIANTS}"
+            )
+        names = [variant.name for variant in self.variants]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise ValueError(f"variant names must be unique; repeated: {', '.join(duplicates)}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,17 +184,45 @@ def plan_cells(
     Without it the plan only knew that a catalog *directory* exists, so a cell whose
     instrument was never ingested was planned as runnable and died an hour later (see
     `_missing_series`); None keeps the old behaviour for callers that cannot look.
+
+    With `request.variants` the matrix gains a dimension: every robot x symbol runs once per
+    variant, grouped variant-first (`regime_BTC__H0`, `regime_ETH__H0`, …, `regime_BTC__H1`),
+    so one artefact holds the comparison that used to be several batches read side by side.
     """
     cells: list[BatchCell] = []
-    for robot in request.robots:
-        if robot == "pairs":
-            cells.append(_pairs_cell(request, exists=exists, series=series))
-            continue
-        cells.extend(
-            _single_cell(request, robot, symbol, exists=exists, series=series, wired=wired)
-            for symbol in request.symbols
-        )
+    for variant in request.variants or (None,):
+        for robot in request.robots:
+            if robot == "pairs":
+                cells.append(_pairs_cell(request, variant=variant, exists=exists, series=series))
+                continue
+            cells.extend(
+                _single_cell(
+                    request,
+                    robot,
+                    symbol,
+                    variant=variant,
+                    exists=exists,
+                    series=series,
+                    wired=wired,
+                )
+                for symbol in request.symbols
+            )
     return cells
+
+
+def _variant_suffix(variant: BatchVariant | None) -> str:
+    """`__H1` when the matrix has variants, empty otherwise.
+
+    Empty for a plain batch on purpose: cell ids are the artefact's primary keys (file
+    names, `#/run/<batch>/<cell>` links), so a batch without variants keeps the ids it
+    always had — old links, `trials/<cell>.jsonl` names and tables stay valid.
+    """
+    return f"__{variant.name}" if variant is not None else ""
+
+
+def _cell_env(request: BatchRequest, variant: BatchVariant | None) -> dict[str, str]:
+    """Global overrides first, then the variant's: a variant wins on a shared key."""
+    return {**request.env, **(variant.env if variant is not None else {})}
 
 
 def _single_cell(
@@ -154,12 +230,13 @@ def _single_cell(
     robot: str,
     symbol: str,
     *,
+    variant: BatchVariant | None,
     exists: Callable[[str], bool],
     series: Callable[[str, str, str], bool] | None,
     wired: Sequence[str] | None,
 ) -> BatchCell:
     base = base_asset(symbol)
-    env = {**request.env}
+    env = _cell_env(request, variant)
     blocked: str | None = None
     catalog, interval = request.catalog, request.interval
     if wired is not None and robot not in wired:
@@ -179,7 +256,7 @@ def _single_cell(
     if blocked is None and series is not None:
         blocked = _missing_series(robot, symbol, catalog, interval, exists=exists, series=series)
     return BatchCell(
-        cell_id=f"{robot}_{base}",
+        cell_id=f"{robot}_{base}{_variant_suffix(variant)}",
         robot=robot,
         symbol=symbol,
         instrument_id=spot_instrument(symbol),
@@ -228,6 +305,7 @@ def _missing_series(
 def _pairs_cell(
     request: BatchRequest,
     *,
+    variant: BatchVariant | None,
     exists: Callable[[str], bool],
     series: Callable[[str, str, str], bool] | None,
 ) -> BatchCell:
@@ -240,7 +318,7 @@ def _pairs_cell(
     if {"ETHUSDT", "BTCUSDT"} <= set(symbols):
         leg_a, leg_b = "ETHUSDT", "BTCUSDT"
     env = {
-        **request.env,
+        **_cell_env(request, variant),
         "PAIRS_LEG_A": spot_instrument(leg_a),
         "PAIRS_LEG_B": spot_instrument(leg_b),
     }
@@ -256,7 +334,7 @@ def _pairs_cell(
                 )
                 break
     return BatchCell(
-        cell_id=f"pairs_{base_asset(leg_a)}{base_asset(leg_b)}",
+        cell_id=f"pairs_{base_asset(leg_a)}{base_asset(leg_b)}{_variant_suffix(variant)}",
         robot="pairs",
         symbol=leg_a,
         instrument_id=spot_instrument(leg_a),

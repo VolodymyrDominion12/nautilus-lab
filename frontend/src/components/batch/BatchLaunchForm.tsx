@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Eye, Play } from 'lucide-react';
 import { launchBatch, type BatchLaunchParams } from '../../services/api';
-import type { PlannedCell } from '../../lib/batch';
+import { parseVariants, type PlannedCell } from '../../lib/batch';
 
 const ROBOTS = [
   'regime',
@@ -37,6 +37,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
   const [parallel, setParallel] = useState(2);
   const [label, setLabel] = useState('');
   const [envText, setEnvText] = useState('');
+  const [variantsText, setVariantsText] = useState('');
   const [plan, setPlan] = useState<PlannedCell[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +55,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
       const [key, ...rest] = line.split('=');
       if (key && rest.length) env[key.trim()] = rest.join('=').trim();
     }
+    const parsed = parseVariants(variantsText);
     return {
       robots,
       symbols: [...new Set([...symbols, ...extra])],
@@ -64,11 +66,19 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
       parallel,
       label,
       env,
+      variants: parsed.variants,
       dry_run: dryRun,
     };
   };
 
+  /** The variant box is validated here, not by the API: a typo would run the wrong matrix. */
+  const variantError = parseVariants(variantsText).error;
+
   const submit = async (dryRun: boolean) => {
+    if (variantError) {
+      setError(variantError);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -195,6 +205,33 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
           onChange={(e) => setEnvText(e.target.value)}
         />
       </label>
+
+      <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
+        Варіанти (гіпотези): [НАЗВА] і KEY=value під нею — кожен прогін виконається для кожного
+        варіанта
+        <textarea
+          className={`${input} h-24 ${variantError ? 'border-red-800' : ''}`}
+          placeholder={'[H0]\nREGIME_LEGS=uptrend,downtrend\n\n[H1]\nREGIME_LEGS=uptrend,downtrend\nENTRY_FILTER_HTF_TREND=true'}
+          value={variantsText}
+          onChange={(e) => setVariantsText(e.target.value)}
+        />
+      </label>
+      {variantError ? (
+        <div className="text-xs text-red-400">{variantError}</div>
+      ) : (
+        parseVariants(variantsText).variants.length > 0 && (
+          <p className="text-[11px] text-gray-500">
+            Варіантів: {parseVariants(variantsText).variants.length} · прогін{' '}
+            {robots.length} × {symbols.length + extraSymbols.split(/[\s,]+/).filter(Boolean).length}{' '}
+            інструментів стане в стільки разів більше. Клітинки матимуть ідентифікатори на кшталт{' '}
+            <span className="font-mono">
+              {robots[0] ?? 'robot'}_{(symbols[0] ?? 'BTCUSDT').replace('USDT', '')}__
+              {parseVariants(variantsText).variants[0].name}
+            </span>
+            .
+          </p>
+        )
+      )}
 
       <div className="flex gap-2">
         <button

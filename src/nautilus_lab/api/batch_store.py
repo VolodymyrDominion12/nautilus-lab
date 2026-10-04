@@ -32,7 +32,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
-from nautilus_lab.application.batch_plan import BatchCell, BatchRequest, safe_id
+from nautilus_lab.application.batch_plan import BatchCell, BatchRequest, BatchVariant, safe_id
 from nautilus_lab.application.decision_digest import build_digest
 from nautilus_lab.application.trade_history import reconstruct_trades_from_decisions
 from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
@@ -98,6 +98,11 @@ def request_to_dict(request: BatchRequest) -> dict[str, Any]:
     payload["is_fraction"] = str(request.is_fraction)
     payload["robots"] = list(request.robots)
     payload["symbols"] = list(request.symbols)
+    # `asdict` already turns the variants into plain dicts; they are the recipe of the
+    # batch, so they must round-trip or a restart would run a different matrix.
+    payload["variants"] = [
+        {"name": variant.name, "env": dict(variant.env)} for variant in request.variants
+    ]
     return payload
 
 
@@ -115,6 +120,13 @@ def request_from_dict(payload: dict[str, Any]) -> BatchRequest:
         label=str(payload.get("label", "")),
         days=int(payload["days"]) if payload.get("days") is not None else None,
         env={str(k): str(v) for k, v in (payload.get("env") or {}).items()},
+        variants=tuple(
+            BatchVariant(
+                name=str(item.get("name", "")),
+                env={str(k): str(v) for k, v in (item.get("env") or {}).items()},
+            )
+            for item in (payload.get("variants") or [])
+        ),
         models_dir=str(payload.get("models_dir", "models/clean")),
     )
 

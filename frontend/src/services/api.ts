@@ -4,6 +4,7 @@ import type {
   BatchDetail,
   BatchListRow,
   BatchRow,
+  BatchVariant,
   CandidateScore,
   FoldRef,
   PlannedCell,
@@ -1273,6 +1274,8 @@ export interface BatchLaunchParams {
   label?: string;
   days?: number;
   env?: Record<string, string>;
+  /** Named override sets; each cell runs once per variant (see `lib/batch.ts`). */
+  variants?: BatchVariant[];
   dry_run?: boolean;
 }
 

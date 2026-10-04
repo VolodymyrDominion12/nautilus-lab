@@ -4,6 +4,7 @@ import { cancelBatch, deleteBatch, fetchBatch } from '../../services/api';
 import {
   blockedShare,
   buildBatchHash,
+  variantOfCell,
   rowWarnings,
   sortRows,
   STATUS_CLASS,
@@ -195,6 +196,14 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
                     <div className="text-[10px] text-gray-500">
                       {row.interval} · {row.numbers?.profitable ?? '—'} фолдів у плюсі
                     </div>
+                    {variantOfCell(row.cell_id) && (
+                      <span
+                        className="inline-block mt-0.5 rounded border border-purple-900/60 bg-purple-950/40 px-1 font-mono text-[10px] text-purple-300"
+                        title="варіант (гіпотеза): той самий прогін з іншими налаштуваннями"
+                      >
+                        {variantOfCell(row.cell_id)}
+                      </span>
+                    )}
                   </td>
                   <td className={`pr-3 font-mono ${TONE_TEXT[toneOf(row.numbers?.mean_oos)]}`}>
                     {formatPct(row.numbers?.mean_oos)}

@@ -317,3 +317,81 @@ export const restartHint = (batch: BatchListRow): string | null => {
   const when = formatDateTime(batch.restarted_at);
   return count > 1 ? `перезапущено ${count}× · ${when}` : `перезапущено ${when}`;
 };
+
+// ---- variants (hypotheses) ------------------------------------------------------------
+
+/** One hypothesis of the matrix: a name plus the settings it changes (`batch_plan.py`). */
+export interface BatchVariant {
+  name: string;
+  env: Record<string, string>;
+}
+
+const VARIANT_NAME = /^[A-Za-z0-9_-]{1,24}$/;
+
+/**
+ * Parse the variants textarea into named override sets.
+ *
+ * The format mirrors the single `KEY=value` box next to it, with a header per hypothesis,
+ * because the alternative (a row builder) hides what is actually sent:
+ *
+ *     [H0]
+ *     REGIME_LEGS=uptrend,downtrend
+ *     [H1]
+ *     REGIME_LEGS=uptrend,downtrend
+ *     ENTRY_FILTER_HTF_TREND=true
+ *
+ * Returns an error message instead of a partial list: a half-understood matrix is worse
+ * than a refused one, and the batch runs for hours before anyone looks again.
+ */
+export const parseVariants = (
+  text: string,
+): { variants: BatchVariant[]; error: string | null } => {
+  const variants: BatchVariant[] = [];
+  let current: BatchVariant | null = null;
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    const where = `рядок ${index + 1}`;
+    if (!line || line.startsWith('#')) continue;
+    const header = /^\[(.+)\]$/.exec(line);
+    if (header) {
+      const name = header[1].trim();
+      if (!VARIANT_NAME.test(name)) {
+        return {
+          variants: [],
+          error: `${where}: ім'я варіанта «${name}» має бути з літер, цифр, «_» або «-» (до 24 символів)`,
+        };
+      }
+      if (variants.some((item) => item.name === name)) {
+        return { variants: [], error: `${where}: варіант «${name}» уже оголошено` };
+      }
+      current = { name, env: {} };
+      variants.push(current);
+      continue;
+    }
+    const split = line.indexOf('=');
+    if (split <= 0) {
+      return { variants: [], error: `${where}: очікую [НАЗВА] або KEY=value, а не «${line}»` };
+    }
+    if (current === null) {
+      return { variants: [], error: `${where}: спершу оголоси варіант рядком [НАЗВА]` };
+    }
+    const key = line.slice(0, split).trim();
+    const value = line.slice(split + 1).trim();
+    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
+      return { variants: [], error: `${where}: «${key}» не схоже на назву налаштування` };
+    }
+    current.env[key] = value;
+  }
+  const empty = variants.find((variant) => Object.keys(variant.env).length === 0);
+  if (empty) {
+    return { variants: [], error: `варіант «${empty.name}» не змінює жодного налаштування` };
+  }
+  return { variants, error: null };
+};
+
+/** The variant name inside a cell id (`regime_BTC__H1`), or null for a plain batch. */
+export const variantOfCell = (cellId: string): string | null => {
+  const at = cellId.indexOf('__');
+  return at >= 0 ? cellId.slice(at + 2) : null;
+};

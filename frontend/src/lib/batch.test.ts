@@ -3,6 +3,8 @@ import {
   blockedShare,
   buildBatchHash,
   parseBatchHash,
+  parseVariants,
+  variantOfCell,
   restartBlockedReason,
   restartHint,
   rowWarnings,
@@ -139,5 +141,56 @@ describe('restarting a batch', () => {
     expect(
       restartHint(listed({ restarted_at: '2026-10-01T09:30:00+00:00', restart_count: null })),
     ).toBe('перезапущено 2026-10-01 09:30:00');
+  });
+});
+
+describe('parseVariants', () => {
+  test('reads named blocks of KEY=value, the way the batch will run them', () => {
+    const { variants, error } = parseVariants(
+      [
+        '# гіпотези тижня',
+        '[H0]',
+        'REGIME_LEGS=uptrend,downtrend',
+        '',
+        '[H1]',
+        'REGIME_LEGS=uptrend,downtrend',
+        'ENTRY_FILTER_HTF_TREND=true',
+      ].join('\n'),
+    );
+    expect(error).toBeNull();
+    expect(variants).toEqual([
+      { name: 'H0', env: { REGIME_LEGS: 'uptrend,downtrend' } },
+      {
+        name: 'H1',
+        env: { REGIME_LEGS: 'uptrend,downtrend', ENTRY_FILTER_HTF_TREND: 'true' },
+      },
+    ]);
+  });
+
+  test('an empty box means a plain matrix, not an error', () => {
+    expect(parseVariants('')).toEqual({ variants: [], error: null });
+    expect(parseVariants('  \n# лише коментар\n')).toEqual({ variants: [], error: null });
+  });
+
+  test('refuses a half-understood matrix instead of running something else', () => {
+    expect(parseVariants('REGIME_LEGS=uptrend').error).toContain('спершу оголоси варіант');
+    expect(parseVariants('[H0]\nREGIME_LEGS=uptrend\n[H0]\nX=1').error).toContain('уже оголошено');
+    expect(parseVariants('[H 0]\nA=1').error).toContain('ім\'я варіанта');
+    expect(parseVariants('[H0]\nlower=1').error).toContain('назву налаштування');
+    expect(parseVariants('[H0]\nбез знака').error).toContain('KEY=value');
+    expect(parseVariants('[H0]\n[H1]\nA=1').error).toContain('не змінює жодного налаштування');
+  });
+
+  test('a value may contain «=» and spaces', () => {
+    const { variants } = parseVariants('[H0]\nBINANCE_SYMBOLS=["BTCUSDT", "ETHUSDT"]');
+    expect(variants[0].env.BINANCE_SYMBOLS).toBe('["BTCUSDT", "ETHUSDT"]');
+  });
+});
+
+describe('variantOfCell', () => {
+  test('reads the variant out of a cell id, and stays quiet for a plain batch', () => {
+    expect(variantOfCell('regime_BTC__H1')).toBe('H1');
+    expect(variantOfCell('pairs_ETHBTC__COST-x1_5')).toBe('COST-x1_5');
+    expect(variantOfCell('regime_BTC')).toBeNull();
   });
 });

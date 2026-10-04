@@ -50,6 +50,7 @@ from nautilus_lab.application.batch_plan import (
     DEFAULT_SYMBOLS,
     BatchCell,
     BatchRequest,
+    BatchVariant,
     plan_cells,
 )
 from nautilus_lab.application.decision_digest import build_digest, digest_markdown
@@ -67,6 +68,13 @@ router = APIRouter()
 _PROCESSES: dict[str, subprocess.Popen[bytes]] = {}
 
 
+class VariantRequest(BaseModel):
+    """One hypothesis of the matrix: a name plus the settings it changes."""
+
+    name: str
+    env: dict[str, str] = Field(default_factory=dict)
+
+
 class BatchRunRequest(BaseModel):
     robots: list[str] = Field(default_factory=lambda: list(DEFAULT_ROBOTS))
     symbols: list[str] = Field(default_factory=lambda: list(DEFAULT_SYMBOLS))
@@ -80,6 +88,9 @@ class BatchRunRequest(BaseModel):
     label: str = ""
     days: int | None = None
     env: dict[str, str] = Field(default_factory=dict)
+    #: Named override sets: every cell runs once per variant, so hypotheses are comparable
+    #: inside one batch instead of across several (docs/32 §4).
+    variants: list[VariantRequest] = Field(default_factory=list)
     dry_run: bool = False
 
 
@@ -106,6 +117,9 @@ def _to_request(req: BatchRunRequest) -> BatchRequest:
             label=req.label,
             days=days,
             env=dict(req.env),
+            variants=tuple(
+                BatchVariant(name=variant.name, env=dict(variant.env)) for variant in req.variants
+            ),
         )
     except (ValueError, InvalidOperation) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

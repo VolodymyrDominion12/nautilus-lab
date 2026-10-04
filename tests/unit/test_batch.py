@@ -38,7 +38,13 @@ from nautilus_lab.api.batch_store import (
 )
 from nautilus_lab.api.routes import batches as batches_routes
 from nautilus_lab.api.run_batch_job import BatchRun
-from nautilus_lab.application.batch_plan import BatchRequest, plan_cells, research_job_config
+from nautilus_lab.application.batch_plan import (
+    MAX_VARIANTS,
+    BatchRequest,
+    BatchVariant,
+    plan_cells,
+    research_job_config,
+)
 from nautilus_lab.infrastructure.settings import Settings
 
 
@@ -142,6 +148,91 @@ def test_plan_checks_both_pairs_legs() -> None:
     )
     assert cell.blocked is not None
     assert "BTC/USDT.SIM" in cell.blocked
+
+
+def test_variants_run_the_whole_matrix_once_per_hypothesis() -> None:
+    """A hypothesis is a dimension of the matrix, not a separate batch (docs/32 §4).
+
+    The documented workflow used to be "one batch per hypothesis, compared by eye": `env`
+    applied to every cell. A variant turns that into four batches' worth of cells in one
+    artefact, with the hypothesis in the cell id so the table can be compared directly.
+    """
+    request = BatchRequest(
+        robots=("regime", "pairs"),
+        symbols=("BTCUSDT", "ETHUSDT"),
+        env={"RISK_PER_TRADE": "0.005"},
+        variants=(
+            BatchVariant("H0", {"REGIME_LEGS": "uptrend,downtrend"}),
+            BatchVariant("H1", {"ENTRY_FILTER_HTF_TREND": "true"}),
+        ),
+    )
+    cells = plan_cells(request, exists=_all_exist)
+
+    assert [cell.cell_id for cell in cells] == [
+        "regime_BTC__H0",
+        "regime_ETH__H0",
+        "pairs_ETHBTC__H0",
+        "regime_BTC__H1",
+        "regime_ETH__H1",
+        "pairs_ETHBTC__H1",
+    ]
+    by_id = {cell.cell_id: cell for cell in cells}
+    # The variant wins over the global env, and both reach the child process.
+    assert by_id["regime_BTC__H0"].env == {
+        "RISK_PER_TRADE": "0.005",
+        "REGIME_LEGS": "uptrend,downtrend",
+    }
+    assert by_id["regime_BTC__H1"].env == {
+        "RISK_PER_TRADE": "0.005",
+        "ENTRY_FILTER_HTF_TREND": "true",
+    }
+    # A variant that overrides a global key wins on that key only.
+    override = BatchRequest(
+        robots=("ema",),
+        symbols=("BTCUSDT",),
+        env={"RISK_PER_TRADE": "0.005", "STOP_PCT": "0.01"},
+        variants=(BatchVariant("tight", {"STOP_PCT": "0.004"}),),
+    )
+    (cell,) = plan_cells(override, exists=_all_exist)
+    assert cell.env == {"RISK_PER_TRADE": "0.005", "STOP_PCT": "0.004"}
+
+
+def test_a_plain_batch_keeps_the_cell_ids_it_always_had() -> None:
+    """Cell ids are keys: file names, `#/run/...` links, `trials/<cell>.jsonl`."""
+    request = BatchRequest(robots=("ema", "pairs"), symbols=("BTCUSDT", "ETHUSDT"))
+    assert [cell.cell_id for cell in plan_cells(request, exists=_all_exist)] == [
+        "ema_BTC",
+        "ema_ETH",
+        "pairs_ETHBTC",
+    ]
+
+
+def test_variants_are_validated_and_survive_a_restart() -> None:
+    """A restart replans from `batch.json`, so the variants must round-trip exactly."""
+    request = BatchRequest(
+        robots=("regime",),
+        symbols=("BTCUSDT",),
+        variants=(BatchVariant("H0", {"REGIME_LEGS": "range"}),),
+    )
+    restored = request_from_dict(request_to_dict(request))
+    assert [variant.name for variant in restored.variants] == ["H0"]
+    assert restored.variants[0].env == {"REGIME_LEGS": "range"}
+    assert [cell.cell_id for cell in plan_cells(restored, exists=_all_exist)] == ["regime_BTC__H0"]
+
+    with pytest.raises(ValueError, match="unique"):
+        BatchRequest(variants=(BatchVariant("H0", {"A": "1"}), BatchVariant("H0", {"B": "2"})))
+    with pytest.raises(ValueError, match="overrides nothing"):
+        BatchVariant("H0", {})
+    with pytest.raises(ValueError, match="variant name"):
+        BatchVariant("H 0", {"A": "1"})
+    with pytest.raises(ValueError, match="SETTINGS_NAME"):
+        BatchVariant("H0", {"lower": "1"})
+    with pytest.raises(ValueError, match="too many"):
+        BatchRequest(
+            variants=tuple(
+                BatchVariant(f"H{index}", {"A": "1"}) for index in range(MAX_VARIANTS + 1)
+            )
+        )
 
 
 def test_batch_request_rejects_bad_input() -> None:

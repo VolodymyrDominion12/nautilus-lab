@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Eye, Play } from 'lucide-react';
 import { launchBatch, type BatchLaunchParams } from '../../services/api';
+import { statusQuery } from '../../services/queries';
 import { parseVariants, type PlannedCell } from '../../lib/batch';
 
 const ROBOTS = [
@@ -38,6 +40,10 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
   const [label, setLabel] = useState('');
   const [envText, setEnvText] = useState('');
   const [variantsText, setVariantsText] = useState('');
+  const [costProfile, setCostProfile] = useState('');
+  // The scenario names come from the backend (`domain/fees.py`), so the form cannot drift
+  // from what the engine would actually charge.
+  const costProfiles = useQuery(statusQuery(catalog)).data?.cost_profiles ?? [];
   const [plan, setPlan] = useState<PlannedCell[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +73,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
       label,
       env,
       variants: parsed.variants,
+      cost_profile: costProfile || undefined,
       dry_run: dryRun,
     };
   };
@@ -206,16 +213,35 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
         />
       </label>
 
-      <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
-        Варіанти (гіпотези): [НАЗВА] і KEY=value під нею — кожен прогін виконається для кожного
-        варіанта
-        <textarea
-          className={`${input} h-24 ${variantError ? 'border-red-800' : ''}`}
-          placeholder={'[H0]\nREGIME_LEGS=uptrend,downtrend\n\n[H1]\nREGIME_LEGS=uptrend,downtrend\nENTRY_FILTER_HTF_TREND=true'}
-          value={variantsText}
-          onChange={(e) => setVariantsText(e.target.value)}
-        />
-      </label>
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
+          Сценарій витрат
+          <select
+            className={input}
+            value={costProfile}
+            onChange={(e) => setCostProfile(e.target.value)}
+            title="Комісії, за якими рахується прогін. Назва потрапляє в манифест кожного прогону, тож артефакт каже, за яким тарифом його виміряли"
+          >
+            <option value="">як у налаштуваннях машини</option>
+            {costProfiles.map((profile) => (
+              <option key={profile.name} value={profile.name}>
+                {profile.name} — спот {profile.spot_taker_bps.toFixed(2)} bps
+                {profile.is_default ? ' (типовий)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
+          Варіанти (гіпотези): [НАЗВА] і KEY=value під нею — кожен прогін виконається для кожного
+          варіанта
+          <textarea
+            className={`${input} h-24 ${variantError ? 'border-red-800' : ''}`}
+            placeholder={'[H0]\nREGIME_LEGS=uptrend,downtrend\n\n[H1]\nREGIME_LEGS=uptrend,downtrend\nENTRY_FILTER_HTF_TREND=true'}
+            value={variantsText}
+            onChange={(e) => setVariantsText(e.target.value)}
+          />
+        </label>
+      </div>
       {variantError ? (
         <div className="text-xs text-red-400">{variantError}</div>
       ) : (
@@ -269,6 +295,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
                 <th className="text-left">Інструмент</th>
                 <th className="text-left">TF</th>
                 <th className="text-left">Каталог</th>
+                <th className="text-left">Витрати</th>
                 <th className="text-left">Стан</th>
               </tr>
             </thead>
@@ -279,6 +306,9 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
                   <td className="text-gray-400">{cell.instrument_id ?? cell.symbol}</td>
                   <td className="text-gray-400">{cell.interval}</td>
                   <td className="text-gray-400">{cell.catalog}</td>
+                  <td className="font-mono text-[10px] text-gray-400">
+                    {cell.cost_profile ?? '—'}
+                  </td>
                   <td className={cell.runnable ? 'text-emerald-400' : 'text-amber-400'}>
                     {cell.runnable ? 'буде запущено' : cell.blocked}
                   </td>

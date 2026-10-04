@@ -273,6 +273,9 @@ def run_manifest(cfg: Settings, *, with_catalog: bool) -> RunManifest:
         settings=cfg.model_dump(mode="json"),
         catalog_paths=[cfg.catalog_path] if with_catalog else (),
     )
+    # The schedule the run actually pays, by name when it was named: the fee fields are
+    # already in the settings hash, but "which scenario" is what a reader compares runs by.
+    manifest = replace(manifest, cost_profile=cfg.cost_profile or None)
     if not with_catalog:
         return manifest
     # The QC verdict of the series this run reads, so a result on `unknown` (REST-era)

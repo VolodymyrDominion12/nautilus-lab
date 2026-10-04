@@ -101,7 +101,8 @@ def request_to_dict(request: BatchRequest) -> dict[str, Any]:
     # `asdict` already turns the variants into plain dicts; they are the recipe of the
     # batch, so they must round-trip or a restart would run a different matrix.
     payload["variants"] = [
-        {"name": variant.name, "env": dict(variant.env)} for variant in request.variants
+        {"name": variant.name, "env": dict(variant.env), "cost_profile": variant.cost_profile}
+        for variant in request.variants
     ]
     return payload
 
@@ -120,10 +121,12 @@ def request_from_dict(payload: dict[str, Any]) -> BatchRequest:
         label=str(payload.get("label", "")),
         days=int(payload["days"]) if payload.get("days") is not None else None,
         env={str(k): str(v) for k, v in (payload.get("env") or {}).items()},
+        cost_profile=str(payload["cost_profile"]) if payload.get("cost_profile") else None,
         variants=tuple(
             BatchVariant(
                 name=str(item.get("name", "")),
                 env={str(k): str(v) for k, v in (item.get("env") or {}).items()},
+                cost_profile=(str(item["cost_profile"]) if item.get("cost_profile") else None),
             )
             for item in (payload.get("variants") or [])
         ),

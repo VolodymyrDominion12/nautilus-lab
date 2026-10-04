@@ -90,9 +90,11 @@ export interface ResearchRunParams {
   instrument_id?: string;
   bar_interval?: string;
   /** Hypothesis text: pre-register this walk-forward before running it. */
-  register?: string;
+  preregister?: string;
   /** Candidate mode: run the PBO/CSCV audit as well and judge the gate on both halves. */
   promote?: boolean;
+  /** Named cost scenario (`domain/fees.py`): the tariff the account pays, or a stress case. */
+  cost_profile?: string;
   is_start?: string;
   is_end?: string;
   oos_start?: string;

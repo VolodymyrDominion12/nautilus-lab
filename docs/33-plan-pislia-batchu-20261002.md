@@ -77,7 +77,7 @@ EMA200×1h ≈ EMA50×4h, нахил 24 год = 6 барів, ATR 24/300×1h = 
    | `C-H1-htf` | H0 + `{"ENTRY_FILTER_HTF_TREND": "true"}` |
    | `C-H2-vol` | H0 + `{"ENTRY_FILTER_VOL_EXPANSION": "true"}` |
    | `C-H3-both` | H0 + обидва |
-   | `C-H3-cost-stress` | H3 + `{"SPOT_TAKER_FEE": "0.001", "SPOT_MAKER_FEE": "0.001"}` (+2.5 bps на кожну сторону: проковзування) |
+   | `C-H3-cost-stress` | H3 + `{"COST_PROFILE": "stress_x1_5"}` (базовий тариф ×1.5: проковзування понад модель філу; `SPOT_TAKER_FEE=0.001` лишається рівнозначним ручним способом) |
 
    Після кожного батчу: `scripts/batch_trade_breakdown.py <batch>`. Якщо ворота
    заблокували не ті угоди, які розбір позначив як «проти нахилу» чи «стиснута

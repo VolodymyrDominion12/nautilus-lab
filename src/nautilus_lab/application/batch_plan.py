@@ -62,6 +62,8 @@ class BatchVariant:
 
     name: str
     env: dict[str, str] = field(default_factory=dict)
+    #: Cost scenario for this variant only; None = the batch's own (see `cost_overrides`).
+    cost_profile: str | None = None
 
     def __post_init__(self) -> None:
         if not _VARIANT_RE.match(self.name):
@@ -69,7 +71,7 @@ class BatchVariant:
                 f"variant name {self.name!r} must match {_VARIANT_RE.pattern} "
                 "(it becomes part of the cell id)"
             )
-        if not self.env:
+        if not self.env and not self.cost_profile:
             raise ValueError(f"variant {self.name!r} overrides nothing")
         for key in self.env:
             if not _SETTINGS_NAME_RE.match(key):
@@ -96,6 +98,10 @@ class BatchRequest:
     days: int | None = None
     #: Extra settings for every cell (e.g. `DRAWDOWN_COOLDOWN_DAYS=3`), as env overrides.
     env: dict[str, str] = field(default_factory=dict)
+    #: Cost scenario for the whole batch (`domain/fees.py::COST_PROFILES`). A variant may
+    #: override it, which is how "the same hypothesis at base and stressed costs" becomes
+    #: one batch instead of two (docs/33 §4).
+    cost_profile: str | None = None
     #: Named override sets; empty = the plain robots x symbols matrix (the old behaviour).
     variants: tuple[BatchVariant, ...] = ()
     models_dir: str = "models/clean"
@@ -145,6 +151,9 @@ class BatchCell:
     env: dict[str, str]
     #: Why this cell cannot run; None = runnable. Shown in the plan and kept in the table.
     blocked: str | None = None
+    #: Cost scenario this cell will pay (`domain/fees.py`), None = whatever the machine's
+    #: settings say. Kept beside `env` so the table can name it without decoding env.
+    cost_profile: str | None = None
 
     @property
     def runnable(self) -> bool:
@@ -222,7 +231,20 @@ def _variant_suffix(variant: BatchVariant | None) -> str:
 
 def _cell_env(request: BatchRequest, variant: BatchVariant | None) -> dict[str, str]:
     """Global overrides first, then the variant's: a variant wins on a shared key."""
-    return {**request.env, **(variant.env if variant is not None else {})}
+    env = {**request.env, **(variant.env if variant is not None else {})}
+    profile = cell_cost_profile(request, variant)
+    if profile:
+        # The child process reads it as a setting, like every other per-cell value: one
+        # transport for settings, and the name is what lands in that run's manifest.
+        env["COST_PROFILE"] = profile
+    return env
+
+
+def cell_cost_profile(request: BatchRequest, variant: BatchVariant | None) -> str | None:
+    """The cost scenario of one cell: the variant's if it names one, else the batch's."""
+    if variant is not None and variant.cost_profile:
+        return variant.cost_profile
+    return request.cost_profile
 
 
 def _single_cell(
@@ -264,6 +286,7 @@ def _single_cell(
         interval=interval,
         env=env,
         blocked=blocked,
+        cost_profile=cell_cost_profile(request, variant),
     )
 
 
@@ -342,6 +365,7 @@ def _pairs_cell(
         interval=request.interval,
         env=env,
         blocked=blocked,
+        cost_profile=cell_cost_profile(request, variant),
     )
 
 

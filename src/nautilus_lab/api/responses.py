@@ -59,6 +59,16 @@ class StressSliceInfo(ApiModel):
     end: str
 
 
+class CostProfileInfo(ApiModel):
+    """One named cost scenario, as the batch form and the research form offer it."""
+
+    name: str
+    note: str
+    spot_taker_bps: float
+    usdm_taker_bps: float
+    is_default: bool = False
+
+
 class StatusResponse(ApiModel):
     active_bots: int
     research_running: bool
@@ -71,6 +81,7 @@ class StatusResponse(ApiModel):
     tick_vpin_robots: list[str]
     hawkes_robots: list[str]
     stress_slices: list[StressSliceInfo]
+    cost_profiles: list[CostProfileInfo]
     catalog_exists: bool
     catalog_instruments: int
     catalog_path: str

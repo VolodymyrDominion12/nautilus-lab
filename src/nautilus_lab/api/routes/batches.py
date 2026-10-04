@@ -73,6 +73,8 @@ class VariantRequest(BaseModel):
 
     name: str
     env: dict[str, str] = Field(default_factory=dict)
+    #: Cost scenario for this variant only, e.g. the same hypothesis at stressed costs.
+    cost_profile: str | None = None
 
 
 class BatchRunRequest(BaseModel):
@@ -88,6 +90,9 @@ class BatchRunRequest(BaseModel):
     label: str = ""
     days: int | None = None
     env: dict[str, str] = Field(default_factory=dict)
+    #: Cost scenario for the whole batch, by name (`domain/fees.py`). The base tariff and a
+    #: stress case are two scenarios, not two habits (docs/33 §4).
+    cost_profile: str | None = None
     #: Named override sets: every cell runs once per variant, so hypotheses are comparable
     #: inside one batch instead of across several (docs/32 §4).
     variants: list[VariantRequest] = Field(default_factory=list)
@@ -117,8 +122,14 @@ def _to_request(req: BatchRunRequest) -> BatchRequest:
             label=req.label,
             days=days,
             env=dict(req.env),
+            cost_profile=req.cost_profile,
             variants=tuple(
-                BatchVariant(name=variant.name, env=dict(variant.env)) for variant in req.variants
+                BatchVariant(
+                    name=variant.name,
+                    env=dict(variant.env),
+                    cost_profile=variant.cost_profile,
+                )
+                for variant in req.variants
             ),
         )
     except (ValueError, InvalidOperation) as exc:
@@ -167,6 +178,7 @@ def _plan_payload(cells: list[BatchCell]) -> list[dict[str, Any]]:
             "instrument_id": cell.instrument_id,
             "interval": cell.interval,
             "catalog": cell.catalog,
+            "cost_profile": cell.cost_profile,
             "runnable": cell.runnable,
             "blocked": cell.blocked,
         }

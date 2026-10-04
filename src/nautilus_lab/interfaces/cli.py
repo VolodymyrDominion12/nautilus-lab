@@ -35,6 +35,7 @@ from nautilus_lab.domain.errors import (
     LiveTradingDisabledError,
     PaperTradingNotReadyError,
 )
+from nautilus_lab.domain.fees import COST_PROFILES
 from nautilus_lab.domain.preregistration import PreregistrationVerdict
 from nautilus_lab.domain.provenance import RunManifest
 from nautilus_lab.domain.regime import RobotName
@@ -329,6 +330,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=float,
         help="Target annualized volatility for position sizing (e.g., 0.20 for 20%%)",
     )
+    research.add_argument(
+        "--cost-profile",
+        choices=sorted(COST_PROFILES),
+        help=(
+            "Named cost scenario for this run (default: COST_PROFILE from .env, or the fee "
+            "fields as written). The name is recorded in the manifest, so an artefact says "
+            "which costs it paid: `binance_vip0_bnb`, `binance_vip0_no_bnb`, `stress_x1_5`"
+        ),
+    )
 
     paper = sub.add_parser(
         "paper",
@@ -515,6 +525,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         cfg = cfg.model_copy(update={"use_hawkes": True})
     if getattr(args, "embargo_bars", None) is not None:
         cfg = cfg.model_copy(update={"embargo_bars": args.embargo_bars})
+    cost_profile_name = getattr(args, "cost_profile", None)
+    if cost_profile_name:
+        # Re-validate rather than `model_copy`: the schedule is derived from the name.
+        cfg = Settings.model_validate({**cfg.model_dump(), "cost_profile": cost_profile_name})
     try:
         if args.command == "ingest":
             return _run_ingest(cfg, args)

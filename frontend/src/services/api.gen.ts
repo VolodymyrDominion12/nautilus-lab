@@ -42,6 +42,7 @@ export interface StatusResponse {
   tick_vpin_robots: string[];
   hawkes_robots: string[];
   stress_slices: StressSliceInfo[];
+  cost_profiles: CostProfileInfo[];
   catalog_exists: boolean;
   catalog_instruments: number;
   catalog_path: string;
@@ -237,6 +238,15 @@ export interface SettingsResponse {
   settings: Record<string, string>;
 }
 
+/** One named cost scenario, as the batch form and the research form offer it. */
+export interface CostProfileInfo {
+  name: string;
+  note: string;
+  spot_taker_bps: number;
+  usdm_taker_bps: number;
+  is_default: boolean;
+}
+
 /** Where one side series of one symbol starts and ends, and in which catalog. */
 export interface SeriesSpan {
   first: string | null;
@@ -275,8 +285,9 @@ export interface ResearchRunRequest {
   oos_start?: string | null;
   oos_end?: string | null;
   param_overrides?: Record<string, string>;
-  register?: string | null;
+  preregister?: string | null;
   promote?: boolean;
+  cost_profile?: string | null;
 }
 
 export interface IngestRunRequest {

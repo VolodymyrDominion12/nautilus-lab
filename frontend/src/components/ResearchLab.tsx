@@ -24,6 +24,7 @@ import { RunConditions } from './research/RunConditions';
 import { RunControls } from './research/RunControls';
 import { TearsheetPanel } from './research/TearsheetPanel';
 import { useResearchForm, type ExternalResearchConfig } from './research/useResearchForm';
+import type { CostProfileOption } from './research/CostProfileSelect';
 import { useResearchRun } from './research/useResearchRun';
 import { BacktestDetailsModal } from './BacktestDetailsModal';
 
@@ -36,12 +37,15 @@ interface ResearchLabProps {
   hawkesRobots?: string[];
   /** Named stress windows with their real dates, from the backend. */
   stressSlices?: StressSliceInfo[];
+  /** Named cost scenarios, from the backend: which tariff a run pays (docs/33 §4). */
+  costProfiles?: CostProfileOption[];
   externalConfig?: ExternalResearchConfig | null;
   onClearExternalConfig?: () => void;
 }
 
 const NO_ROBOTS: string[] = [];
 const NO_SLICES: StressSliceInfo[] = [];
+const NO_COST_PROFILES: CostProfileOption[] = [];
 
 /**
  * The research tab: the form (`research/useResearchForm`), the job
@@ -55,6 +59,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
   tickVpinRobots = NO_ROBOTS,
   hawkesRobots = NO_ROBOTS,
   stressSlices = NO_SLICES,
+  costProfiles = NO_COST_PROFILES,
   externalConfig = null,
   onClearExternalConfig,
 }) => {
@@ -333,6 +338,7 @@ export const ResearchLab: React.FC<ResearchLabProps> = ({
           tickDataAvailable={tickDataAvailable}
           hawkesRobots={hawkesRobots}
           stressSlices={stressSlices}
+          costProfiles={costProfiles}
           selectedInstrument={selectedInstrument}
         />
       </div>

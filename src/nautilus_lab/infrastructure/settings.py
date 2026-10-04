@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.entry_filters import EntryFilterParams
-from nautilus_lab.domain.fees import FeeSchedule
+from nautilus_lab.domain.fees import FeeSchedule, cost_profile
 from nautilus_lab.domain.funding import FundingParams
 from nautilus_lab.domain.metrics import SelectionMetric
 from nautilus_lab.domain.pairs.params import PairsParams
@@ -178,6 +178,11 @@ class Settings(BaseSettings):
     bar_interval: str = "1h"
     binance_symbol: str = "ETHUSDT"
     binance_symbols: list[str] = Field(default_factory=lambda: ["ETHUSDT", "BTCUSDT"])
+    #: Named cost scenario (`domain/fees.py::COST_PROFILES`). When set it *is* the
+    #: schedule: the four fee fields below are overwritten from it, so a run cannot claim
+    #: one scenario and pay another. Empty means "use the fee fields as written".
+    #: The name travels into the run manifest, so an artefact says which costs it paid.
+    cost_profile: str = ""
     spot_maker_fee: Decimal = Decimal("0.00075")
     spot_taker_fee: Decimal = Decimal("0.00075")
     usdm_maker_fee: Decimal = Decimal("0.0002")
@@ -233,6 +238,24 @@ class Settings(BaseSettings):
     def _known_regime_legs(cls, value: str) -> str:
         parse_legs(value)  # fail at startup, not in the middle of a batch cell
         return value
+
+    @model_validator(mode="after")
+    def _apply_cost_profile(self) -> Settings:
+        """A named profile wins over the individual fee fields, and an unknown name fails.
+
+        Costs are the lever that decides whether a strategy survives, and the batch
+        discipline needs two scenarios (base tariff and a stress case). Naming a scenario is
+        how a run says which one it measured — so a typo must stop the run rather than
+        quietly pay base fees and report a different experiment (docs/33 §4).
+        """
+        if not self.cost_profile:
+            return self
+        profile = cost_profile(self.cost_profile)
+        self.spot_maker_fee = profile.spot_maker
+        self.spot_taker_fee = profile.spot_taker
+        self.usdm_maker_fee = profile.usdm_maker
+        self.usdm_taker_fee = profile.usdm_taker
+        return self
 
     def all_catalog_paths(self) -> list[str]:
         paths: list[str] = []

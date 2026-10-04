@@ -131,6 +131,20 @@ def test_promote_also_measures_the_overfitting_half(
 
 
 @pytest.mark.integration
+def test_the_request_payload_names_the_hypothesis_without_shadowing_pydantic() -> None:
+    """`register` is `BaseModel.register`; the request field is `preregister` on purpose.
+
+    A field named `register` made pydantic warn on every import and would have shadowed the
+    model's own method — a name that fights the framework for no gain (the CLI flag stays
+    `--register`, which is the documented terminal interface).
+    """
+    from nautilus_lab.api.requests import ResearchRunRequest
+
+    request = ResearchRunRequest(robot="ema", preregister="H: ema beats buy&hold?")
+    assert request.preregister == "H: ema beats buy&hold?"
+    assert not hasattr(request, "register") or callable(request.register)
+
+
 def _refusal(job: ResearchJobConfig) -> str:
     """The job's error message: `execute_research` reports failures, it does not raise."""
     result, _ = execute_research(job)

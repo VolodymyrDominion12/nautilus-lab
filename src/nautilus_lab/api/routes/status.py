@@ -14,6 +14,7 @@ from nautilus_lab.api.health import render_metrics
 from nautilus_lab.api.paper_streamer import LIVE_PAPER_ROBOTS
 from nautilus_lab.api.responses import HealthResponse, StatusResponse
 from nautilus_lab.application.run_paper import PAPER_SUPPORTED_ROBOTS
+from nautilus_lab.domain.fees import COST_PROFILES, DEFAULT_COST_PROFILE
 from nautilus_lab.domain.regime import (
     BACKTEST_WIRED_ROBOTS,
     HAWKES_ROBOTS,
@@ -81,6 +82,18 @@ def get_status(ctx: Lab, catalog_path: str | None = None) -> dict[str, Any]:
                 "end": item.end.isoformat(),
             }
             for item in STRESS_SLICES.values()
+        ],
+        # Costs decide whether an edge survives, so the scenarios are named in the API and
+        # the forms offer them by name rather than by four fee numbers (docs/33 §4).
+        "cost_profiles": [
+            {
+                "name": profile.name,
+                "note": profile.note,
+                "spot_taker_bps": float(profile.spot_taker) * 10000,
+                "usdm_taker_bps": float(profile.usdm_taker) * 10000,
+                "is_default": profile.name == DEFAULT_COST_PROFILE,
+            }
+            for profile in COST_PROFILES.values()
         ],
         "catalog_exists": bool(summary.get("exists", False)),
         "catalog_instruments": int(summary.get("total_instruments", 0) or 0),

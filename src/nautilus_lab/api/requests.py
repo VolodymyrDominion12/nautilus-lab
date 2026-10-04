@@ -38,9 +38,13 @@ class ResearchRunRequest(BaseModel):
     oos_end: str | None = None
     param_overrides: dict[str, str] = {}
     #: Hypothesis text: pre-register this walk-forward before running it (docs/27 R-2).
-    register: str | None = None
+    #: Named `preregister`, not `register`: `BaseModel.register` is pydantic's own method and
+    #: a field of that name shadows it (the CLI flag stays `--register`).
+    preregister: str | None = None
     #: Candidate mode: also run the PBO/CSCV audit and judge the gate on both halves.
     promote: bool = False
+    #: Named cost scenario (`domain/fees.py`): what the account pays, or a stress case.
+    cost_profile: str | None = None
 
 
 class IngestRunRequest(BaseModel):

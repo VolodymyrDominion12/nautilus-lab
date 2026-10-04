@@ -182,7 +182,7 @@ test('spec defaults skip empty values and parameters without an env name', () =>
 describe('the candidate switches', () => {
   test('no registration is sent by default', () => {
     const params = toRunParams(base, 'ETHUSDT.SIM', 'catalog');
-    expect(params.register).toBeUndefined();
+    expect(params.preregister).toBeUndefined();
     expect(params.promote).toBe(false);
   });
 
@@ -192,12 +192,21 @@ describe('the candidate switches', () => {
       'ETHUSDT.SIM',
       'catalog',
     );
-    expect(params.register).toBe('H: ema тримає перевагу');
+    // The payload key is `preregister`: a field named `register` would shadow pydantic's
+    // own `BaseModel.register` (the CLI flag stays `--register`).
+    expect(params.preregister).toBe('H: ema тримає перевагу');
     expect(params.promote).toBe(true);
   });
 
   test('whitespace is not a hypothesis', () => {
     const params = toRunParams({ ...base, register: '   ' }, 'ETHUSDT.SIM', 'catalog');
-    expect(params.register).toBeUndefined();
+    expect(params.preregister).toBeUndefined();
+  });
+
+  test('the cost scenario travels by name, or not at all', () => {
+    expect(toRunParams(base, 'ETHUSDT.SIM', 'catalog').cost_profile).toBeUndefined();
+    expect(
+      toRunParams({ ...base, costProfile: 'stress_x1_5' }, 'ETHUSDT.SIM', 'catalog').cost_profile,
+    ).toBe('stress_x1_5');
   });
 });

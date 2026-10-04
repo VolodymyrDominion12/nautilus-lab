@@ -87,6 +87,9 @@ class ResearchJobConfig:
     #: `lab research` invocation produces both, so a cell could never be promoted from
     #: the dashboard (docs/35 §3). Expensive on purpose: this is the one deliberate look.
     promote: bool = False
+    #: Named cost scenario (`domain/fees.py::COST_PROFILES`); None = the machine's setting.
+    #: Applied as a settings override so the schedule *and* the manifest name agree.
+    cost_profile: str | None = None
 
 
 class _Tee(io.TextIOBase):
@@ -203,7 +206,12 @@ def _apply_config(cfg: Settings, job: ResearchJobConfig) -> Settings:
     if job.bar_interval:
         updates["bar_interval"] = job.bar_interval
     patched = cfg.model_copy(update=updates) if updates else cfg
-    return apply_setting_overrides(patched, job.param_overrides or {})
+    overrides = dict(job.param_overrides or {})
+    if job.cost_profile:
+        # A profile is re-validated by `Settings`, so the four fee fields come from it and
+        # the run manifest can name the scenario. An unknown name fails the run (docs/33 §4).
+        overrides["COST_PROFILE"] = job.cost_profile
+    return apply_setting_overrides(patched, overrides)
 
 
 def _print_backtest(report: BacktestReport) -> None:

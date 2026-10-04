@@ -43,6 +43,8 @@ export interface ResearchForm {
   register: string;
   /** Candidate mode: also run the PBO/CSCV audit, so the gate has both halves. */
   promote: boolean;
+  /** Named cost scenario (`domain/fees.py`); empty = whatever the machine is set to. */
+  costProfile: string;
 }
 
 export const FORM_STORAGE_KEY = 'nautilus-lab:research-form:v2';
@@ -75,6 +77,7 @@ export const FORM_DEFAULTS: Omit<ResearchForm, 'robot'> = {
   instrumentId: '',
   register: '',
   promote: false,
+  costProfile: '',
 };
 
 /** The saved form, completed with defaults. A field the saved copy lacks is not lost. */
@@ -189,8 +192,9 @@ export function toRunParams(
     pbo_blocks: form.usePbo ? form.pboBlocks : undefined,
     // Empty text is not a registration: send nothing rather than an empty hypothesis the
     // backend would have to refuse.
-    register: form.register.trim() || undefined,
+    preregister: form.register.trim() || undefined,
     promote: form.promote,
+    cost_profile: form.costProfile || undefined,
     bar_vpin: form.barVpin,
     tick_vpin: form.tickVpin,
     hawkes: form.hawkes,

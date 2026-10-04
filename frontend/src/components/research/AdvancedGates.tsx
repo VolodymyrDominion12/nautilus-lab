@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import { InfoTooltip } from '../InfoTooltip';
 import { PreregistrationFields } from './PreregistrationFields';
+import { CostProfileSelect, type CostProfileOption } from './CostProfileSelect';
 import { sliceOverlapsCatalog } from '../../lib/research';
 import type { ResearchForm } from '../../lib/researchForm';
 import type { StressSliceInfo } from '../../services/api';
@@ -15,12 +16,15 @@ interface AdvancedGatesProps {
   tickDataAvailable: boolean | null;
   hawkesRobots: string[];
   stressSlices: StressSliceInfo[];
+  /** Named cost scenarios, from the backend (`/api/status`); empty = not served yet. */
+  costProfiles: CostProfileOption[];
   selectedInstrument: CatalogInstrument | null;
 }
 
 /** The collapsible gates: Optuna, PBO, embargo, VPIN, Hawkes, outputs, stress slice. */
 export const AdvancedGates: React.FC<AdvancedGatesProps> = ({
   form,
+  costProfiles,
   update,
   tickDataAvailable,
   hawkesRobots,
@@ -45,6 +49,7 @@ export const AdvancedGates: React.FC<AdvancedGatesProps> = ({
     fullSample,
     register,
     promote,
+    costProfile,
   } = form;
   return (
     <div>
@@ -268,6 +273,12 @@ export const AdvancedGates: React.FC<AdvancedGatesProps> = ({
           )}
 
           <PreregistrationFields register={register} promote={promote} source={source} update={update} />
+
+          <CostProfileSelect
+            value={costProfile}
+            profiles={costProfiles}
+            onChange={(name) => update({ costProfile: name })}
+          />
 
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-1.5">

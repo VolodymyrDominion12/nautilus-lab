@@ -287,6 +287,7 @@ function AppContent() {
                 tickVpinRobots={status?.tick_vpin_robots}
                 hawkesRobots={status?.hawkes_robots}
                 stressSlices={status?.stress_slices}
+                costProfiles={status?.cost_profiles}
                 externalConfig={externalHypoConfig}
                 onClearExternalConfig={() => setExternalHypoConfig(null)}
               />

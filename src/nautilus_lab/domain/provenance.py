@@ -44,6 +44,10 @@ class RunManifest:
     #: QC verdict of the catalog series the run read: `ok`, `warn`, `fail` (only with
     #: ALLOW_FAILED_DATA) or `unknown` (no report: ingested before QC existed).
     data_quality: str | None = None
+    #: Which cost scenario the run paid (`domain/fees.py::COST_PROFILES`). Costs decide
+    #: whether an edge survives, so the artefact has to name the tariff it was measured
+    #: under — "paid_cost_bps" alone cannot say whether it was the base case or a stress.
+    cost_profile: str | None = None
 
     @property
     def reproducible(self) -> bool:
@@ -78,6 +82,8 @@ class RunManifest:
         ]
         if self.catalog_fingerprint is not None:
             parts.append(f"catalog={_short(self.catalog_fingerprint)}({self.catalog_files} files)")
+        if self.cost_profile is not None:
+            parts.append(f"cost={self.cost_profile}")
         if self.preregistration_sha256 is not None:
             parts.append(f"terms={_short(self.preregistration_sha256)}")
         if self.data_quality is not None:

@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from nautilus_lab.domain.fees import COST_PROFILES
 from nautilus_lab.infrastructure.settings import Settings
 
 FieldType = Literal["string", "number", "boolean", "select", "secret"]
@@ -151,6 +152,17 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
             "working fee keys — `MAKER_FEE`/`TAKER_FEE` are not read by Settings at all."
         ),
         fields=[
+            SettingField(
+                key="COST_PROFILE",
+                label="Cost scenario",
+                field_type="select",
+                options=["", *sorted(COST_PROFILES)],
+                description=(
+                    "Named tariff for every run on this machine. When set it overrides the four "
+                    "fee fields below, and the name is recorded in each run manifest. Empty = use "
+                    "the fee fields as written."
+                ),
+            ),
             SettingField(
                 key="SPOT_MAKER_FEE",
                 label="Spot maker fee",

@@ -139,3 +139,46 @@ def test_cli_wired_robots_are_supported(robot: str) -> None:
             require_backtest_support(item)
             return
     raise AssertionError(f"unknown robot {robot}")
+
+
+def test_cli_research_accepts_instrument_interval_and_market(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[Settings] = []
+
+    def fake_run_research(cfg: Settings, args: object) -> int:
+        captured.append(cfg)
+        return 0
+
+    monkeypatch.setattr("nautilus_lab.interfaces.cli._run_research", fake_run_research)
+
+    rc = main(
+        [
+            "research",
+            "--instrument",
+            "ETHUSDT-PERP.SIM",
+            "--interval",
+            "4h",
+            "--catalog",
+            "catalog_perp_4h",
+        ]
+    )
+    assert rc == 0
+    assert len(captured) == 1
+    assert captured[0].instrument_id == "ETHUSDT-PERP.SIM"
+    assert captured[0].bar_interval == "4h"
+    assert captured[0].catalog_path == "catalog_perp_4h"
+
+    # Market switch to perp without explicit instrument
+    rc = main(["research", "--market", "perp", "--interval", "1h"])
+    assert rc == 0
+    assert len(captured) == 2
+    assert captured[1].instrument_id.endswith("-PERP.SIM")
+    assert captured[1].bar_interval == "1h"
+
+    # Market switch to spot when current instrument is perp
+    monkeypatch.setenv("INSTRUMENT_ID", "ETHUSDT-PERP.SIM")
+    rc = main(["research", "--market", "spot"])
+    assert rc == 0
+    assert len(captured) == 3
+    assert captured[2].instrument_id == "ETH/USDT.SIM"

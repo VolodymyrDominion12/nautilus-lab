@@ -96,6 +96,7 @@ class BatchRequest:
     parallel: int = 2
     label: str = ""
     days: int | None = None
+    embargo_bars: int | None = None
     #: Extra settings for every cell (e.g. `DRAWDOWN_COOLDOWN_DAYS=3`), as env overrides.
     env: dict[str, str] = field(default_factory=dict)
     #: Cost scenario for the whole batch (`domain/fees.py::COST_PROFILES`). A variant may
@@ -120,6 +121,8 @@ class BatchRequest:
             raise ValueError("a batch runs a multi-window walk-forward: folds >= 2")
         if not (Decimal("0.1") <= self.is_fraction <= Decimal("0.9")):
             raise ValueError("is_fraction must be in [0.1, 0.9]")
+        if self.embargo_bars is not None and self.embargo_bars < 0:
+            raise ValueError("embargo_bars must be >= 0")
         if not (1 <= self.parallel <= 8):
             raise ValueError("parallel must be in [1, 8]")
         if self.days is not None and self.days <= 0:
@@ -384,4 +387,6 @@ def research_job_config(request: BatchRequest, cell: BatchCell) -> dict[str, obj
     }
     if request.days is not None:
         payload["days"] = request.days
+    if request.embargo_bars is not None:
+        payload["embargo_bars"] = request.embargo_bars
     return payload

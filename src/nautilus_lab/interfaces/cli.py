@@ -339,6 +339,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "which costs it paid: `binance_vip0_bnb`, `binance_vip0_no_bnb`, `stress_x1_5`"
         ),
     )
+    research.add_argument(
+        "--instrument",
+        help="Instrument id to backtest (e.g. ETH/USDT.SIM, ETHUSDT-PERP.SIM; default: settings)",
+    )
+    research.add_argument(
+        "--interval",
+        help="Bar interval (e.g. 1m, 1h, 4h, 1d; default from settings)",
+    )
+    research.add_argument(
+        "--market",
+        choices=("spot", "perp", "um"),
+        help="Market type: spot or perp/um; resolves instrument if --instrument omitted",
+    )
 
     paper = sub.add_parser(
         "paper",
@@ -529,6 +542,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     if cost_profile_name:
         # Re-validate rather than `model_copy`: the schedule is derived from the name.
         cfg = Settings.model_validate({**cfg.model_dump(), "cost_profile": cost_profile_name})
+    instrument = getattr(args, "instrument", None)
+    if instrument:
+        cfg = cfg.model_copy(update={"instrument_id": instrument})
+    if getattr(args, "command", None) in ("research", "paper"):
+        interval = getattr(args, "interval", None)
+        if interval:
+            cfg = cfg.model_copy(update={"bar_interval": interval})
+        market = getattr(args, "market", None)
+        if market:
+            if market in ("um", "perp"):
+                if not instrument and not cfg.instrument_id.endswith("-PERP.SIM"):
+                    from nautilus_lab.infrastructure.nautilus.instrument import (
+                        binance_symbol_for_instrument,
+                    )
+
+                    symbol = binance_symbol_for_instrument(cfg.instrument_id) or "ETHUSDT"
+                    cfg = cfg.model_copy(update={"instrument_id": f"{symbol}-PERP.SIM"})
+            elif market == "spot" and not instrument and cfg.instrument_id.endswith("-PERP.SIM"):
+                base = cfg.instrument_id.removesuffix("-PERP.SIM")
+                cfg = cfg.model_copy(
+                    update={"instrument_id": f"{base.removesuffix('USDT')}/USDT.SIM"}
+                )
     try:
         if args.command == "ingest":
             return _run_ingest(cfg, args)

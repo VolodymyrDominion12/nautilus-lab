@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Eye, Play } from 'lucide-react';
 import { launchBatch, type BatchLaunchParams } from '../../services/api';
-import { statusQuery } from '../../services/queries';
+import { catalogQuery, catalogsQuery, statusQuery } from '../../services/queries';
 import { parseVariants, type PlannedCell } from '../../lib/batch';
+import { loadStoredBatchForm, saveStoredBatchForm, type StoredBatchForm } from '../../lib/batchForm';
+import { BatchPlanPreview } from './BatchPlanPreview';
 
 const ROBOTS = [
   'regime',
@@ -16,7 +18,7 @@ const ROBOTS = [
   'funding',
   'ml_obi',
 ];
-const SYMBOLS = ['BTCUSDT', 'ETHUSDT'];
+const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT'];
 
 interface BatchLaunchFormProps {
   onStarted: (batchId: string) => void;
@@ -29,18 +31,76 @@ interface BatchLaunchFormProps {
  * cannot, and why (a missing model, a missing perp catalog), before anything starts.
  */
 export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) => {
-  const [robots, setRobots] = useState<string[]>(ROBOTS.filter((r) => r !== 'ml_obi'));
-  const [symbols, setSymbols] = useState<string[]>(SYMBOLS);
-  const [extraSymbols, setExtraSymbols] = useState('');
-  const [barInterval, setBarInterval] = useState('1h');
-  const [catalog, setCatalog] = useState('catalog');
-  const [days, setDays] = useState<number | ''>('');
-  const [folds, setFolds] = useState(4);
-  const [parallel, setParallel] = useState(2);
-  const [label, setLabel] = useState('');
-  const [envText, setEnvText] = useState('');
-  const [variantsText, setVariantsText] = useState('');
-  const [costProfile, setCostProfile] = useState('');
+  const initial = useMemo(() => loadStoredBatchForm(), []);
+
+  const [robots, setRobots] = useState<string[]>(
+    initial?.robots ?? ROBOTS.filter((r) => r !== 'ml_obi'),
+  );
+  const [symbols, setSymbols] = useState<string[]>(initial?.symbols ?? DEFAULT_SYMBOLS);
+  const [extraSymbols, setExtraSymbols] = useState(initial?.extraSymbols ?? '');
+  const [barInterval, setBarInterval] = useState(initial?.barInterval ?? '1h');
+  const [catalog, setCatalog] = useState(initial?.catalog ?? 'catalog');
+  const [days, setDays] = useState<number | ''>(initial?.days ?? '');
+  const [folds, setFolds] = useState(initial?.folds ?? 4);
+  const [isFraction, setIsFraction] = useState(initial?.isFraction ?? 0.7);
+  const [embargoBars, setEmbargoBars] = useState(initial?.embargoBars ?? 10);
+  const [parallel, setParallel] = useState(initial?.parallel ?? 2);
+  const [label, setLabel] = useState(initial?.label ?? '');
+  const [envText, setEnvText] = useState(initial?.envText ?? '');
+  const [variantsText, setVariantsText] = useState(initial?.variantsText ?? '');
+  const [costProfile, setCostProfile] = useState(initial?.costProfile ?? '');
+
+  // Catalogs available in the workspace
+  const catalogs = useQuery(catalogsQuery()).data?.catalogs ?? [];
+
+  // Instruments present in the selected catalog
+  const catalogInstruments = useQuery(catalogQuery(catalog)).data?.instruments ?? [];
+  const availableSymbols = useMemo(() => {
+    if (!catalogInstruments.length) return DEFAULT_SYMBOLS;
+    const raw = catalogInstruments.map((i) => i.raw_symbol).filter(Boolean);
+    return [...new Set([...DEFAULT_SYMBOLS, ...raw])];
+  }, [catalogInstruments]);
+
+  // Persist form to localStorage
+  useEffect(() => {
+    try {
+      const state: StoredBatchForm = {
+        robots,
+        symbols,
+        extraSymbols,
+        barInterval,
+        catalog,
+        days,
+        folds,
+        isFraction,
+        embargoBars,
+        parallel,
+        label,
+        envText,
+        variantsText,
+        costProfile,
+      };
+      saveStoredBatchForm(state);
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [
+    robots,
+    symbols,
+    extraSymbols,
+    barInterval,
+    catalog,
+    days,
+    folds,
+    isFraction,
+    embargoBars,
+    parallel,
+    label,
+    envText,
+    variantsText,
+    costProfile,
+  ]);
+
   // The scenario names come from the backend (`domain/fees.py`), so the form cannot drift
   // from what the engine would actually charge.
   const costProfiles = useQuery(statusQuery(catalog)).data?.cost_profiles ?? [];
@@ -69,6 +129,8 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
       catalog,
       days: typeof days === 'number' && days > 0 ? days : undefined,
       folds,
+      is_fraction: String(isFraction),
+      embargo_bars: embargoBars,
       parallel,
       label,
       env,
@@ -107,7 +169,6 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
     }`;
   const input =
     'bg-gray-950 border border-gray-800 rounded-lg px-2 py-1 text-xs font-mono text-gray-200';
-  const runnableCount = (plan ?? []).filter((cell) => cell.runnable).length;
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 flex flex-col gap-4">
@@ -132,8 +193,8 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
       <div className="flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-2">
           <span className="text-[10px] uppercase tracking-wide text-gray-500">Інструменти</span>
-          <div className="flex gap-1.5">
-            {SYMBOLS.map((symbol) => (
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {availableSymbols.map((symbol) => (
               <button
                 key={symbol}
                 type="button"
@@ -161,7 +222,24 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
         </label>
         <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
           Каталог
-          <input className={`${input} w-32`} value={catalog} onChange={(e) => setCatalog(e.target.value)} />
+          {catalogs.length > 0 ? (
+            <select
+              className={input}
+              value={catalog}
+              onChange={(e) => setCatalog(e.target.value)}
+            >
+              {catalogs.map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+              {!catalogs.some((c) => c.name === catalog) && (
+                <option value={catalog}>{catalog} (власний)</option>
+              )}
+            </select>
+          ) : (
+            <input className={`${input} w-32`} value={catalog} onChange={(e) => setCatalog(e.target.value)} />
+          )}
         </label>
         <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
           Днів
@@ -184,6 +262,28 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
             className={`${input} w-16`}
             value={folds}
             onChange={(e) => setFolds(Number(e.target.value))}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
+          IS fraction
+          <input
+            type="number"
+            step="0.05"
+            min="0.1"
+            max="0.9"
+            className={`${input} w-20`}
+            value={isFraction}
+            onChange={(e) => setIsFraction(Number(e.target.value))}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
+          Embargo
+          <input
+            type="number"
+            min={0}
+            className={`${input} w-16`}
+            value={embargoBars}
+            onChange={(e) => setEmbargoBars(Number(e.target.value))}
           />
         </label>
         <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
@@ -280,44 +380,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
 
       {error && <div className="text-xs text-red-400">{error}</div>}
 
-      {plan && (
-        <div className="flex flex-col gap-2">
-          <p className="text-[11px] text-gray-500">
-            Прогонів до запуску: <span className="text-emerald-400">{runnableCount}</span>, заблоковано:{' '}
-            <span className="text-amber-400">{plan.length - runnableCount}</span>. Заблокований прогін
-            не стартує — причина вказана в плані (немає серії барів, перп-ноги, серії фандингу чи
-            моделі).
-          </p>
-          <table className="w-full text-[11px] font-mono">
-            <thead className="text-gray-500">
-              <tr>
-                <th className="text-left py-1">Прогін</th>
-                <th className="text-left">Інструмент</th>
-                <th className="text-left">TF</th>
-                <th className="text-left">Каталог</th>
-                <th className="text-left">Витрати</th>
-                <th className="text-left">Стан</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plan.map((cell) => (
-                <tr key={cell.cell_id} className="border-t border-gray-800">
-                  <td className="py-1 text-gray-200">{cell.cell_id}</td>
-                  <td className="text-gray-400">{cell.instrument_id ?? cell.symbol}</td>
-                  <td className="text-gray-400">{cell.interval}</td>
-                  <td className="text-gray-400">{cell.catalog}</td>
-                  <td className="font-mono text-[10px] text-gray-400">
-                    {cell.cost_profile ?? '—'}
-                  </td>
-                  <td className={cell.runnable ? 'text-emerald-400' : 'text-amber-400'}>
-                    {cell.runnable ? 'буде запущено' : cell.blocked}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {plan && <BatchPlanPreview plan={plan} />}
     </div>
   );
 };

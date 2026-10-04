@@ -129,7 +129,7 @@ const PRESETS: ResearchPresetConfig[] = [
     icon: <Flame className="w-4 h-4 text-red-400" />,
     config: {
       source: 'catalog',
-      stressSlice: 'ftx_collapse',
+      stressSlice: 'ftx2022',
       folds: 1,
       isFraction: 0.7,
       embargoBars: 10,

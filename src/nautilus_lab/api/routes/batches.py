@@ -90,6 +90,7 @@ class BatchRunRequest(BaseModel):
     parallel: int = 2
     label: str = ""
     days: int | None = None
+    embargo_bars: int | None = None
     env: dict[str, str] = Field(default_factory=dict)
     #: Cost scenario for the whole batch, by name (`domain/fees.py`). The base tariff and a
     #: stress case are two scenarios, not two habits (docs/33 §4).
@@ -122,6 +123,7 @@ def _to_request(req: BatchRunRequest) -> BatchRequest:
             parallel=req.parallel,
             label=req.label,
             days=days,
+            embargo_bars=req.embargo_bars,
             env=dict(req.env),
             cost_profile=req.cost_profile,
             variants=tuple(

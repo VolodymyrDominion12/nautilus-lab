@@ -126,8 +126,15 @@ export const BasicControls: React.FC<BasicControlsProps> = ({
             {source === 'catalog' ? '1 (одне вікно, без порівняння з ринком)' : '1 (один прогін)'}
           </option>
           <option value={2}>2 (мультивіконна валідація, рекомендовано)</option>
+          <option value={3}>3 (три вікна)</option>
           <option value={4}>4 (квартальні вікна ринку)</option>
+          <option value={6}>6 (рекомендовано для матриці / docs/32)</option>
           <option value={8}>8 (глибокий стрес-тест стійкості)</option>
+          <option value={10}>10 (10 фолдів)</option>
+          <option value={12}>12 (щомісячні вікна)</option>
+          {![1, 2, 3, 4, 6, 8, 10, 12].includes(folds) && (
+            <option value={folds}>{folds} (власне значення)</option>
+          )}
         </select>
       </div>
 

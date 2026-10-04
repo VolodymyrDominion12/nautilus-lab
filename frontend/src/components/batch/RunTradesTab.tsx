@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { fetchRunTrades, type BatchTradeSummary } from '../../services/api';
 import { TONE_TEXT, formatDateTime, formatPct, toneOf } from '../../lib/format';
+import { formatDuration } from '../../lib/batch';
 import { buildTradeHash, exitColor, outcomeLabel } from '../../lib/trades';
 
 interface RunTradesTabProps {
@@ -63,8 +64,10 @@ export const RunTradesTab: React.FC<RunTradesTabProps> = ({
             <th className="text-left pr-3">Результат</th>
             <th className="text-left pr-3">R</th>
             <th className="text-left pr-3">Вихід</th>
+            <th className="text-left pr-3">MFE / MAE</th>
+            <th className="text-left pr-3">Комісія</th>
             <th className="text-left pr-3">Прослизання</th>
-            <th className="text-left pr-3">Барів</th>
+            <th className="text-left pr-3">Тривалість</th>
             <th className="text-left">Режим</th>
           </tr>
         </thead>
@@ -92,18 +95,71 @@ export const RunTradesTab: React.FC<RunTradesTabProps> = ({
                 {trade.side}
               </td>
               <td className={`pr-3 font-mono ${TONE_TEXT[toneOf(trade.realized_pnl)]}`}>
-                {formatPct((trade.realized_pnl_pct ?? 0) / 100)}
+                <div className="flex items-center gap-1">
+                  <span>{formatPct((trade.realized_pnl_pct ?? 0) / 100)}</span>
+                  {trade.pnl_source && (
+                    <span
+                      className={`text-[9px] px-1 py-0.5 rounded border ${
+                        trade.pnl_source === 'fills'
+                          ? 'border-emerald-700/50 text-emerald-400 bg-emerald-950/40'
+                          : 'border-gray-700 text-gray-400 bg-gray-900/60'
+                      }`}
+                      title={trade.pnl_source === 'fills' ? 'PnL з фактичних fills' : 'PnL з різниці цін'}
+                    >
+                      {trade.pnl_source === 'fills' ? 'fills' : 'delta'}
+                    </span>
+                  )}
+                </div>
               </td>
               <td className="pr-3 font-mono text-gray-300">
                 {trade.r_multiple == null ? '—' : trade.r_multiple.toFixed(2)}
               </td>
-              <td className="pr-3 font-mono" style={{ color: exitColor(trade.exit_outcome) }}>
-                {trade.status === 'OPEN' ? 'відкрита' : outcomeLabel(trade.exit_outcome)}
+              <td className="pr-3 font-mono">
+                <div style={{ color: exitColor(trade.exit_outcome) }}>
+                  {trade.status === 'OPEN' ? 'відкрита' : outcomeLabel(trade.exit_outcome)}
+                </div>
+                {trade.exit_reason && (
+                  <div className="text-[10px] text-gray-500 truncate max-w-[8rem]" title={trade.exit_reason}>
+                    {trade.exit_reason}
+                  </div>
+                )}
+              </td>
+              <td className="pr-3 font-mono text-gray-300">
+                {trade.mfe_close_pct != null || trade.mae_close_pct != null ? (
+                  <div className="text-[11px]">
+                    <span className="text-emerald-400">
+                      {trade.mfe_close_pct != null ? `+${trade.mfe_close_pct.toFixed(2)}%` : '—'}
+                    </span>
+                    <span className="text-gray-600 mx-1">/</span>
+                    <span className="text-red-400">
+                      {trade.mae_close_pct != null ? `${trade.mae_close_pct.toFixed(2)}%` : '—'}
+                    </span>
+                  </div>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td className="pr-3 font-mono text-gray-400">
+                {trade.fee != null ? (
+                  <span title={trade.fee_known ? 'Фактична комісія' : 'Оцінена комісія'}>
+                    ${trade.fee.toFixed(2)}
+                    {!trade.fee_known && <span className="text-gray-500 text-[9px] ml-0.5">~</span>}
+                  </span>
+                ) : (
+                  '—'
+                )}
               </td>
               <td className="pr-3 font-mono text-gray-400">
                 {trade.entry_slippage_bps == null ? '—' : `${trade.entry_slippage_bps.toFixed(1)} bps`}
               </td>
-              <td className="pr-3 font-mono text-gray-400">{trade.duration_bars ?? '—'}</td>
+              <td className="pr-3 font-mono text-gray-400">
+                <div>{trade.duration_bars != null ? `${trade.duration_bars} б` : '—'}</div>
+                {trade.duration_seconds != null && trade.duration_seconds > 0 && (
+                  <div className="text-[10px] text-gray-500">
+                    {formatDuration(trade.duration_seconds)}
+                  </div>
+                )}
+              </td>
               <td className="font-mono text-gray-400">{trade.regime_at_entry || '—'}</td>
             </tr>
           ))}

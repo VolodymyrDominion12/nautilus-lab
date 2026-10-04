@@ -238,8 +238,42 @@ def test_serialize_fold_without_a_baseline_reports_no_verdict() -> None:
 
 
 def test_multi_window_payload_carries_spread_costs_and_fold_count() -> None:
+    fold0 = WalkForwardFold(
+        index=0,
+        selected=_selected(),
+        candidates_tried=4,
+        in_sample=BacktestReport(1, 1, Decimal("100"), "is", metrics=_metrics()),
+        out_of_sample=BacktestReport(
+            2,
+            1,
+            Decimal("101"),
+            "oos",
+            metrics=_metrics(breakeven="0.00050"),
+            risk_breaches=(("daily_loss", 1),),
+        ),
+        window=_window(),
+        oos_return=Decimal("0.02"),
+        buy_and_hold_return=Decimal("0.01"),
+    )
+    fold1 = WalkForwardFold(
+        index=1,
+        selected=_selected(),
+        candidates_tried=4,
+        in_sample=BacktestReport(1, 1, Decimal("100"), "is", metrics=_metrics()),
+        out_of_sample=BacktestReport(
+            2,
+            1,
+            Decimal("99"),
+            "oos",
+            metrics=_metrics(breakeven="0.00050"),
+            risk_breaches=(("daily_loss", 2), ("max_leverage", 1)),
+        ),
+        window=_window(),
+        oos_return=Decimal("-0.01"),
+        buy_and_hold_return=Decimal("0.03"),
+    )
     multi = MultiWindowReport(
-        folds=(_fold(0, "0.02", "0.01"), _fold(1, "-0.01", "0.03")),
+        folds=(fold0, fold1),
         starting_equity=Decimal("100000"),
         notes="notes",
     )
@@ -249,6 +283,13 @@ def test_multi_window_payload_carries_spread_costs_and_fold_count() -> None:
     assert payload["fold_count"] == 2
     assert payload["profitable"] == "1/2"
     assert payload["spread"] == "+3.00%"
+    assert payload["spread_raw"] == "0.03"
+    assert payload["best_oos_raw"] == "0.02"
+    assert payload["worst_oos_raw"] == "-0.01"
+    assert payload["median_oos_raw"] == "0.005"
+    assert payload["risk_breaches"] == {"daily_loss": 3, "max_leverage": 1}
+    assert payload["folds"][0]["risk_breaches"] == {"daily_loss": 1}
+    assert payload["folds"][1]["risk_breaches"] == {"daily_loss": 2, "max_leverage": 1}
     # mean oos 0.005 vs mean buy&hold 0.020 -> -1.50%: losing to just holding it
     assert payload["mean_excess_return"] == "-1.50%"
     assert payload["beats_buy_and_hold"] is False

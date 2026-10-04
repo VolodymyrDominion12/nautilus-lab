@@ -98,6 +98,7 @@ export interface FoldRef {
   candidates_tried?: number | null;
   /** `pnl` | `sharpe` | `calmar` — a score means nothing without the metric it ranks by. */
   selection_metric?: string;
+  risk_breaches?: Record<string, number>;
 }
 
 export interface GateCheck {
@@ -135,13 +136,20 @@ export interface BatchRow {
     profitable?: string | null;
     fold_count?: number | null;
     mean_oos?: number | null;
+    median_oos?: number | null;
     worst_oos?: number | null;
+    best_oos?: number | null;
+    spread?: number | null;
     buy_and_hold_mean?: number | null;
+    vol_matched_buy_and_hold_mean?: number | null;
     mean_excess?: number | null;
     beats_buy_and_hold?: boolean | null;
+    beats_vol_matched_buy_and_hold?: boolean | null;
     total_oos_fills?: number | null;
     mean_paid_cost_rate?: number | null;
     mean_breakeven_cost?: number | null;
+    cost_headroom?: number | null;
+    risk_breaches?: Record<string, number>;
   };
   folds?: FoldRef[];
   decisions?: {
@@ -227,6 +235,9 @@ export const sortValue = (row: BatchRow, key: SortKey): number | string | null =
     case 'excess':
       return row.numbers?.mean_excess ?? null;
     case 'headroom':
+      if (row.numbers?.cost_headroom != null) {
+        return row.numbers.cost_headroom;
+      }
       if (row.numbers?.mean_breakeven_cost == null || row.numbers?.mean_paid_cost_rate == null) {
         return null;
       }

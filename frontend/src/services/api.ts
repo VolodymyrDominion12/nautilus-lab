@@ -154,6 +154,7 @@ export interface FoldSummary {
   oos_ending_balance: number | null;
   oos_metrics: BacktestMetricsPayload | null;
   window: { out_of_sample_start: string; out_of_sample_end: string };
+  risk_breaches?: Record<string, number>;
 }
 
 export interface BacktestMetricsPayload {
@@ -174,8 +175,11 @@ export interface MultiWindowSummary {
   mean_oos: string;
   mean_oos_raw: string | null;
   median_oos: string;
+  median_oos_raw?: string | null;
   worst_oos: string;
+  worst_oos_raw?: string | null;
   best_oos: string;
+  best_oos_raw?: string | null;
   spread: string;
   spread_raw: string | null;
   buy_and_hold_mean: string;
@@ -192,6 +196,7 @@ export interface MultiWindowSummary {
   mean_paid_cost_rate: number | null;
   cost_headroom: number | null;
   folds: FoldSummary[];
+  risk_breaches?: Record<string, number>;
   notes?: string;
   summary_line?: string;
 }
@@ -256,6 +261,7 @@ export interface SingleBacktestSummary {
   traded_notional: number | null;
   session_id?: string | null;
   metrics?: BacktestMetricsPayload | null;
+  risk_breaches?: Record<string, number>;
   notes?: string;
 }
 
@@ -1276,9 +1282,11 @@ export interface BatchLaunchParams {
   catalog?: string;
   folds?: number;
   is_fraction?: string;
+  embargo_bars?: number;
   parallel?: number;
   label?: string;
   days?: number;
+  cost_profile?: string;
   env?: Record<string, string>;
   /** Named override sets; each cell runs once per variant (see `lib/batch.ts`). */
   variants?: BatchVariant[];

@@ -419,6 +419,56 @@ def test_a_stale_summary_cache_is_rebuilt_instead_of_served(tmp_path: Path) -> N
     assert summary["gate"]["label"] == "REJECT"
 
 
+def test_cell_summary_includes_risk_breaches_and_extended_metrics(tmp_path: Path) -> None:
+    path = tmp_path / "batch"
+    cell_path = path / "cells" / "regime_BTC"
+    write_json(
+        cell_path / "last_run.json",
+        {
+            "is_error": False,
+            "run_type": "multi_window",
+            "multi_window": {
+                "profitable": "2/2",
+                "fold_count": 2,
+                "mean_oos_raw": "0.015",
+                "median_oos_raw": "0.015",
+                "worst_oos_raw": "0.01",
+                "best_oos_raw": "0.02",
+                "spread_raw": "0.01",
+                "buy_and_hold_mean_raw": "0.005",
+                "vol_matched_buy_and_hold_mean_raw": "0.007",
+                "mean_excess_return_raw": "0.01",
+                "beats_buy_and_hold": True,
+                "beats_vol_matched_buy_and_hold": True,
+                "total_oos_fills": 14,
+                "mean_paid_cost_rate": 0.0001,
+                "mean_breakeven_cost": 0.0005,
+                "cost_headroom": 0.0004,
+                "risk_breaches": {"daily_loss": 2, "max_leverage": 1},
+                "folds": [],
+            },
+            "promotion_gate": {
+                "label": "INCOMPLETE",
+                "promoted": False,
+                "summary_line": "promotion_gate=INCOMPLETE",
+                "checks": [],
+            },
+        },
+    )
+    summary = cell_summary(path, {"cell_id": "regime_BTC", "status": OK}, Settings())
+    assert summary["summary_version"] == 3
+    numbers = summary["numbers"]
+    assert numbers["mean_oos"] == pytest.approx(0.015)
+    assert numbers["median_oos"] == pytest.approx(0.015)
+    assert numbers["worst_oos"] == pytest.approx(0.01)
+    assert numbers["best_oos"] == pytest.approx(0.02)
+    assert numbers["spread"] == pytest.approx(0.01)
+    assert numbers["vol_matched_buy_and_hold_mean"] == pytest.approx(0.007)
+    assert numbers["cost_headroom"] == pytest.approx(0.0004)
+    assert numbers["risk_breaches"] == {"daily_loss": 2, "max_leverage": 1}
+    assert summary["gate"]["label"] == "INCOMPLETE"
+
+
 def test_retry_requeues_only_the_cells_without_a_result(tmp_path: Path) -> None:
     """One timed-out cell must not cost the whole matrix (docs/35 §1 B-4).
 
@@ -776,3 +826,19 @@ def test_restart_refuses_an_import_a_running_batch_and_unknown_ids(
         child.kill()
         child.wait()
     assert (path / "batch.json").exists()
+
+
+def test_batch_request_carries_embargo_bars() -> None:
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",), folds=2, embargo_bars=15)
+    assert request.embargo_bars == 15
+
+    as_dict = request_to_dict(request)
+    restored = request_from_dict(as_dict)
+    assert restored.embargo_bars == 15
+
+    cell = plan_cells(request, exists=_all_exist, wired=["ema"])[0]
+    config = research_job_config(request, cell)
+    assert config["embargo_bars"] == 15
+
+    with pytest.raises(ValueError, match="embargo_bars must be >= 0"):
+        BatchRequest(robots=("ema",), symbols=("ETHUSDT",), folds=2, embargo_bars=-1)

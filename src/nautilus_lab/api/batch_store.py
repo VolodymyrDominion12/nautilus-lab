@@ -120,6 +120,9 @@ def request_from_dict(payload: dict[str, Any]) -> BatchRequest:
         parallel=int(payload.get("parallel", 2)),
         label=str(payload.get("label", "")),
         days=int(payload["days"]) if payload.get("days") is not None else None,
+        embargo_bars=(
+            int(payload["embargo_bars"]) if payload.get("embargo_bars") is not None else None
+        ),
         env={str(k): str(v) for k, v in (payload.get("env") or {}).items()},
         cost_profile=str(payload["cost_profile"]) if payload.get("cost_profile") else None,
         variants=tuple(
@@ -534,13 +537,20 @@ def build_cell_summary(cell_path: Path, cell: dict[str, Any], cfg: Settings) -> 
             "profitable": multi.get("profitable"),
             "fold_count": multi.get("fold_count"),
             "mean_oos": _num(multi.get("mean_oos_raw")),
+            "median_oos": _num(multi.get("median_oos_raw")),
             "worst_oos": _worst(multi),
+            "best_oos": _best(multi),
+            "spread": _num(multi.get("spread_raw")),
             "buy_and_hold_mean": _num(multi.get("buy_and_hold_mean_raw")),
+            "vol_matched_buy_and_hold_mean": _num(multi.get("vol_matched_buy_and_hold_mean_raw")),
             "mean_excess": _num(multi.get("mean_excess_return_raw")),
             "beats_buy_and_hold": multi.get("beats_buy_and_hold"),
+            "beats_vol_matched_buy_and_hold": multi.get("beats_vol_matched_buy_and_hold"),
             "total_oos_fills": multi.get("total_oos_fills"),
             "mean_paid_cost_rate": multi.get("mean_paid_cost_rate"),
             "mean_breakeven_cost": multi.get("mean_breakeven_cost"),
+            "cost_headroom": multi.get("cost_headroom"),
+            "risk_breaches": multi.get("risk_breaches") or _collect_breaches(multi, result),
         },
         # The promotion verdict travels with the row (docs/35 §3): it is what the table is
         # for. Cells never run the overfitting audit, so their `pbo`/`dsr` checks read
@@ -566,6 +576,8 @@ def build_cell_summary(cell_path: Path, cell: dict[str, Any], cfg: Settings) -> 
 
 
 def _worst(multi: dict[str, Any]) -> float | None:
+    if (raw := multi.get("worst_oos_raw")) is not None and (num := _num(raw)) is not None:
+        return num
     values = [
         _num(fold.get("oos_return_raw"))
         for fold in multi.get("folds") or []
@@ -575,9 +587,36 @@ def _worst(multi: dict[str, Any]) -> float | None:
     return min(numbers) if numbers else None
 
 
+def _best(multi: dict[str, Any]) -> float | None:
+    if (raw := multi.get("best_oos_raw")) is not None and (num := _num(raw)) is not None:
+        return num
+    values = [
+        _num(fold.get("oos_return_raw"))
+        for fold in multi.get("folds") or []
+        if fold.get("oos_return_raw") is not None
+    ]
+    numbers = [v for v in values if v is not None]
+    return max(numbers) if numbers else None
+
+
+def _collect_breaches(multi: dict[str, Any], result: dict[str, Any] | None) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for fold in multi.get("folds") or []:
+        fb = fold.get("risk_breaches")
+        if isinstance(fb, dict):
+            for k, v in fb.items():
+                totals[k] = totals.get(k, 0) + int(v)
+    if not totals and result:
+        sb = result.get("single_backtest", {}).get("risk_breaches")
+        if isinstance(sb, dict):
+            for k, v in sb.items():
+                totals[k] = totals.get(k, 0) + int(v)
+    return totals
+
+
 #: Bumped whenever the shape of `summary.json` changes, so a cache written by an older
-#: build is rebuilt instead of served half-empty (the `gate` block was added in docs/35).
-SUMMARY_VERSION = 2
+#: build is rebuilt instead of served half-empty (docs/35 §3, item 19).
+SUMMARY_VERSION = 3
 
 
 def cell_summary(batch_path: Path, cell: dict[str, Any], cfg: Settings) -> dict[str, Any]:

@@ -102,6 +102,7 @@ def serialize_backtest(report: BacktestReport) -> dict[str, Any]:
         "cost_headroom": costs["cost_headroom"],
         "traded_notional": costs["traded_notional"],
         "session_id": report.session_id,
+        "risk_breaches": dict(report.risk_breaches),
     }
 
 
@@ -198,6 +199,7 @@ def serialize_fold(fold: WalkForwardFold) -> dict[str, Any]:
         # The decision-log key of this fold's OOS run (`<id>-f<index>` with
         # DECISION_LOG_SCOPE=oos): the batch page links each fold's decisions by it.
         "session_id": fold.out_of_sample.session_id,
+        "risk_breaches": dict(fold.out_of_sample.risk_breaches),
     }
 
 
@@ -219,14 +221,21 @@ def serialize_multi_window(report: MultiWindowReport) -> dict[str, Any]:
     mean_paid = sum(paid_rates, Decimal("0")) / Decimal(len(paid_rates)) if paid_rates else None
     breakevens = report.breakeven_costs
     mean_breakeven = report.mean_breakeven_cost
+    risk_breaches: dict[str, int] = {}
+    for fold in report.folds:
+        for reason, count in fold.out_of_sample.risk_breaches:
+            risk_breaches[reason] = risk_breaches.get(reason, 0) + count
     return {
         "profitable": f"{report.profitable_folds}/{fold_count}",
         "fold_count": fold_count,
         "mean_oos": pct(report.mean_oos_return),
         "mean_oos_raw": decimal_str(report.mean_oos_return),
         "median_oos": pct(report.median_oos_return),
+        "median_oos_raw": decimal_str(report.median_oos_return),
         "worst_oos": pct(report.worst_oos_return),
+        "worst_oos_raw": decimal_str(report.worst_oos_return),
         "best_oos": pct(report.best_oos_return),
+        "best_oos_raw": decimal_str(report.best_oos_return),
         "spread": pct(spread),
         "spread_raw": decimal_str(spread),
         "buy_and_hold_mean": pct(report.mean_buy_and_hold_return),
@@ -246,6 +255,7 @@ def serialize_multi_window(report: MultiWindowReport) -> dict[str, Any]:
         "cost_headroom": _optional_float(
             None if mean_breakeven is None or mean_paid is None else mean_breakeven - mean_paid
         ),
+        "risk_breaches": risk_breaches,
         "folds": [serialize_fold(fold) for fold in report.folds],
         "notes": report.notes,
         "summary_line": report.summary_line(),

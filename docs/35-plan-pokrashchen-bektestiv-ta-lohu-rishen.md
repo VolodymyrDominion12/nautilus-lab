@@ -594,3 +594,18 @@ IS були в мінусі. Тобто підбір обрав «найменш
 означало б перебільшити ~1 млн барів. З тієї ж причини не додано дзеркальну правку в
 `spread_strategy`: жоден двоногий робот сьогодні не видає `BLOCK` у `FILTER`/`STRATEGY`,
 тож це був би мертвий код із коментарем, який обіцяє більше, ніж робить.
+
+---
+
+## 14. Хвиля 1 & 2: параметри запусків, персистенція метрик і деталізація угод (04.10.2026)
+
+Закрито пункти 11, 18, 19, 22, 23 плану (Хвилі 1, 2 та 4):
+
+| Пункт | Що змінено | Підтвердження / Тест |
+|---|---|---|
+| **П. 11** (`lab research --instrument/--interval/--market`) | Додано аргументи `--instrument`, `--interval`, `--market` (`spot`, `perp`/`um`) у CLI `lab research`. `_dispatch` динамічно перемикає `instrument_id` (наприклад, `ETHUSDT-PERP.SIM`), підтримує автоматичну конвертацію бази спот <-> перп. | `test_cli_research_accepts_instrument_interval_and_market` у `tests/unit/test_cli.py`. Перевірено реальним прогоном `lab research --instrument ETHUSDT-PERP.SIM --interval 4h --catalog catalog_perp_4h --robot regime --folds 2 --days 300 --is-fraction 0.7` (`exit=0`). |
+| **П. 22** (`ftx2022` та вибір folds) | Виправлено пресет стрес-слайсу `ftx_collapse` → `ftx2022` у `ResearchPresets.tsx` (S-6); селектор folds у `BasicControls.tsx` розширено (1, 2, 3, 4, 6, 8, 10, 12 та вільне число) (S-5). | Vitest у `frontend/`. |
+| **П. 18** (Форма запуску пакета) | Додано `embargo_bars` у `BatchRequest`, `BatchRunRequest` та `batch_store`; форма запуску підтримує `is_fraction` та `embargo_bars`, динамічно підтягує каталоги через `catalogsQuery()` та символи з вибраного каталогу через `catalogQuery()`; зберігає стан форми в `localStorage` (`lib/batchForm.ts`). Виділено `BatchPlanPreview.tsx` для збереження ліміту 15 КБ. | `test_batch_request_carries_embargo_bars` у `tests/unit/test_batch.py`, `batchForm.test.ts` у `frontend/`, `componentSize.test.ts` (92/92 OK). |
+| **П. 19** (Персистенція `risk_breaches` та метрик `multi_window`) | Серіалізація `risk_breaches` у `serialize_fold`, `serialize_backtest` та агрегат по фолдах у `serialize_multi_window`. Збереження `median_oos_raw`, `worst_oos_raw`, `best_oos_raw`. У `batch_store.py::build_cell_summary` поля `risk_breaches`, `median_oos`, `best_oos`, `spread`, `vol_matched_buy_and_hold_mean`, `cost_headroom` додано до `numbers`; бамп `SUMMARY_VERSION = 3`. На `RunPage.tsx` виведено плашку circuit breakers. | `test_multi_window_payload_carries_spread_costs_and_fold_count` у `test_api_dashboard_results.py`, `test_cell_summary_includes_risk_breaches_and_extended_metrics` у `test_batch.py`. |
+| **П. 23** (Деталізація вкладки «Угоди») | У `RunTradesTab.tsx` виведено: `fee` (з індикатором `fee_known`), джерело PnL через бейдж `pnl_source` (`fills` vs `delta`), діапазон `MFE / MAE`, причину виходу `exit_reason` поруч із `exit_outcome`, а також тривалість `duration_seconds` (у форматі часу) поруч із `duration_bars`. Розмір компонента залишився в межах ліміту (~6.5 КБ). | `RunTradesTab.tsx` перевірено `vitest` і `componentSize.test.ts`. |
+

@@ -160,6 +160,17 @@ export const RunPage: React.FC<RunPageProps> = ({
         </div>
       ))}
 
+      {numbers?.risk_breaches && Object.keys(numbers.risk_breaches).length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs bg-amber-950/30 border border-amber-800/40 px-3 py-2 rounded-xl text-amber-300 font-mono">
+          <span className="font-semibold text-amber-200">Circuit breakers:</span>
+          {Object.entries(numbers.risk_breaches).map(([reason, count]) => (
+            <span key={reason} className="bg-amber-900/50 px-2 py-0.5 rounded border border-amber-700/50">
+              {reason}: {count}
+            </span>
+          ))}
+        </div>
+      )}
+
       {numbers && (
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 text-xs">
           {[

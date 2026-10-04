@@ -428,6 +428,11 @@ def build_cell_summary(cell_path: Path, cell: dict[str, Any], cfg: Settings) -> 
             "mean_paid_cost_rate": multi.get("mean_paid_cost_rate"),
             "mean_breakeven_cost": multi.get("mean_breakeven_cost"),
         },
+        # The promotion verdict travels with the row (docs/35 §3): it is what the table is
+        # for. Cells never run the overfitting audit, so their `pbo`/`dsr` checks read
+        # `not measured` and the best possible label here is INCOMPLETE — the label says so
+        # instead of hiding the verdict in a log line.
+        "gate": (result or {}).get("promotion_gate"),
         "folds": folds,
         "decisions": {
             "records": len(all_rows),
@@ -441,6 +446,7 @@ def build_cell_summary(cell_path: Path, cell: dict[str, Any], cfg: Settings) -> 
             "bar_seq_gaps": digest.bar_seq_gaps if digest else 0,
         },
         "trades": _trade_stats(trades),
+        "summary_version": SUMMARY_VERSION,
         "summarized_at": _now(),
     }
 
@@ -455,12 +461,22 @@ def _worst(multi: dict[str, Any]) -> float | None:
     return min(numbers) if numbers else None
 
 
+#: Bumped whenever the shape of `summary.json` changes, so a cache written by an older
+#: build is rebuilt instead of served half-empty (the `gate` block was added in docs/35).
+SUMMARY_VERSION = 2
+
+
 def cell_summary(batch_path: Path, cell: dict[str, Any], cfg: Settings) -> dict[str, Any]:
     """The cached summary of a finished cell, or a fresh one for a cell still moving."""
     path = cell_dir(batch_path, str(cell["cell_id"]))
     cached = read_json(path / "summary.json")
     finished = cell.get("status") in (OK, FAILED)
-    if cached is not None and finished and cached.get("status") == cell.get("status"):
+    if (
+        cached is not None
+        and finished
+        and cached.get("status") == cell.get("status")
+        and cached.get("summary_version") == SUMMARY_VERSION
+    ):
         return cached
     summary = build_cell_summary(path, cell, cfg)
     if finished:

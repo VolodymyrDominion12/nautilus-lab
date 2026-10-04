@@ -1798,10 +1798,6 @@ def _print_walk_forward(report: WalkForwardReport) -> None:
         print(f"tearsheet_saved={report.out_of_sample.tearsheet_path}")
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def _run_ml_train(cfg: Settings, args: argparse.Namespace) -> int:
     from nautilus_lab.api.ml_runner import MLTrainConfig, execute_ml_train
 
@@ -1830,3 +1826,7 @@ def _run_ml_train(cfg: Settings, args: argparse.Namespace) -> int:
         print(f"ML train error: {result.get('error_message')}", file=sys.stderr)
         return 1
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

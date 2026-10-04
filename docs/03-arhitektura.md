@@ -113,7 +113,7 @@ Signal(
 ### `Settings` (`infrastructure/settings.py`)
 
 Pydantic-модель, яка читає `.env` і змінні середовища, і **вміє перетворювати себе** на доменні об'єкти:
-`risk_limits()`, `fee_schedule()`, `regime_params()`, `pairs_params()`.
+`risk_limits()`, `spot_fee_schedule()`/`usdm_fee_schedule()`, `regime_params()`, `pairs_params()`.
 
 ## 3. Головний ланцюг: що відбувається під час `lab research`
 

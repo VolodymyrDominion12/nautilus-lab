@@ -87,6 +87,27 @@ export interface FoldRef {
   selected?: string;
 }
 
+export interface GateCheck {
+  name: string;
+  /** `pass` | `fail` | `not measured` — an unmeasured check is never a pass. */
+  status: string;
+  detail: string;
+}
+
+/**
+ * The promotion gate as data (`application/promotion_gate.py`).
+ *
+ * A batch cell never runs the overfitting audit, so `pbo`/`dsr` read `not measured` and
+ * the best label a cell can reach is `INCOMPLETE`. That is the honest answer, and it is
+ * the reason a candidate still has to be re-run in the Research tab with `--pbo`.
+ */
+export interface GateVerdict {
+  label: 'PROMOTE' | 'REJECT' | 'INCOMPLETE' | string;
+  promoted: boolean;
+  summary_line: string;
+  checks: GateCheck[];
+}
+
 export interface BatchRow {
   cell_id: string;
   robot: string;
@@ -96,6 +117,7 @@ export interface BatchRow {
   catalog: string;
   status: string;
   error?: string | null;
+  gate?: GateVerdict | null;
   numbers?: {
     profitable?: string | null;
     fold_count?: number | null;
@@ -146,6 +168,8 @@ export interface PlannedCell {
   cell_id: string;
   robot: string;
   symbol: string;
+  /** The instrument the cell will actually read (`BTCUSDT-PERP.SIM` for funding's perp leg). */
+  instrument_id?: string;
   interval: string;
   catalog: string;
   runnable: boolean;
@@ -159,6 +183,7 @@ export type SortKey =
   | 'mean_oos'
   | 'worst_oos'
   | 'excess'
+  | 'headroom'
   | 'trades'
   | 'win_rate'
   | 'blocked';
@@ -174,6 +199,11 @@ export const sortValue = (row: BatchRow, key: SortKey): number | string | null =
       return row.numbers?.worst_oos ?? null;
     case 'excess':
       return row.numbers?.mean_excess ?? null;
+    case 'headroom':
+      if (row.numbers?.mean_breakeven_cost == null || row.numbers?.mean_paid_cost_rate == null) {
+        return null;
+      }
+      return row.numbers.mean_breakeven_cost - row.numbers.mean_paid_cost_rate;
     case 'trades':
       return row.trades?.closed ?? null;
     case 'win_rate':

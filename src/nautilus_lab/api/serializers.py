@@ -11,6 +11,7 @@ from nautilus_lab.application.dtos import (
     WalkForwardFold,
     WalkForwardReport,
 )
+from nautilus_lab.application.promotion_gate import GateVerdict
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
 from nautilus_lab.domain.metrics import BacktestMetrics
 
@@ -282,6 +283,27 @@ def tearsheet_url(saved_path: str | None) -> str | None:
     return f"/static_reports/{Path(saved_path).name}"
 
 
+def serialize_gate(verdict: GateVerdict | None) -> dict[str, Any] | None:
+    """The promotion gate as data, not as a line of log text (docs/35 §3).
+
+    `evaluate_gate` was already computed for every walk-forward run, and then only
+    printed: the dashboard showed it as a raw line inside `log_tail`, the batch table
+    could not sort by it, and nothing could aggregate it across a matrix. A verdict is
+    the number the whole exercise is for, so it travels with the result.
+    """
+    if verdict is None:
+        return None
+    return {
+        "label": verdict.label,
+        "promoted": verdict.promoted,
+        "summary_line": verdict.summary_line(),
+        "checks": [
+            {"name": check.name, "status": check.status.value, "detail": check.detail}
+            for check in verdict.checks
+        ],
+    }
+
+
 def build_job_result(
     *,
     run_type: str,
@@ -294,6 +316,7 @@ def build_job_result(
     walk_forward: WalkForwardReport | None = None,
     single_backtest: BacktestReport | None = None,
     pbo: OverfitAuditReport | None = None,
+    promotion_gate: GateVerdict | None = None,
     report_label: str | None = None,
     finished_at: datetime | None = None,
     starting_equity: Decimal | None = None,
@@ -318,5 +341,6 @@ def build_job_result(
         ),
         "single_backtest": serialize_backtest(single_backtest) if single_backtest else None,
         "pbo": serialize_pbo(pbo) if pbo else None,
+        "promotion_gate": serialize_gate(promotion_gate),
     }
     return summary

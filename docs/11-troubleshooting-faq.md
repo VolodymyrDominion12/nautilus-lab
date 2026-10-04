@@ -8,7 +8,7 @@ from nautilus_lab.infrastructure.settings import Settings
 s = Settings()
 print('mode:', s.trading_mode, '| robot:', s.robot, '| interval:', s.bar_interval)
 print('catalog:', s.catalog_path, '| instrument:', s.instrument_id)
-print('fees maker/taker:', s.fee_schedule().maker, s.fee_schedule().taker)
+print('fees spot maker/taker:', s.spot_fee_schedule().maker, s.spot_fee_schedule().taker)
 print('risk/stop:', s.risk_limits().risk_per_trade, s.risk_limits().stop_pct)
 print('embargo:', s.embargo_bars)
 "
@@ -562,9 +562,14 @@ docker run --rm nautilus-lab-api:latest printenv LAB_REVISION   # яка рев�
 env | grep -iE "maker|taker|risk|robot|trading"
 ```
 
-Якщо там щось є — саме воно переможе файл `.env`. Приберіть змінну (`unset TAKER_FEE`)
-або запускайте в чистій оболонці. Наприклад, на цій машині в середовищі задані
-`MAKER_FEE=0.0002` і `TAKER_FEE=0.0005`, тому в нотатці звіту видно саме їх, а не значення з `.env`.
+Якщо там щось є — саме воно переможе файл `.env`. Приберіть змінну (`unset SPOT_TAKER_FEE`)
+або запускайте в чистій оболонці.
+
+**Не все, що схоже на комісію, справді працює.** На цій машині в середовищі задані
+`MAKER_FEE=0.0002` і `TAKER_FEE=0.0005` — і вони **мертві**: полів `maker_fee`/`taker_fee`
+у `Settings` не існує, а `extra="ignore"` відкидає їх мовчки. Фактичні комісії беруться з
+`SPOT_*`/`USDM_*` у `.env` (спот 0.00075/0.00075, перп 0.0002/0.0005); перевірка —
+`Settings().spot_fee_schedule()`.
 
 ---
 

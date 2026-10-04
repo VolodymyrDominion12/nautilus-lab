@@ -83,7 +83,10 @@
 | [25-xsmom-ta-vorota-dopusku.md](25-xsmom-ta-vorota-dopusku.md) | Крос-секційний momentum (`lab xsmom`) і ворота допуску `promotion_gate`: пороги, зафіксовані до прогону, і результат гіпотези |
 | [26-deploy-vps.md](26-deploy-vps.md) | Деплой на VPS: живий paper 24/7 із журналом і відновленням, `LAB_ROLE=paper`, Docker + Caddy + Tailscale, збирач тіків, `pull_vps.sh` |
 | [27-audyt-praktyk-2026-ta-roadmap-E.md](27-audyt-praktyk-2026-ta-roadmap-E.md) | Аудит відповідності практикам 2026 (тести, CI, безпека деплою, спостережуваність, відтворюваність, фронтенд) і роудмап E/R-серії з хвилями 0–4 та критеріями готовності |
+| [31-peremikachi-regime-ta-filtry-vkhodu.md](31-peremikachi-regime-ta-filtry-vkhodu.md) | Довідник перемикачів режиму й фільтрів входу (`REGIME_LEGS`, range-лег, `REGIME_MIN_HOLD_BARS`, `ENTRY_FILTER_*`, `NO_INSTANT_REVERSE`): дефолти, хто читає, як відмова видна в журналі рішень |
+| [34-infrastruktura-danyh-ta-plan-ingestu.md](34-infrastruktura-danyh-ta-plan-ingestu.md) | Інфраструктура даних: аудит інгесту та екрана каталогу проти плану тижнів 2–3, знайдені дефекти B1–B7 і F1–F8, план виправлень P0–P2 |
 | [План багатороботний paper-термінал.md](План%20багатороботний%20paper-термінал.md) | План багатороботного paper-терміналу: 3–5 незалежних сесій із власними рахунками, екран «Портфель», один WS-фід на пару символ+інтервал |
+| [nautilus-lab — план Binance, комісії, ф’ючерси і дані.md](nautilus-lab%20—%20план%20Binance,%20комісії,%20ф’ючерси%20і%20дані.md) | План по біржі й витратах: Binance VIP 0 + оплата в BNB, тарифи спот/перп, відкриття ф’ючерсного рахунку без депозиту, архів data.binance.vision як джерело історії |
 | [../frontend/README.md](../frontend/README.md) | Фронтенд: як запускати, вкладки, що UI відмовляється робити (ті самі дослідницькі правила, виражені в інтерфейсі) |
 | [../specs/README.md](../specs/README.md) | Spec-Driven Development: специфікація робота як контракт, який звіряється з кодом машиною |
 | [research/](research/) | Дослідницькі матеріали: промпти для LLM, гіпотези, журнал досліджень |

@@ -6,14 +6,20 @@ from decimal import Decimal
 import pytest
 
 from nautilus_lab.api.research_runner import summary_from_result
-from nautilus_lab.api.serializers import build_job_result, pct, serialize_backtest
-from nautilus_lab.api.settings_schema import validate_settings_update
+from nautilus_lab.api.serializers import (
+    build_job_result,
+    pct,
+    serialize_backtest,
+    serialize_gate,
+)
+from nautilus_lab.api.settings_schema import SETTING_GROUPS, validate_settings_update
 from nautilus_lab.application.dtos import (
     BacktestReport,
     MultiWindowReport,
     SelectedParams,
     WalkForwardFold,
 )
+from nautilus_lab.application.promotion_gate import evaluate_gate
 from nautilus_lab.domain.metrics import BacktestMetrics
 from nautilus_lab.domain.walk_forward import WalkForwardWindow
 
@@ -52,6 +58,24 @@ def test_validate_settings_update_normalizes_case() -> None:
     validated = validate_settings_update({"robot": "regime", "RISK_PER_TRADE": "0.01"})
     assert validated["ROBOT"] == "regime"
     assert validated["RISK_PER_TRADE"] == "0.01"
+
+
+def test_every_schema_field_is_a_writable_setting() -> None:
+    """A field the Settings tab shows but `PUT /api/settings` refuses is a dead control.
+
+    This is not hypothetical: the schema offered "Maker fee"/"Taker fee"
+    (`MAKER_FEE`/`TAKER_FEE`) while `Settings` has no such fields and
+    `validate_settings_update` answered `400 Unknown setting key: MAKER_FEE`. The user
+    typed a fee, the run kept the fee from the code, and nothing said so — while the
+    keys that do work (`SPOT_*`, `USDM_*`) were not shown at all (docs/35 §5).
+    """
+    keys = [field.key for group in SETTING_GROUPS for field in group.fields]
+    assert keys, "the settings schema must expose at least one field"
+    validate_settings_update(dict.fromkeys(keys, "0.00075"))
+
+    spot_fees = {"SPOT_MAKER_FEE", "SPOT_TAKER_FEE", "USDM_MAKER_FEE", "USDM_TAKER_FEE"}
+    assert spot_fees <= set(keys), "the working fee keys must be editable from the dashboard"
+    assert not {"MAKER_FEE", "TAKER_FEE"} & set(keys), "those two are not read by Settings"
 
 
 def test_summary_from_structured_multi_window() -> None:
@@ -93,6 +117,33 @@ def test_summary_from_structured_multi_window() -> None:
     summary = summary_from_result(result)
     assert summary["multi_window"]["profitable"] == "1/1"
     assert summary["multi_window"]["beats_buy_and_hold"] is True
+
+
+def test_the_promotion_verdict_is_data_not_a_log_line() -> None:
+    """The gate travels with the result, so the dashboard can sort and show it.
+
+    `evaluate_gate` used to be printed and thrown away: the batch table — the screen built
+    for comparing runs — could not show the one verdict the comparison is for (docs/35 §3).
+    An unmeasured check must stay `not measured`, never become a silent pass.
+    """
+    verdict = evaluate_gate(None, None, strategy_class=None)
+    payload = serialize_gate(verdict)
+    assert payload is not None
+    assert payload["label"] == "INCOMPLETE"
+    assert payload["promoted"] is False
+    assert all(check["status"] == "not measured" for check in payload["checks"])
+
+    result = build_job_result(
+        run_type="multi_window",
+        robot="regime",
+        source="catalog",
+        promotion_gate=verdict,
+    )
+    assert result["promotion_gate"]["label"] == "INCOMPLETE"
+    assert "promotion_gate=INCOMPLETE" in result["promotion_gate"]["summary_line"]
+
+    no_gate = build_job_result(run_type="pbo", robot="regime", source="catalog")
+    assert no_gate["promotion_gate"] is None
 
 
 def test_normalize_instrument_id() -> None:

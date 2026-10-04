@@ -79,3 +79,43 @@ def test_direction_scores_map_down_flat_up() -> None:
     assert probs.down == Decimal("0.7")
     assert probs.flat == Decimal("0.2")
     assert probs.up == Decimal("0.1")
+
+
+class _AlternatingClassifier:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def predict(self, features: tuple[Decimal, ...]) -> DirectionProbabilities:
+        self.call_count += 1
+        # First 2 calls: strong UP. Next calls: strong DOWN.
+        if self.call_count <= 2:
+            return DirectionProbabilities(
+                up=Decimal("0.8"), down=Decimal("0.1"), flat=Decimal("0.1")
+            )
+        return DirectionProbabilities(up=Decimal("0.1"), down=Decimal("0.8"), flat=Decimal("0.1"))
+
+
+def test_formulaic_strategy_min_hold_bars_prevents_early_exit() -> None:
+    clf = _AlternatingClassifier()
+    robot = FormulaicLgbmStrategy(
+        instrument_id="ETH/USDT.SIM",
+        classifier=clf,
+        threshold=Decimal("0.55"),
+        min_hold_bars=3,
+    )
+    bars = _bars(40)
+    signals = []
+    for bar in bars:
+        sig = robot.on_bar(bar)
+        if sig is not None:
+            signals.append(sig)
+
+    # 1st post-warmup bar: BUY (call 1)
+    # 2nd bar: held 1, call 2 (still UP, no signal)
+    # 3rd bar: held 2, call 3 (DOWN > UP, but held 2 < 3 -> blocked by min_hold_bars)
+    # 4th bar: held 3, call 4 (held 3 >= 3 -> exits to FLAT)
+    # 5th bar: now flat, call 5 (DOWN > threshold -> enters SELL)
+    assert len(signals) == 3
+    assert signals[0].side == SignalSide.BUY
+    assert signals[1].side == SignalSide.FLAT
+    assert signals[2].side == SignalSide.SELL

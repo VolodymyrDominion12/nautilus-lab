@@ -285,7 +285,7 @@ ETH/USDT 1h, каталог 2024-01-01…2026-09-14, 8 блоків × 6 кон�
 | Спот Binance VIP0: 0.100% / 0.100% | ✅ `FeeSchedule.binance_spot_vip0()` = 0.001 / 0.001 |
 | Ф'ючерси USDⓈ-M VIP0: 0.020% / 0.050% | ✅ `FeeSchedule.binance_usdm_vip0()` = 0.0002 / 0.0005 |
 | Комісії впливають на бектест | ✅ інструмент отримує `maker_fee`/`taker_fee`, рушій використовує `MakerTakerFeeModel` |
-| Керування з `.env` | ✅ `MAKER_FEE`, `TAKER_FEE` |
+| Керування з `.env` | ✅ `SPOT_MAKER_FEE`/`SPOT_TAKER_FEE` (типово 0.00075/0.00075) і `USDM_MAKER_FEE`/`USDM_TAKER_FEE` (0.0002/0.0005) |
 | Автоматичне відстеження VIP-рівня за обсягом | 🔴 (немає обліку обсягів за 30 днів і таблиць рівнів) |
 | Знижка на BNB, знижки Bybit/Hyperliquid | ⚪ організаційне |
 

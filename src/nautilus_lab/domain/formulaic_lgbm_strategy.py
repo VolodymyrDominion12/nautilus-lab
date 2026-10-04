@@ -25,12 +25,17 @@ class FormulaicLgbmStrategy:
         instrument_id: str,
         classifier: DirectionClassifier,
         threshold: Decimal = Decimal("0.55"),
+        min_hold_bars: int = 0,
     ) -> None:
         if threshold <= 0 or threshold >= 1:
             raise ValueError("threshold must be in (0, 1)")
+        if min_hold_bars < 0:
+            raise ValueError("min_hold_bars must be >= 0")
         self._instrument_id = instrument_id
         self._classifier = classifier
         self._threshold = threshold
+        self._min_hold_bars = min_hold_bars
+        self._bars_held = 0
         self._engine = FormulaicAlphaEngine()
         self._position: SignalSide | None = None
         self._seen = 0
@@ -70,6 +75,15 @@ class FormulaicLgbmStrategy:
             return None
         probs = self._classifier.predict(features)
         if self._position is not None:
+            self._bars_held += 1
+            if self._bars_held < self._min_hold_bars:
+                self._explain(
+                    Verdict.INFO,
+                    None,
+                    probs,
+                    f"min_hold_bars={self._min_hold_bars} not reached (held {self._bars_held})",
+                )
+                return None
             if (
                 probs.flat >= self._threshold
                 or (self._position is SignalSide.BUY and probs.down > probs.up)
@@ -77,16 +91,19 @@ class FormulaicLgbmStrategy:
             ):
                 self._explain(Verdict.EMIT, "flat", probs, "model no longer supports the position")
                 self._position = None
+                self._bars_held = 0
                 return self._signal(bar, SignalSide.FLAT, "formulaic exit")
             self._explain(Verdict.INFO, None, probs, "model still supports the position: hold")
             return None
         if probs.up >= self._threshold and probs.up > probs.down:
             self._explain(Verdict.EMIT, "buy", probs, "P(up) passes the threshold")
             self._position = SignalSide.BUY
+            self._bars_held = 0
             return self._signal(bar, SignalSide.BUY, f"formulaic up p={probs.up}")
         if probs.down >= self._threshold and probs.down > probs.up:
             self._explain(Verdict.EMIT, "sell", probs, "P(down) passes the threshold")
             self._position = SignalSide.SELL
+            self._bars_held = 0
             return self._signal(bar, SignalSide.SELL, f"formulaic down p={probs.down}")
         self._explain(Verdict.INFO, None, probs, "no direction passes the threshold")
         return None

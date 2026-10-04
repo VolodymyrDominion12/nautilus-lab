@@ -237,3 +237,19 @@ def test_bar_vpin_threshold_07_never_fires_on_near_balanced_flow() -> None:
         f"BarVpin(threshold=0.7) не повинен давати входів при VPIN≤0.3, "
         f"але отримали: {[s.side for s in entries]}"
     )
+
+
+def test_massive_volume_bar_performance() -> None:
+    """Регресія: бари з гігантським обсягом (наприклад, DOGE 50M) обробляються за мілісекунди."""
+    import time
+
+    bar = _bar("0.1", volume="50000000", taker_buy="30000000")
+    vpin = QuantileVpin(bucket_volume=Decimal("1000"), lookback=100)
+    t0 = time.perf_counter()
+    state = vpin.update(bar)
+    elapsed = time.perf_counter() - t0
+
+    assert state is not None
+    # 50M обсягу / 1000 розмір кошика = 50 000 повних кошиків має виконатися < 0.05с (було > 0.8с на один бар)
+    assert elapsed < 0.05, f"Обробка бару зайняла {elapsed:.4f}s замість < 0.05s"
+    assert state.bucket_filled == Decimal("1000")

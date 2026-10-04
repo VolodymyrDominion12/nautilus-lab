@@ -20,8 +20,10 @@ from nautilus_lab.api.batch_store import (
     OK,
     QUEUED,
     RUNNING,
+    SUMMARY_VERSION,
     batch_payload,
     cell_dir,
+    cell_summary,
     create_batch,
     decisions_dir,
     delete_batch,
@@ -41,6 +43,10 @@ from nautilus_lab.infrastructure.settings import Settings
 
 
 def _all_exist(_path: str) -> bool:
+    return True
+
+
+def _all_exist_series(_catalog: str, _instrument: str, _interval: str) -> bool:
     return True
 
 
@@ -73,6 +79,69 @@ def test_plan_blocks_a_missing_model_and_an_unwired_robot_before_running() -> No
     assert "formulaic_BTC_preoos.txt" in by_id["formulaic_lgbm_BTC"].blocked
     assert by_id["glft_BTC"].blocked is not None
     assert "no backtest adapter" in by_id["glft_BTC"].blocked
+
+
+def test_plan_blocks_a_cell_whose_series_is_not_on_disk() -> None:
+    """A catalog directory is not data: the 2026-10-03 sweep planned five dead cells.
+
+    `funding_{SOL,BNB,XRP,DOGE,ADA}` were sent to `catalog_2019_4h` (bars for BTC/ETH
+    only), each died on `no bars in catalog`, and the batch had been running for eight
+    hours by then. The plan must say it before the start, not after.
+    """
+    request = BatchRequest(robots=("ema",), symbols=("BTCUSDT", "SOLUSDT"))
+    cells = plan_cells(
+        request,
+        exists=_all_exist,
+        series=lambda _catalog, instrument, _interval: instrument.startswith("BTC"),
+    )
+    by_id = {c.cell_id: c for c in cells}
+    assert by_id["ema_BTC"].blocked is None
+    assert by_id["ema_SOL"].blocked is not None
+    assert "SOL/USDT.SIM" in by_id["ema_SOL"].blocked
+    assert "catalog" in by_id["ema_SOL"].blocked
+
+
+def test_plan_requires_both_funding_legs_and_the_settlements_in_one_catalog() -> None:
+    """`funding` reads spot, perp and settlements; a missing settlement series is quiet.
+
+    The quiet case is the worst one: without `data/funding/<SYMBOL>/funding.parquet` the
+    run finishes `ok` with zero fills, which looks like a measured result and is not one.
+    """
+    request = BatchRequest(robots=("funding",), symbols=("BTCUSDT",))
+
+    def series(_catalog: str, instrument: str, _interval: str) -> bool:
+        return "PERP" not in instrument  # spot leg present, perp leg missing
+
+    (cell,) = plan_cells(request, exists=_all_exist, series=series)
+    assert cell.blocked is not None
+    assert "BTCUSDT-PERP.SIM" in cell.blocked
+
+    legs_only = plan_cells(
+        request,
+        exists=lambda path: "data/funding/" not in path,
+        series=_all_exist_series,
+    )
+    (settlements_missing,) = legs_only
+    assert settlements_missing.blocked is not None
+    assert "no funding settlements" in settlements_missing.blocked
+
+    complete = plan_cells(
+        request,
+        exists=_all_exist,
+        series=_all_exist_series,
+    )
+    assert complete[0].blocked is None
+
+
+def test_plan_checks_both_pairs_legs() -> None:
+    request = BatchRequest(robots=("pairs",), symbols=("ETHUSDT", "BTCUSDT"))
+    (cell,) = plan_cells(
+        request,
+        exists=_all_exist,
+        series=lambda _catalog, instrument, _interval: instrument.startswith("ETH"),
+    )
+    assert cell.blocked is not None
+    assert "BTC/USDT.SIM" in cell.blocked
 
 
 def test_batch_request_rejects_bad_input() -> None:
@@ -156,7 +225,11 @@ _FAKE_JOB = textwrap.dedent(
                       "window": {"out_of_sample_start": "x", "out_of_sample_end": "y"}})
     json.dump({"is_error": False, "run_type": "multi_window", "multi_window": {
         "profitable": "2/2", "fold_count": 2, "mean_oos_raw": "0.01",
-        "buy_and_hold_mean_raw": "0.005", "total_oos_fills": 8, "folds": folds}},
+        "buy_and_hold_mean_raw": "0.005", "total_oos_fills": 8, "folds": folds},
+        "promotion_gate": {"label": "INCOMPLETE", "promoted": False,
+                           "summary_line": "promotion_gate=INCOMPLETE (pbo=not measured)",
+                           "checks": [{"name": "pbo", "status": "not measured",
+                                       "detail": "run the audit"}]}},
         open(f"{reports}/last_run.json", "w"))
     '''
 )
@@ -200,6 +273,7 @@ def test_batch_run_fills_the_table(tmp_path: Path) -> None:
     assert payload is not None
     row = next(r for r in payload["rows"] if r["cell_id"] == "ema_ETH")
     assert row["numbers"]["mean_oos"] == pytest.approx(0.01)
+    assert row["gate"]["label"] == "INCOMPLETE"
     assert row["decisions"]["records"] == 8
     assert row["decisions"]["outcomes"]["ENTRY_OPENED"] == 2
     assert row["trades"]["closed"] == 2
@@ -216,6 +290,41 @@ def test_batch_run_fills_the_table(tmp_path: Path) -> None:
     listed = list_batches(reports)
     assert listed[0]["id"] == batch_id
     assert listed[0]["counts"] == {"ok": 1, "failed": 1, "blocked": 1}
+
+
+def test_a_stale_summary_cache_is_rebuilt_instead_of_served(tmp_path: Path) -> None:
+    """A `summary.json` from an older build must not hide a field added since.
+
+    The promotion verdict arrived with docs/35 §3. Without the version stamp the batch
+    table would have kept serving a cached row with no verdict at all, and nothing on the
+    screen would say why the column was empty.
+    """
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",))
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    _, path = create_batch(reports, request, cells)
+    cell_path = cell_dir(path, "ema_ETH")
+    decisions_dir(cell_path).mkdir(parents=True, exist_ok=True)
+    write_json(
+        cell_path / "last_run.json",
+        {
+            "is_error": False,
+            "run_type": "multi_window",
+            "multi_window": {"profitable": "1/2", "fold_count": 2, "folds": []},
+            "promotion_gate": {
+                "label": "REJECT",
+                "promoted": False,
+                "summary_line": "promotion_gate=REJECT (beats_buy_hold=fail)",
+                "checks": [{"name": "beats_buy_hold", "status": "fail", "detail": "no edge"}],
+            },
+        },
+    )
+    # The shape a previous build wrote: no version stamp, so it cannot be trusted.
+    write_json(cell_path / "summary.json", {"status": OK, "cell_id": "ema_ETH"})
+
+    summary = cell_summary(path, {"cell_id": "ema_ETH", "status": OK}, Settings())
+    assert summary["summary_version"] == SUMMARY_VERSION
+    assert summary["gate"]["label"] == "REJECT"
 
 
 def test_import_sweep_makes_a_batch(tmp_path: Path) -> None:
@@ -353,8 +462,9 @@ def test_restart_route_wipes_the_old_run_and_relaunches_in_place(
     batch_id, path = create_batch(reports, request, cells)
 
     # The restart re-plans the matrix against the current filesystem, so the catalog the
-    # request names has to exist under the app's root for its cell to stay runnable.
-    (tmp_path / "catalog").mkdir()
+    series_dir = tmp_path / "catalog" / "data" / "bar" / "ETHUSDT.SIM-1-HOUR-LAST-EXTERNAL"
+    series_dir.mkdir(parents=True)
+    (series_dir / "bars.parquet").write_bytes(b"dummy")
 
     # Artifacts of the first run: the restart must delete them, not append to them.
     cell = cell_dir(path, "ema_ETH")

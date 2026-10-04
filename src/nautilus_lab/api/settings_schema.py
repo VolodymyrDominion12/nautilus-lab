@@ -140,8 +140,41 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
                 key="BINANCE_SYMBOLS", label="Ingest symbols (JSON list)", field_type="string"
             ),
             SettingField(key="EMBARGO_BARS", label="Embargo bars", field_type="number"),
-            SettingField(key="MAKER_FEE", label="Maker fee", field_type="number"),
-            SettingField(key="TAKER_FEE", label="Taker fee", field_type="number"),
+        ],
+    ),
+    SettingGroup(
+        id="fees",
+        title="Exchange Fees",
+        description=(
+            "Fees the simulated engine charges per fill, as decimal fractions. Spot and "
+            "USD-M perpetuals are separate: a carry run pays both legs. These are the only "
+            "working fee keys — `MAKER_FEE`/`TAKER_FEE` are not read by Settings at all."
+        ),
+        fields=[
+            SettingField(
+                key="SPOT_MAKER_FEE",
+                label="Spot maker fee",
+                field_type="number",
+                description="Binance spot VIP0 with BNB: 0.00075 (7.5 bps).",
+            ),
+            SettingField(
+                key="SPOT_TAKER_FEE",
+                label="Spot taker fee",
+                field_type="number",
+                description="What market orders pay; a round trip costs twice this.",
+            ),
+            SettingField(
+                key="USDM_MAKER_FEE",
+                label="USD-M futures maker fee",
+                field_type="number",
+                description="Binance USD-M VIP0: 0.0002 (2 bps) before the BNB discount.",
+            ),
+            SettingField(
+                key="USDM_TAKER_FEE",
+                label="USD-M futures taker fee",
+                field_type="number",
+                description="Perpetual legs of `funding` pay this instead of the spot rate.",
+            ),
         ],
     ),
     SettingGroup(

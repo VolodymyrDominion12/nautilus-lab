@@ -635,6 +635,7 @@ def _single_run(
             vpin_momentum_atr_multiple=request.vpin_momentum_atr_multiple,
             formulaic_model_path=request.formulaic_model_path,
             formulaic_threshold=request.formulaic_threshold,
+            formulaic_min_hold_bars=request.formulaic_min_hold_bars,
             meta_label_model_path=request.meta_label_model_path,
             meta_label_threshold=request.meta_label_threshold,
             adaptive_period=request.adaptive_params.base_period,

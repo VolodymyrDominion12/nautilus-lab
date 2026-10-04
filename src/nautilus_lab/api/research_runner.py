@@ -15,7 +15,7 @@ from nautilus_lab.api.serializers import build_job_result, pct, serialize_backte
 from nautilus_lab.api.settings_coerce import apply_setting_overrides
 from nautilus_lab.application.dtos import BacktestReport, MultiWindowReport, WalkForwardReport
 from nautilus_lab.application.journal import JournalEntry, record_run
-from nautilus_lab.application.promotion_gate import class_for_robot, evaluate_gate
+from nautilus_lab.application.promotion_gate import GateVerdict, class_for_robot, evaluate_gate
 from nautilus_lab.application.run_walk_forward import window_return
 from nautilus_lab.domain.bars import BarOrigin
 from nautilus_lab.domain.errors import JournalFormatError
@@ -215,7 +215,13 @@ def _print_walk_forward(report: WalkForwardReport) -> None:
         print(f"tearsheet_saved={report.out_of_sample.tearsheet_path}")
 
 
-def _print_multi_window(report: MultiWindowReport, robot: str | None = None) -> None:
+def _print_multi_window(report: MultiWindowReport, robot: str | None = None) -> GateVerdict:
+    """Print the walk-forward report and return its promotion verdict.
+
+    The verdict is returned, not only printed, so the caller can put it in
+    `last_run.json`: the dashboard needs a label it can sort and aggregate by, and a
+    line of log text is not that (docs/35 §3).
+    """
     print(report.notes)
     for fold in report.folds:
         window = fold.window
@@ -238,7 +244,9 @@ def _print_multi_window(report: MultiWindowReport, robot: str | None = None) -> 
     )
     print(report.summary_line())
     strategy_cls = class_for_robot(robot) if robot else None
-    print(evaluate_gate(report, None, strategy_class=strategy_cls).summary_line())
+    gate = evaluate_gate(report, None, strategy_class=strategy_cls)
+    print(gate.summary_line())
+    return gate
 
 
 def execute_research(
@@ -432,7 +440,7 @@ def execute_research(
 
         if job.folds > 1:
             multi = use_case.execute_multi(wf_request)
-            _print_multi_window(multi, robot=robot.value)
+            gate = _print_multi_window(multi, robot=robot.value)
             tearsheet_path = None
             for fold in multi.folds:
                 if fold.out_of_sample.tearsheet_path:
@@ -443,6 +451,7 @@ def execute_research(
                 robot=robot.value,
                 source=job.source,
                 multi_window=multi,
+                promotion_gate=gate,
                 tearsheet_path=tearsheet_path,
                 report_label="Out-of-sample multi-window walk-forward",
                 finished_at=finished_at,

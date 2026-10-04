@@ -394,6 +394,7 @@ def research_request(
         vpin_momentum_atr_multiple=cfg.vpin_momentum_atr_multiple,
         formulaic_model_path=cfg.formulaic_model_path,
         formulaic_threshold=cfg.formulaic_threshold,
+        formulaic_min_hold_bars=cfg.formulaic_min_hold_bars,
         meta_label_model_path=cfg.meta_label_model_path,
         meta_label_threshold=cfg.meta_label_threshold,
         ml_obi_model_path=cfg.ml_obi_model_path,

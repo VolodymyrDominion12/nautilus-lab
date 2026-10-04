@@ -133,8 +133,11 @@ workflow). `tests/unit/test_ci_workflows.py` тримає їхні правил�
   оточення, а не проєкту. Тоді працюй через venv: `.venv/bin/lab`,
   `.venv/bin/pytest`, `.venv/bin/python`.
 - **Змінні оболонки мають вищий пріоритет за `.env`.** У цьому оточенні задано
-  `MAKER_FEE=0.0002` і `TAKER_FEE=0.0005`, тож фактичні комісії беруться звідти, а
-  не з `.env` (`0.001`). Перевірка: `env | grep -iE "maker|taker"`.
+  `MAKER_FEE=0.0002` і `TAKER_FEE=0.0005`, але ці змінні **мертві**: полів
+  `maker_fee`/`taker_fee` у `Settings` не існує, а `extra="ignore"` їх мовчки
+  відкидає. Фактичні комісії беруться з `SPOT_*`/`USDM_*` у `.env`
+  (спот 0.00075/0.00075, перп 0.0002/0.0005). Перевірка:
+  `env | grep -iE "maker|taker"` і `Settings().spot_fee_schedule()`.
 - **`lab research | tail` показує код 0**, навіть якщо команда впала (код виходу
   pipeline — це код останньої команди). Перевіряй: `...; echo "exit=$?"`.
 - Каталог порожній або вікно поза даними → `no bars in catalog ... Run 'lab ingest' first.`

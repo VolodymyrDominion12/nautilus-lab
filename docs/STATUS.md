@@ -13,7 +13,7 @@
 | Робот | Статус spec | Бектест | Адаптер | Tick VPIN | Hawkes | Paper (батч) | Live paper | Вимір | Причина / суть |
 |---|---|---|---|---|---|---|---|---|---|
 | [`formulaic_lgbm`](../specs/strategies/formulaic_lgbm.yaml) | candidate | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Formulaic LGBM: напрямок бару з 12 формульних ознак OHLCV + пороговий класифікатор |
-| [`funding`](../specs/strategies/funding.yaml) | candidate | так | `funding_strategy` | — | — | так | — | не виміряно | Funding cash-and-carry: спот лонг + перпетуал шорт, вхід за нетто-APY |
+| [`funding`](../specs/strategies/funding.yaml) | candidate | так | `funding_strategy` | — | — | так | — | виміряно: не обганяє buy&hold | Funding cash-and-carry: спот лонг + перпетуал шорт, вхід за нетто-APY |
 | [`meta_label`](../specs/strategies/meta_label.yaml) | candidate | так | `signal_strategy` | так | так | так | — | виміряно: не обганяє buy&hold | Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни |
 | [`pairs`](../specs/strategies/pairs.yaml) | candidate | так | `spread_strategy` | — | — | так | — | виміряно: не обганяє buy&hold | Pairs trading: коінтеграція ETH/BTC і повернення до середнього за z-score |
 | [`regime`](../specs/strategies/regime.yaml) | candidate | так | `signal_strategy` | так | так | так | так | виміряно: не обганяє buy&hold | Regime router: Donchian у тренді, Bollinger mean reversion у флеті |
@@ -63,6 +63,7 @@
 | [`data-catalog`](../specs/components/data-catalog.yaml) | active | Parquet-каталог історії: публічний ingest Binance, один каталог — одна серія |
 | [`decision-trace`](../specs/components/decision-trace.yaml) | active | Журнал рішень: paper і backtest пояснюють кожен бар тим самим ланцюжком |
 | [`deflated-sharpe`](../specs/components/deflated-sharpe.yaml) | partial | DSR: чи переможець сітки кращий за найкращого з N випадкових прогонів |
+| [`derivatives-data`](../specs/components/derivatives-data.yaml) | partial | Похідні Binance USD-M: бари перпів, серія фандингу, premium index і те, чого вони не доходять |
 | [`execution-modes`](../specs/components/execution-modes.yaml) | active | Режими виконання: research, paper, live — і fail-closed запобіжники |
 | [`overfitting-audit`](../specs/components/overfitting-audit.yaml) | active | PBO/CSCV: чи переживає вибір параметрів дані, яких вона не бачила |
 | [`purged-k-fold`](../specs/components/purged-k-fold.yaml) | active | Purged K-fold: embargo в одиницях часу мітки, не в кількості рядків |

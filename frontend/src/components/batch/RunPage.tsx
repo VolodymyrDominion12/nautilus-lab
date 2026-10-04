@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowLeft } from 'lucide-react';
-import { fetchRun, type RunPayload } from '../../services/api';
+import { fetchRun, type FoldSummary, type RunPayload } from '../../services/api';
 import { buildBatchHash, rowWarnings, STATUS_CLASS, type RunTab } from '../../lib/batch';
 import { TONE_TEXT, formatDateTime, formatPct, toNumber, toneOf } from '../../lib/format';
 import { DecisionLogPanel } from '../DecisionLogPanel';
+import { EquityCurveChart } from '../EquityCurveChart';
+import { GateBadge } from './GateBadge';
 import { RunAnalysisTab } from './RunAnalysisTab';
 import { RunTradesTab } from './RunTradesTab';
 
@@ -33,13 +35,26 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
 
   useEffect(() => {
     let alive = true;
-    fetchRun(batchId, cellId)
-      .then((data) => alive && setRun(data.run))
-      .catch((err: unknown) => alive && setError(err instanceof Error ? err.message : String(err)));
+    const fetchCurrent = () => {
+      fetchRun(batchId, cellId)
+        .then((data) => {
+          if (alive) setRun(data.run);
+        })
+        .catch((err: unknown) => {
+          if (alive) setError(err instanceof Error ? err.message : String(err));
+        });
+    };
+    fetchCurrent();
+    const timer = window.setInterval(() => {
+      if (run?.cell?.status === 'running' || run?.cell?.status === 'queued') {
+        fetchCurrent();
+      }
+    }, 4000);
     return () => {
       alive = false;
+      window.clearInterval(timer);
     };
-  }, [batchId, cellId]);
+  }, [batchId, cellId, run?.cell?.status]);
 
   const go = (next: { fold?: number; tab?: RunTab }) => {
     window.location.hash = buildBatchHash({
@@ -57,6 +72,7 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
   const cell = run.cell;
   const summary = run.summary;
   const numbers = summary?.numbers;
+  const gate = summary?.gate ?? null;
   const folds = run.folds;
   const firstFold = folds[0];
   const lastFold = folds[folds.length - 1];
@@ -79,6 +95,13 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
   const decisionFold = folds.find((f) => f.index === fold) ?? folds[folds.length - 1];
   const warnings = summary ? rowWarnings(summary) : [];
 
+  const breakeven = numbers?.mean_breakeven_cost ?? null;
+  const paid = numbers?.mean_paid_cost_rate ?? null;
+  const headroom = breakeven != null && paid != null ? breakeven - paid : null;
+  const multiFolds = (run.result as Record<string, any> | null)?.multi_window?.folds as
+    | FoldSummary[]
+    | undefined;
+
   return (
     <div className="flex flex-col gap-5">
       <header className="flex flex-wrap items-center gap-3 border-b border-gray-800 pb-3">
@@ -98,7 +121,37 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
           </span>
         )}
         <span className={`text-xs font-mono ${STATUS_CLASS[cell.status] ?? ''}`}>{cell.status}</span>
+        <GateBadge gate={gate} size="md" />
       </header>
+
+      {gate && (
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono">
+            {gate.checks.map((check) => (
+              <span
+                key={check.name}
+                title={check.detail}
+                className={
+                  check.status === 'pass'
+                    ? 'text-emerald-400/80'
+                    : check.status === 'fail'
+                      ? 'text-red-400/80'
+                      : 'text-gray-500'
+                }
+              >
+                {check.name}={check.status}
+              </span>
+            ))}
+          </div>
+          {gate.label !== 'PROMOTE' && (
+            <p className="text-[11px] text-gray-500">
+              Клітинка пакета не рахує PBO/DSR і не має пререєстрації, тож її вердикт не може
+              бути PROMOTE. Кандидата переганяють окремо: Research Lab із PBO і 6 фолдами, а
+              пререєстрація — `lab research --folds 6 --register &lt;гіпотеза&gt;` до прогону.
+            </p>
+          )}
+        </div>
+      )}
 
       {cell.error && <div className="text-xs text-red-400">{cell.error}</div>}
       {warnings.map((warning) => (
@@ -108,7 +161,7 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
       ))}
 
       {numbers && (
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3 text-xs">
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 text-xs">
           {[
             ['Mean OOS', numbers.mean_oos],
             ['Worst фолд', numbers.worst_oos],
@@ -122,6 +175,18 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
               </div>
             </div>
           ))}
+          <div className="p-3 rounded-xl bg-gray-900/60 border border-gray-800">
+            <div className="text-[10px] uppercase text-gray-500">Breakeven</div>
+            <div className={`mt-1 font-mono text-sm ${TONE_TEXT[toneOf(breakeven)]}`}>
+              {breakeven != null ? `${(breakeven * 10000).toFixed(1)} bps` : '—'}
+            </div>
+          </div>
+          <div className="p-3 rounded-xl bg-gray-900/60 border border-gray-800">
+            <div className="text-[10px] uppercase text-gray-500">Headroom</div>
+            <div className={`mt-1 font-mono text-sm ${TONE_TEXT[toneOf(headroom)]}`}>
+              {headroom != null ? `${(headroom * 10000).toFixed(1)} bps` : '—'}
+            </div>
+          </div>
           <div className="p-3 rounded-xl bg-gray-900/60 border border-gray-800">
             <div className="text-[10px] uppercase text-gray-500">Угоди / win</div>
             <div className="mt-1 font-mono text-sm text-gray-100">
@@ -138,6 +203,16 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
         </div>
       )}
 
+      {multiFolds && multiFolds.length > 1 && (
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+          <EquityCurveChart
+            folds={multiFolds}
+            startingEquity={((run.result as Record<string, any> | null)?.starting_equity as number) ?? 100000}
+            title={`Кумулятивна траєкторія еквіті (OOS): ${cellId}`}
+          />
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="text-gray-500 text-[10px] uppercase">
@@ -148,6 +223,8 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
               <th className="text-left pr-3">Доходність</th>
               <th className="text-left pr-3">Buy&hold</th>
               <th className="text-left pr-3">Fills</th>
+              <th className="text-left pr-3">Headroom</th>
+              <th className="text-left pr-3">Max DD</th>
               <th className="text-left">Параметри (обрані на IS)</th>
             </tr>
           </thead>
@@ -156,7 +233,7 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
               className={`border-t border-gray-800 cursor-pointer ${fold == null ? 'bg-blue-600/10' : ''}`}
               onClick={() => go({ fold: undefined })}
             >
-              <td className="py-1.5 pr-3 font-mono text-gray-300" colSpan={7}>
+              <td className="py-1.5 pr-3 font-mono text-gray-300" colSpan={9}>
                 усі фолди (загальний OOS:{' '}
                 {firstFold?.window ? formatDateTime(firstFold.window.out_of_sample_start) : '—'} →{' '}
                 {lastFold?.window ? formatDateTime(lastFold.window.out_of_sample_end) : '—'})
@@ -164,6 +241,8 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
             </tr>
             {folds.map((item) => {
               const ret = toNumber(item.oos_return_raw ?? null);
+              const foldMetric = multiFolds?.[item.index]?.oos_metrics;
+              const foldHeadroom = foldMetric?.cost_headroom;
               return (
                 <tr
                   key={item.session_id}
@@ -186,6 +265,12 @@ export const RunPage: React.FC<RunPageProps> = ({ batchId, cellId, fold, tab = '
                     {formatPct(toNumber(item.buy_and_hold_return_raw ?? null))}
                   </td>
                   <td className="pr-3 font-mono text-gray-400">{item.fills ?? '—'}</td>
+                  <td className={`pr-3 font-mono ${TONE_TEXT[toneOf(foldHeadroom)]}`}>
+                    {foldHeadroom != null ? `${(foldHeadroom * 10000).toFixed(1)} bps` : '—'}
+                  </td>
+                  <td className="pr-3 font-mono text-gray-400">
+                    {foldMetric?.max_dd_pct ?? '—'}
+                  </td>
                   <td className="font-mono text-[10px] text-gray-500">{item.selected ?? '—'}</td>
                 </tr>
               );

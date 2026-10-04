@@ -155,7 +155,9 @@ class BarVpin:
             return
         taker_sell = volume - taker_buy
         remaining = volume
-        while remaining > 0:
+
+        # Step 1: Complete any currently partially filled bucket
+        if self._filled > 0:
             space = self._bucket_volume - self._filled
             chunk = min(remaining, space)
             self._buy_volume += chunk * taker_buy / volume
@@ -165,9 +167,28 @@ class BarVpin:
             if self._filled >= self._bucket_volume:
                 self._emit_bucket()
 
+        if remaining <= 0:
+            return
+
+        # Step 2: Full buckets within this bar have identical buy/sell proportions.
+        num_full = int(remaining // self._bucket_volume)
+        if num_full > 0:
+            val = Decimal("0") if volume <= 0 else abs(taker_buy - taker_sell) / volume
+            self._emit_full_buckets(val, num_full)
+            remaining -= Decimal(num_full) * self._bucket_volume
+
+        # Step 3: Any leftover volume starts the next partial bucket
+        if remaining > 0:
+            self._buy_volume = remaining * taker_buy / volume
+            self._sell_volume = remaining * taker_sell / volume
+            self._filled = remaining
+
     def _fill(self, amount: Decimal, *, buy: bool) -> None:
+        if amount <= 0:
+            return
         remaining = amount
-        while remaining > 0:
+
+        if self._filled > 0:
             space = self._bucket_volume - self._filled
             chunk = min(remaining, space)
             if buy:
@@ -178,6 +199,21 @@ class BarVpin:
             remaining -= chunk
             if self._filled >= self._bucket_volume:
                 self._emit_bucket()
+
+        if remaining <= 0:
+            return
+
+        num_full = int(remaining // self._bucket_volume)
+        if num_full > 0:
+            self._emit_full_buckets(Decimal("1"), num_full)
+            remaining -= Decimal(num_full) * self._bucket_volume
+
+        if remaining > 0:
+            if buy:
+                self._buy_volume = remaining
+            else:
+                self._sell_volume = remaining
+            self._filled = remaining
 
     def _price_rule_is_buy(self, bar: OhlcvBar) -> bool:
         """Fallback sign for bars whose taker split is unknown (the tick rule).
@@ -193,6 +229,18 @@ class BarVpin:
     def _emit_bucket(self) -> None:
         total = self._buy_volume + self._sell_volume
         value = Decimal("0") if total <= 0 else abs(self._buy_volume - self._sell_volume) / total
+        self._last = VpinState(
+            value=value,
+            bucket_filled=self._bucket_volume,
+            toxic=value >= self._toxic_threshold,
+        )
+        self._buy_volume = Decimal("0")
+        self._sell_volume = Decimal("0")
+        self._filled = Decimal("0")
+
+    def _emit_full_buckets(self, value: Decimal, count: int) -> None:
+        if count <= 0:
+            return
         self._last = VpinState(
             value=value,
             bucket_filled=self._bucket_volume,
@@ -270,6 +318,34 @@ class QuantileVpin(BarVpin):
             threshold = self._adaptive_threshold
         else:
             # Ще не прогрівся — консервативно: не торгуємо.
+            threshold = Decimal("1")
+
+        self._last = VpinState(
+            value=value,
+            bucket_filled=self._bucket_volume,
+            toxic=value >= threshold,
+        )
+        self._buy_volume = Decimal("0")
+        self._sell_volume = Decimal("0")
+        self._filled = Decimal("0")
+
+    def _emit_full_buckets(self, value: Decimal, count: int) -> None:
+        """Batch-processes multiple identical full buckets in O(1) time."""
+        if count <= 0:
+            return
+
+        if count >= self._lookback:
+            self._bucket_history = [value] * self._lookback
+        else:
+            to_keep = max(0, self._lookback - count)
+            self._bucket_history = self._bucket_history[-to_keep:] + [value] * count
+
+        if len(self._bucket_history) >= self._min_buckets:
+            sorted_h = sorted(self._bucket_history)
+            idx = min(int(float(self._quantile) * len(sorted_h)), len(sorted_h) - 1)
+            self._adaptive_threshold = sorted_h[idx]
+            threshold = self._adaptive_threshold
+        else:
             threshold = Decimal("1")
 
         self._last = VpinState(

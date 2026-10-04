@@ -17,6 +17,7 @@ import os
 import signal
 import subprocess
 import threading
+from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,7 @@ from nautilus_lab.application.trade_history import (
     trade_summary,
 )
 from nautilus_lab.domain.regime import BACKTEST_WIRED_ROBOTS
+from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
 
 router = APIRouter()
 
@@ -148,6 +150,7 @@ def _plan_payload(cells: list[BatchCell]) -> list[dict[str, Any]]:
             "cell_id": cell.cell_id,
             "robot": cell.robot,
             "symbol": cell.symbol,
+            "instrument_id": cell.instrument_id,
             "interval": cell.interval,
             "catalog": cell.catalog,
             "runnable": cell.runnable,
@@ -157,10 +160,29 @@ def _plan_payload(cells: list[BatchCell]) -> list[dict[str, Any]]:
     ]
 
 
+def _series_probe(root: Path) -> Callable[[str, str, str], bool]:
+    """Whether a bar series is really on disk for `(catalog, instrument, interval)`.
+
+    The directory name is Nautilus's: the bar type with `/` dropped
+    (`infrastructure/timeframe.py::nautilus_bar_type`) — `ETH/USDT.SIM` + `4h` lives in
+    `<catalog>/data/bar/ETHUSDT.SIM-4-HOUR-LAST-EXTERNAL`. A directory holding at least one
+    parquet file is the cheap, exact-enough answer: an *empty* directory means the ingest
+    died before writing anything, and planning that cell as runnable is the bug this fixes.
+    """
+
+    def probe(catalog: str, instrument_id: str, interval: str) -> bool:
+        name = nautilus_bar_type(instrument_id, interval).replace("/", "")
+        directory = root / catalog / "data" / "bar" / name
+        return directory.is_dir() and any(directory.glob("*.parquet"))
+
+    return probe
+
+
 def _planned_cells(ctx: LabContext, request: BatchRequest) -> list[BatchCell]:
     return plan_cells(
         request,
         exists=lambda rel: (ctx.root / rel).exists(),
+        series=_series_probe(ctx.root),
         wired=[robot.value for robot in BACKTEST_WIRED_ROBOTS],
     )
 

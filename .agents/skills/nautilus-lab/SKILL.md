@@ -58,7 +58,7 @@ simplejson — для `--tearsheet`), `alerts` (httpx — для `--notify`). П
 | `ROBOT` / `ER_PERIOD` / `TREND_EMA_PERIOD` / `SLOPE_LOOKBACK` / `ENTER_TREND_ER` / `EXIT_TREND_ER` / `DONCHIAN_PERIOD` / `BB_PERIOD` / `BB_K` | `regime` / `20`, `40`, `10`, `0.30`, `0.20`, `20`, `20`, `2` | робот за замовчуванням і параметри `regime` (ER Кауфмана + нахил EMA, гістерезис) |
 | `FAST_EMA` / `SLOW_EMA` | `10` / `20` | робот `ema` (slow > fast) |
 | `EMBARGO_BARS` | `10` | розрив у барах між IS і OOS |
-| `MAKER_FEE` / `TAKER_FEE` | `0.001` / `0.001` | комісії 0.1%; роботи ставлять ринкові ордери → платять taker |
+| `SPOT_MAKER_FEE` / `SPOT_TAKER_FEE` / `USDM_MAKER_FEE` / `USDM_TAKER_FEE` | `0.00075` / `0.00075` / `0.0002` / `0.0005` | дошка комісій (`FeeSchedule`) для споту й USDⓈ-M перпів; роботи ставлять ринкові ордери → платять taker. `MAKER_FEE`/`TAKER_FEE` **не існують** — `Settings` їх ігнорує |
 | `USE_BAR_VPIN` / `VPIN_BUCKET_VOLUME` / `VPIN_TOXIC_THRESHOLD` | `false`, `1000`, `0.7` | VPIN-фільтр токсичного потоку |
 | `KELLY_FRACTION` / `MAX_VAR_99` / `USE_VOL_SCALING` / `USE_FRACTIONAL_KELLY` / `USE_CVAR_BREAKER` / `USE_RATCHET` / `PAIRS_REFIT_EVERY` | `0.25`, `0.05`, решта `false`, `0` | ризик-overlays (типово вимкнені) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `ALERT_WEBHOOK_URL` | порожньо | потрібні для `--notify`; без них — порожній нотифікатор |
@@ -74,7 +74,7 @@ simplejson — для `--tearsheet`), `alerts` (httpx — для `--notify`). П
 | `LIVE_PAPER_*` | `autostart=false`, `symbol=ETHUSDT`, `interval=1h`, `robot=regime`, `starting_equity=10000`, `max_sessions=8`, `max_feeds=5` | живий paper-термінал: сесії, портфель, ліміти фідів; `LIVE_PAPER_PORTFOLIO` — файл портфеля |
 
 ```bash
-uv run python -c "from nautilus_lab.infrastructure.settings import Settings; s=Settings(); print(s.trading_mode, s.robot, s.bar_interval, s.fee_schedule())"
+uv run python -c "from nautilus_lab.infrastructure.settings import Settings; s=Settings(); print(s.trading_mode, s.robot, s.bar_interval, s.spot_fee_schedule(), s.usdm_fee_schedule())"
 ```
 
 ## 4. Кукбук команд
@@ -241,7 +241,7 @@ uv run lab research --synthetic --bars 3000   # smoke-тест після змі
 - **`--notify` нічого не надіслав, код 0** → потрібні `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (обидві) або `ALERT_WEBHOOK_URL` і extra `alerts`; збій сповіщення не є помилкою дослідження.
 - **`optuna is not installed`** → `uv sync --extra research`; `lightgbm extra not installed; use HeuristicDirectionClassifier` → `--extra ml`; EGARCH повертає `None` без `arch`.
 - **`Pandas4Warning: Timestamp.utcnow is deprecated`** — **не твій баг**: попередження виникає всередині NautilusTrader (`backtest/engine.pyx`) і точково заглушене у `filterwarnings`; якщо текст змінився — оновлюй фільтр, а не вимикай попередження глобально.
-- **`.env` «не слухається»** → змінні оболонки мають вищий пріоритет. У цьому оточенні задано `MAKER_FEE=0.0002` і `TAKER_FEE=0.0005`, тобто фактичні комісії беруться звідти, а не з `.env` (`0.001`). Перевірка: `env | grep -iE "maker|taker|risk|robot|trading"`.
+- **`.env` «не слухається»** → змінні оболонки мають вищий пріоритет. Але не все, що схоже на комісію, працює: задані тут `MAKER_FEE=0.0002` і `TAKER_FEE=0.0005` **мертві** — полів `maker_fee`/`taker_fee` у `Settings` немає, а `extra="ignore"` відкидає їх мовчки. Фактичні комісії беруться з `SPOT_*`/`USDM_*` у `.env` (спот 0.00075/0.00075, перп 0.0002/0.0005). Перевірка: `env | grep -iE "maker|taker|risk|robot|trading"` і `Settings().spot_fee_schedule()`.
 - **`lab research | tail` показує код 0**, хоча команда впала (код виходу pipeline = код останньої команди). Перевіряй так: `uv run lab research --slice ftx2022; echo "exit=$?"`. І пам'ятай: `uv` може впасти з `Permission denied` на своєму кеші — тоді запускай `.venv/bin/lab`, `.venv/bin/pytest`.
 - **«Стратегія не працює»** → порядок: `fills > 0` → порівняти з baseline `--robot ema` → перевірити комісії/`turnover` → варіювати `--is-fraction`/`--embargo-bars` → стрес-слайс → і, найімовірніше, визнати, що переваги немає (нормальний результат більшості ідей).
 - **`lab paper` дає `fills=0`, хоч робот «робочий»** → без `--select-on-is` сесія йде на **дефолтних** параметрах, а вони в багатьох роботів не перетинають поріг входу. `--select-on-is` підбирає параметри на історії **перед** вікном сесії (з embargo). Це не «зламаний режим» — це та сама гіпотеза, яку не підтверджено (див. `docs/24` §5).

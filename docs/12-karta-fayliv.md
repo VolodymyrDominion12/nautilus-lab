@@ -145,7 +145,7 @@
 
 | Файл | Публічні символи | Призначення |
 |------|------------------|-------------|
-| `settings.py` | `Settings` | Pydantic-конфіг із `.env`; `risk_limits()`, `fee_schedule()`, `regime_params()`, `adaptive_ema_params()`, `pairs_params()`, `risk_overlay()`, `all_catalog_paths()`; роль застосунку `LAB_ROLE` (`full` \| `paper`) і токен `API_TOKEN` |
+| `settings.py` | `Settings` | Pydantic-конфіг із `.env`; `risk_limits()`, `spot_fee_schedule()`/`usdm_fee_schedule()` (дошки комісій спот/перп із `SPOT_*`/`USDM_*`), `regime_params()`, `adaptive_ema_params()`, `pairs_params()`, `risk_overlay()`, `all_catalog_paths()`; роль застосунку `LAB_ROLE` (`full` \| `paper`) і токен `API_TOKEN` |
 | `timeframe.py` | `NAUTILUS_BAR_SPEC`, `nautilus_bar_type()`, `interval_from_bar_type()` | `1h` → `1-HOUR`, побудова `bar_type`; `interval_from_bar_type()` — обернена функція, шукає специфікацію як **цілий сегмент** `-SPEC-` (підрядковий пошук читав `15-MINUTE` як `5-MINUTE`) |
 | `binance_klines.py` | `BinancePublicKlines`, `UrllibJsonClient`, `parse_binance_kline()` | Публічний REST klines із пагінацією |
 | `http_resilience.py` | `ResilientJsonClient`, `UrllibJsonTransport`, `RateLimitPolicy`, `parse_used_weight()`, `parse_retry_after()` | Керування лімітами: читає `X-MBX-USED-WEIGHT-1M` і вичікує вікно при ≥90% ліміту, поважає `Retry-After` на 429, повторює 418/5xx з backoff, кидає `RateLimitedError` замість обрізаної серії; неретрайний статус → `MarketDataError` |

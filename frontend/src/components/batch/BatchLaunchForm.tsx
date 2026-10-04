@@ -90,6 +90,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
     }`;
   const input =
     'bg-gray-950 border border-gray-800 rounded-lg px-2 py-1 text-xs font-mono text-gray-200';
+  const runnableCount = (plan ?? []).filter((cell) => cell.runnable).length;
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 flex flex-col gap-4">
@@ -217,28 +218,38 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
       {error && <div className="text-xs text-red-400">{error}</div>}
 
       {plan && (
-        <table className="w-full text-[11px] font-mono">
-          <thead className="text-gray-500">
-            <tr>
-              <th className="text-left py-1">Прогін</th>
-              <th className="text-left">TF</th>
-              <th className="text-left">Каталог</th>
-              <th className="text-left">Стан</th>
-            </tr>
-          </thead>
-          <tbody>
-            {plan.map((cell) => (
-              <tr key={cell.cell_id} className="border-t border-gray-800">
-                <td className="py-1 text-gray-200">{cell.cell_id}</td>
-                <td className="text-gray-400">{cell.interval}</td>
-                <td className="text-gray-400">{cell.catalog}</td>
-                <td className={cell.runnable ? 'text-emerald-400' : 'text-amber-400'}>
-                  {cell.runnable ? 'буде запущено' : cell.blocked}
-                </td>
+        <div className="flex flex-col gap-2">
+          <p className="text-[11px] text-gray-500">
+            Прогонів до запуску: <span className="text-emerald-400">{runnableCount}</span>, заблоковано:{' '}
+            <span className="text-amber-400">{plan.length - runnableCount}</span>. Заблокований прогін
+            не стартує — причина вказана в плані (немає серії барів, перп-ноги, серії фандингу чи
+            моделі).
+          </p>
+          <table className="w-full text-[11px] font-mono">
+            <thead className="text-gray-500">
+              <tr>
+                <th className="text-left py-1">Прогін</th>
+                <th className="text-left">Інструмент</th>
+                <th className="text-left">TF</th>
+                <th className="text-left">Каталог</th>
+                <th className="text-left">Стан</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {plan.map((cell) => (
+                <tr key={cell.cell_id} className="border-t border-gray-800">
+                  <td className="py-1 text-gray-200">{cell.cell_id}</td>
+                  <td className="text-gray-400">{cell.instrument_id ?? cell.symbol}</td>
+                  <td className="text-gray-400">{cell.interval}</td>
+                  <td className="text-gray-400">{cell.catalog}</td>
+                  <td className={cell.runnable ? 'text-emerald-400' : 'text-amber-400'}>
+                    {cell.runnable ? 'буде запущено' : cell.blocked}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

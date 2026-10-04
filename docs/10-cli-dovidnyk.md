@@ -650,8 +650,10 @@ KELLY_FRACTION=0.25
 MAX_VAR_99=0.05
 ROBOT=regime
 EMBARGO_BARS=10
-MAKER_FEE=0.001
-TAKER_FEE=0.001
+SPOT_MAKER_FEE=0.00075
+SPOT_TAKER_FEE=0.00075
+USDM_MAKER_FEE=0.0002
+USDM_TAKER_FEE=0.0005
 USE_BAR_VPIN=false
 
 # Офлайн-контур дослідження (lab propose) і журнал
@@ -673,7 +675,7 @@ uv run python -c "
 from nautilus_lab.infrastructure.settings import Settings
 s = Settings()
 print('mode:', s.trading_mode, 'robot:', s.robot, 'interval:', s.bar_interval)
-print('fees:', s.fee_schedule(), 'risk:', s.risk_limits().risk_per_trade)
+print('fees spot/usdm:', s.spot_fee_schedule(), s.usdm_fee_schedule(), 'risk:', s.risk_limits().risk_per_trade)
 "
 ```
 

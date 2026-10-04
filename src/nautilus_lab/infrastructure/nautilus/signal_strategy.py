@@ -145,6 +145,7 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
     formulaic_model_path: str | None = None
     formulaic_threshold: Decimal = Decimal("0.55")
+    formulaic_min_hold_bars: int = 0
     meta_label_model_path: str | None = None
     meta_label_threshold: Decimal = Decimal("0.55")
     adaptive_period: int = 40
@@ -1276,6 +1277,7 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             instrument_id=instrument_id,
             classifier=classifier,
             threshold=config.formulaic_threshold,
+            min_hold_bars=config.formulaic_min_hold_bars,
         )
     if robot is RobotName.ADAPTIVE_EMA:
         return AdaptiveEmaRouter(

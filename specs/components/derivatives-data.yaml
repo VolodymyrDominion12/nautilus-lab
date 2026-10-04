@@ -1,0 +1,384 @@
+# =============================================================================
+#  derivatives-data — похідні дані Binance USD-M: бари перпів, фандинг, premium index
+# =============================================================================
+#  Компонентна спека: механізм наскрізний, не робот. Написана тому, що її обіцяла
+#  Фаза 3 документа docs/23-infrastruktura-danyh-plan.md (рядки 166-176: «Плюс
+#  спека компонента specs/components/derivatives-data.yaml», стан — «друга — ні»),
+#  і тому що DOC-3 у docs/35-plan-pokrashchen-bektestiv-ta-lohu-rishen.md §4.2 D-4
+#  прямо називає її відсутність: «за протоколом SDD це означає, що деривативна
+#  підсистема зараз без контракту».
+#
+#  Головне правило той самий, що й у сусідньому data-catalog.yaml: КОЖЕН інваріант
+#  має пару (enforced_by — модуль, який його тримає; verified_by — тест, який його
+#  ловить). Інваріант без тесту — це твердження, а не гарантія, тому він записаний
+#  вголос через test_missing_reason, а не прикрашений вигаданим іменем тесту.
+#
+#  Ця спека навмисно фіксує не лише те, що працює, а й чотири прогалини, які
+#  фізично вирішують, які бектести на перпах сьогодні запускаються (вони зібрані
+#  в notes під літерами (a)-(d)). Спека, яка називає тільки сильні місця, гірша за
+#  відсутню: вона дає впевненість, якої код не дає.
+# =============================================================================
+kind: component
+name: derivatives-data
+version: "1.0"
+status: partial
+title: "Похідні Binance USD-M: бари перпів, серія фандингу, premium index і те, чого вони не доходять"
+
+hypothesis: >
+  Деривативний бектест має сенс лише тоді, коли перпетуал є окремим інструментом із
+  власними барами, ставка фандингу приходить окремою подією, а невідома ціна
+  лишається невідомою, а не підміняється нулем. Якщо бари перпа приходять із
+  ф'ючерсного ендпоінта, розрахунки фандингу мають час і ставку назавжди (а mark та
+  index — коли біржа їх дає), а серії лежать у тому самому каталозі, що й бари, то
+  кожна нога читається рівно як одна серія одного інструмента, і прогін можна
+  відтворити. Тоді гейт carry `(funding_rate − 2·taker_fee/holding_periods)·3·365 ≥
+  min_net_apy` разом із гейтом базису рахується на справжніх даних, а не на
+  припущеннях про них. Гіпотеза компонента — саме це; вона НЕ стверджує, що carry
+  прибутковий, і не стверджує, що базис у ньому міряється тим самим числом, що й у
+  домені (див. прогалину (b)).
+
+# Спільний блок `invariants` обов'язковий для КОЖНОЇ спеки (specs/_schema.yaml,
+# common.required). Тут він повторює дисципліну компонента тим самим словником, що
+# й у спек роботів. Машинно перевірені пари «модуль + тест» — нижче, в
+# invariants_enforced; там же видно, що саме з цього списку сьогодні без тесту.
+invariants:
+  public_endpoints_only: true
+  closed_bars_only: true
+  decimals_not_floats: true
+  unknown_price_stays_unknown: true
+  fail_closed_on_truncation: true
+  one_catalog_one_series: true
+
+invariants_enforced:
+  - statement: >
+      Бари перпетуала беруться з ф'ючерсного ендпоінта Binance USD-M, а не зі
+      спотового: символ із суфіксом `-PERP` перемикає URL на `fapi/v1/klines` і
+      зрізає суфікс перед запитом (`binance_klines.py:61-63`). Якби ця гілка
+      зникла, `lab ingest --symbols BTCUSDT-PERP` тихо наповнив би каталог
+      спотовими барами під перп-інструментом, і бектест торгував би перп за
+      спотовими цінами, а базис став би рівно нульовим.
+    enforced_by: src/nautilus_lab/infrastructure/binance_klines.py
+    test_missing_reason: >
+      Жоден тест не викликає `fetch` із символом `-PERP`. Єдиний тест, що
+      стверджує хост, перевіряє саме спотовий шлях — `assert "api.binance.com" in
+      url` у tests/unit/test_binance_klines.py:83, — а `grep -rn "fapi" tests/`
+      дає один збіг (tests/unit/test_http_resilience.py:170, чужий ендпоінт
+      openInterestHist). Тобто перемикання на `fapi` сьогодні — твердження, а не
+      гарантія.
+
+  - statement: >
+      Архівний шлях пише серію перпетуала під перп-символ, а не під спотовий: при
+      `market='um'` тейкер-потік лягає під `<SYMBOL>-PERP` (у тесті —
+      `SOLUSDT-PERP:1d`), тож дві ноги одного інструмента не зливаються в одну
+      серію одного каталогу.
+    enforced_by: src/nautilus_lab/application/ingest_archive.py
+    verified_by: tests/unit/test_ingest_archive.py::test_perp_taker_flow_goes_under_the_perp_symbol
+    note: >
+      Виклик збоку CLI той самий: `ingest-archive --market um` будує id як
+      `f"{symbol}-PERP.SIM"` (cli.py:684-688), а `--dataset funding|premium`
+      примусово перемикає `market` на `um` незалежно від переданого
+      (cli.py:638) — бо фандингу й premium index на спотовому ринку не існує.
+
+  - statement: >
+      Розрахунок фандингу відбирається напіввідкритим вікном `[start, end)`, а
+      рядок поза вікном — це не дані цього запиту (`None`), тоді як зіпсований
+      рядок (без часу чи без ставки) рахується окремо як `dropped_malformed` і
+      ніколи не вигадується. Мовчазне змішування двох випадків ховало б, що
+      біржа відповіла не тим, про що її питали.
+    enforced_by: src/nautilus_lab/infrastructure/binance_funding.py
+    verified_by: tests/unit/test_binance_funding.py::test_rows_outside_the_window_are_dropped
+    note: >
+      Другий бік — «зіпсовані рядки рахуються, а не ковтаються» —
+      tests/unit/test_binance_funding.py::test_malformed_rows_are_skipped_not_fabricated
+      і test_malformed_rows_are_counted; третій — «навіть не-список у відповіді
+      це порожня серія, а не падіння» — test_non_list_payload_is_an_empty_series.
+
+  - statement: >
+      Ціни не вигадуються. `mark_price` і `index_price` у `FundingSnapshot` —
+      `Decimal | None`, і жоден шлях не підміняє їх нулем, одиницею чи іншою
+      ціною; index узагалі не береться з відповіді `fundingRate` (його там немає),
+      а приходить із окремого ендпоінта `fapi/v1/indexPriceKlines`
+      (`binance_funding.py:37`) годинними klines і джойниться за годиною
+      розрахунку — тобто за годиною ВІДКРИТТЯ бару, який несе цю мить у полі
+      `open` (`binance_funding.py:206-218`). Причина не косметична: підмінений
+      index робить `(mark − index) / index` рівно нулем
+      (`domain/funding.py:43-47`), тобто гейт `basis_max` перестає будь-що ловити
+      й ніколи про це не скаржиться.
+    enforced_by: src/nautilus_lab/infrastructure/binance_funding.py
+    verified_by: tests/unit/test_binance_funding.py::test_a_mark_the_klines_cannot_supply_stays_unknown_not_invented
+    note: >
+      Index окремо піниться двома тестами: «коли джойн не влучив, index = None, а
+      не mark» — test_index_price_is_none_not_mark_when_the_join_misses; «коли
+      влучив — приходить справжній index» —
+      test_fetch_history_pairs_settlements_with_a_real_index_price. Невідоме
+      переживає round-trip у Parquet і не стає плоским базисом —
+      tests/unit/test_funding_ingest.py::test_missing_mark_price_survives_the_round_trip_as_missing
+      і test_missing_index_price_survives_the_round_trip_as_missing; домен читає
+      `None` як «немає інформації», а не як нуль —
+      tests/unit/test_funding.py::test_unknown_mark_means_unknown_basis_not_a_flat_one.
+      Порожній рядок і недодатна ціна з відповіді біржі зрізаються в `None`
+      параметричним test_unusable_marks_become_none (test_binance_funding.py:363).
+
+  - statement: >
+      Вичерпання бюджету сторінок, коли остання сторінка була повною, — це
+      `HistoryTruncatedError`, а не коротка серія. Бюджет (64 сторінки по 1000
+      розрахунків) — межа циклу, а не межа даних, і мовчки повернути обрізану
+      історію означало б віддати бектесту коротший ринок під виглядом повного:
+      саме так 400-денне вікно повертало рівно 1000 рядків і губило решту без
+      слова (коментар у шапці `binance_funding.py:6-11`).
+    enforced_by: src/nautilus_lab/infrastructure/binance_funding.py
+    verified_by: tests/unit/test_binance_funding.py::test_running_out_of_funding_pages_raises_instead_of_truncating
+    note: >
+      Те саме для цінових klines (index і mark) —
+      test_running_out_of_price_pages_raises_instead_of_truncating; і зворотний
+      бік, щоб поріг не спрацьовував на нормальному кінці вікна, —
+      test_a_full_last_page_that_reaches_the_window_end_is_not_truncation. Чого
+      тести не перевіряють: у `binance_premium_index.py:96-103` та сама відмова
+      для premium index є в коді, але тесту, який її викликає, немає —
+      `grep -rn HistoryTruncatedError tests/` дає лише два місця, обидва в
+      test_binance_funding.py. Тобто для premium index це твердження.
+
+  - statement: >
+      Серія фандингу живе окремим піддеревом
+      `<catalog>/data/funding/<SYMBOL>/funding.parquet`, а не в бар-схемі
+      Nautilus; `Decimal` зберігається рядком (Parquet float прогнав би
+      `0.00003705` крізь двійкову кому, а весь домен стоїть на точній десятковій
+      арифметиці); а повторний ingest замінює своє вікно замість дописування
+      другого рядка.
+    enforced_by: src/nautilus_lab/infrastructure/funding_catalog.py
+    verified_by: tests/unit/test_funding_ingest.py::test_catalog_preserves_decimal_exactly
+    note: >
+      Чому окреме піддерево, а не колонка в бар-серії —
+      test_series_path_is_separate_from_the_bar_series. Ідемпотентність, де
+      «найновіший ingest перемагає», —
+      test_rewriting_an_overlapping_window_does_not_duplicate; вікно —
+      test_catalog_load_filters_by_window; порожній запис — відмова, а не
+      порожній файл, — test_writing_an_empty_series_is_refused; сумісність зі
+      старим файлом, де mark був непорожнім, —
+      test_a_catalog_written_with_the_old_non_nullable_schema_still_loads.
+      Дублікат розрахунку важив би двічі в кожній виплаті, і доходність carry
+      стала б неправдою без жодної помилки в логах.
+
+  - statement: >
+      Архівний інгест фандингу теж відсікає вікно напіввідкрито, сортує
+      розрахунки й голосно рахує пізній старт (`late_start_days`). Це не
+      формальність: серія фандингу майже завжди коротша за бар-серію того самого
+      каталогу, і без цього числа «2019-2026» у звіті виглядало б як повне
+      покриття.
+    enforced_by: src/nautilus_lab/application/ingest_archive.py
+    verified_by: tests/unit/test_ingest_archive.py::test_funding_is_windowed_sorted_and_reports_a_late_start
+    note: >
+      Порожній архів — відмова, а не нуль записаних рядків —
+      test_funding_with_nothing_archived_fails; CLI друкує попередження, коли
+      `late_start_days` перебирає `_FUNDING_LATE_START_WARN_DAYS` (cli.py:718-725).
+
+  - statement: >
+      Premium index лягає окремою серією на пару (символ, інтервал)
+      (`<catalog>/data/premium_index/<SYMBOL>/<interval>/premium_index.parquet`,
+      `premium_index_catalog.py:40-49`), і суфікс `-PERP` зрізається до запису —
+      тож серія не роздвоюється між `BTCUSDT` і `BTCUSDT-PERP`.
+    enforced_by: src/nautilus_lab/infrastructure/premium_index_catalog.py
+    verified_by: tests/unit/test_premium_index.py::test_premium_index_catalog_round_trip_and_idempotence
+    note: >
+      Зрізання суфікса окремо піниться на боці фіда —
+      tests/unit/test_premium_index.py::test_premium_index_fetch_and_pagination
+      стверджує `bars[0].symbol == "BTCUSDT"` на запит `"BTCUSDT-PERP"`. Інтервал
+      — частина ключа свідомо, з тієї самої причини, що й у taker-flow
+      (specs/components/data-catalog.yaml): бар, що закривається о 23:59:59.999,
+      належить і годинній, і добовій серії, і без інтервалу в ключі добове
+      значення перезаписало б годинне.
+
+  - statement: >
+      У premium index немає жодного споживача в бектесті. Серія інгеститься
+      (`lab ingest --premium-index`, `ingest-archive --dataset premium`),
+      зберігається й показується в здоров'ї даних, але жодна стратегія її не
+      читає: `grep -rln "premium_index" src/nautilus_lab/domain
+      src/nautilus_lab/application src/nautilus_lab/infrastructure/nautilus` дає
+      лише `domain/premium_index.py` (сам тип) і `application/ingest_archive.py`
+      (запис). Тому базис `|mark − index| / index` у бектесті фізично не може
+      прийти з premium index — див. прогалину (b).
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/funding_strategy.py
+    test_missing_reason: >
+      Відсутність зв'язку тестом не покривається: tests/unit/test_premium_index.py
+      перевіряє fetch і round-trip каталогу, тобто «серія є там, де треба», і
+      нічого не каже про те, що її ніхто не читає. Це прогалина, а не гарантія.
+
+  - statement: >
+      Обидві ноги funding читаються з ОДНОГО каталогу: `load_multi` ітерує id-и
+      ніг і для кожного кличе `self._catalog.load(...)` на тому самому екземплярі
+      каталогу (`bar_feed.py:121-127`), а серія фандингу береться з кореня того
+      самого кореня каталогу (`funding_catalog(cfg)` → `cfg.catalog_path`,
+      `composition.py:90-92`). Окремого per-leg каталогу в запиті не існує:
+      `_FundingFeedAdapter.load` шукає серію під перпом запиту з жорстким
+      відкатом на `ETHUSDT-PERP.SIM` → `ETHUSDT` (`composition.py:157-161`).
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/bar_feed.py
+    test_missing_reason: >
+      Тесту, який будує каталог з однією ногою (або з обома барами, але без
+      серії фандингу) і стверджує відмову, немає. Наявні шляхи тестування
+      funding цю зв'язність обходять: інтеграційні прогони беруть синтетичний
+      фід або передають бари й снапшоти напряму
+      (tests/integration/test_funding_backtest.py:141-142 —
+      `engine.run_spread(request, bars, funding=[...])`), а не читають каталог.
+      Наслідок не покритий і важливий: `lab research --robot funding`
+      запускається лише там, де в ОДНОМУ каталозі лежать і спот, і перп, і серія
+      фандингу (див. прогалину (a)).
+
+  - statement: >
+      Снапшот фандингу в бектесті будується з клоузів барів, а не з серії
+      фандингу: `mark_price = self._last_perp.close` (`funding_strategy.py:177`),
+      `index_price = self._last_spot.close` (`funding_strategy.py:205`). Реальні
+      mark/index із `data/funding/<SYMBOL>/funding.parquet` до стратегії не
+      доходять: `FundingRateUpdate` несе лише `rate`, час та оголошену каденцію
+      (`backtest_runner.py:812-824`). Тому гейт `basis_max`
+      (`domain/funding.py:187`, `:215`) фактично міряє базис спот↔перп-клоузів —
+      розумне число, але не те, що обіцяє гіпотеза робота (`|mark − index| /
+      index`), — а гілка «index unknown» (`domain/funding.py:167-177`) у
+      бектесті недосяжна: якщо є спот-бар, index завжди є.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/funding_strategy.py
+    test_missing_reason: >
+      Тестів на джерело mark/index у снапшоті немає. Доменний гейт покритий
+      добре — tests/unit/test_funding.py::test_funding_basis_divergence_exit
+      доводить, що `|basis| > basis_max` справді закриває carry, — але він
+      подає снапшот, зібраний самим тестом, і тому нічого не каже про те, ЯКІ
+      mark і index дає адаптер. Ще одна деталь тієї ж прогалини, теж без тесту:
+      каденція події оголошена константою `interval=480` (8 годин,
+      `backtest_runner.py:822`), хоча серія може містити розрахунки за іншим
+      розкладом.
+
+  - statement: >
+      Виплата фандингу нараховується на коротку перп-ногу
+      (`delta = −signed_perp_qty · mark_price · rate`, `funding_strategy.py:180`),
+      накопичується в `_accumulated_funding`, додається до еквіті стратегії
+      (`funding_strategy.py:486`) і до реалізованого балансу звіту
+      (`realized = realized + accumulated_funding`, `backtest_runner.py:209-212`),
+      тож гроші фандингу у звіті є.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/backtest_runner.py
+    verified_by: tests/integration/test_funding_backtest.py::test_funding_research_backtest_synthetic
+    note: >
+      Це найслабша пара в цій спеці, і чесніше це сказати: тест — smoke-рівня.
+      Він стверджує, що прогін funding дає `ending_balance > starting_equity`,
+      `fees_paid > 0` і позначку «funding synthetic backtest with fees» у notes,
+      але арифметичної тотожності «баланс − старт = Σ виплат − комісії» не
+      перевіряє жоден тест. Друга нога тієї самої виплати — «скільки саме
+      розрахунків узято до уваги» — закрита окремим інваріантом нижче.
+
+  - statement: >
+      Виплата фандингу НЕ є транзакцією акаунта рушія: вона живе в полях
+      стратегії й додається до балансу вже після прогону, тому `RiskEngine`
+      (`risk_engine=RiskEngineConfig(bypass=False)`, `backtest_runner.py:179`)
+      її не бачить — жоден ризик-гейт рушія не спрацює на просідання еквіті, яке
+      створив сам фандинг.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/backtest_runner.py
+    test_missing_reason: >
+      Тесту немає: жоден тест не стверджує, що ризик-шар лишається сліпим до
+      накопиченого фандингу. Це треба читати вголос, бо воно змінює сенс
+      метрик: circuit breakers стратегії (`_limits`,
+      `funding_strategy.py:94-102`) рахуються на еквіті з фандингом, а ліміти
+      рушія — без нього, тож дві «однакові» перевірки ризику мірять різні речі.
+
+  - statement: >
+      До балансу прогону потрапляють лише розрахунки всередині власного
+      проміжку барів цього прогону (`within_bars` — `domain/windowing.py:34-42`,
+      застосований у `backtest_runner.py:806-810`). Інакше кожен IS-фолд
+      накопичував би виплати за всією серією: вікно, що закінчується 2025-11-22,
+      зараховувало ~900 розрахунків із датами після нього.
+    enforced_by: src/nautilus_lab/domain/windowing.py
+    verified_by: tests/integration/test_funding_backtest.py::test_funding_settlements_after_the_window_never_reach_the_balance
+
+  - statement: >
+      Плече в бектесті жорстко 1× (`default_leverage=Decimal(1)`,
+      `backtest_runner.py:189`), і полів плеча немає ні в `Settings`
+      (`settings.py:180-192` — там лише фі та параметри funding), ні в
+      `BacktestRequest`. Моделі ліквідації в проєкті немає взагалі:
+      `grep -rni "liquidat" src/` порожній.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/backtest_runner.py
+    test_missing_reason: >
+      Тесту немає, і це не «ще не реалізовано», а припущення, яке треба називати
+      вголос: шорт перпетуала без моделі ліквідації — тобто carry ніколи не
+      виносить позицію примусово, незалежно від того, як далеко пішов базис.
+      Для cash-and-carry це нормально рівно доти, доки плече 1×; щойно з'явиться
+      плече, ця пара стане помилкою, а не прогалиною.
+
+  - statement: >
+      Перпетуал є окремим інструментом рушія `CryptoPerpetual` зі своїми
+      tick/lot і margin_init/margin_maint (`instrument.py:306-340`), а не тим
+      самим спотом під іншим ім'ям; precision опису узгоджена з оголошеним
+      кроком для КОЖНОГО id, включно з перпами (`_PERP_SPECS`,
+      `instrument.py:45-57`). Окремо — свої фі: `usdm_fees` прокидаються в
+      інструмент перпа (`instrument.py:214`, `backtest_runner.py:788-790`), а
+      ставки приходять із `Settings.usdm_fee_schedule()`
+      (`settings.py:262-263`), тож комісія перпа не береться зі спотової.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/instrument.py
+    verified_by: tests/unit/test_component_invariants.py::test_instrument_specs_match_declared_increments
+    note: >
+      Точність тут не косметика: `to_engine_bars` будує кожне OHLC як
+      `Price(value, precision=price_precision)`, тож крок, грубіший за
+      справжній, тихо переписує серію, яку читає бектест. Тип інструмента
+      окремо піниться лише для перпа, що прийшов із реєстру
+      (`tests/unit/test_instrument_registry.py::test_a_registered_perp_resolves_as_a_perpetual`);
+      для id із `_PERP_SPECS` такого ствердження немає — там перевірено лише
+      precision. Дефолти самих фі (перп 0.0005 тейкер) закріплені
+      tests/unit/test_mft_modules.py::test_fee_schedule_binance_defaults, а
+      узгодженість інструмента з розкладом каталогу — окремо для СПОТУ:
+      tests/unit/test_component_invariants.py::test_backtest_engine_fee_schedule_agreement
+      порівнює `cat._spot_fees`, `request.spot_fees` і `cfg.spot_fee_schedule()`,
+      usdm-бік там не згадується.
+
+notes: >
+  Механізм існує й частково працює: бари перпів, серія фандингу (REST + архів),
+  premium index, перп як інструмент рушія, окремі usdm-фі й адаптер
+  `FundingRobot` підключені. Саме тому status: partial, а не active — нижче
+  чотири прогалини, кожна з яких вирішує, чи можна взагалі запустити бектест на
+  перпах, і кожна з яких у цій спеці вже названа своїм test_missing_reason.
+
+  (a) Обидві ноги фандингу читаються з ОДНОГО каталогу (`bar_feed.py:121-127`,
+  `load_multi`), і серія фандингу — теж із його кореня (`composition.py:90-92`,
+  `:157-161`). Отже funding запускається лише там, де в одному каталозі лежать і
+  спот, і перп, і серія фандингу. Заміряний стан каталогів (docs/35 §4.2 D-1)
+  саме такий, що такого каталогу майже немає: `catalog` (1h) має спот 7 монет і
+  фандинг 11, але не має перпів; `catalog_perp_4h`/`_1d` мають перпи 11 монет і
+  фандинг BTC/ETH/SOL, але не мають споту. Єдиний каталог, на якому funding
+  справді бігає, — `catalog_2019_4h` (спот+перп лише BTC/ETH, фандинг із
+  2023-10-31).
+
+  (b) Снапшот фандингу збирається з барів, а не з funding-каталогу
+  (`funding_strategy.py:177`, `:205`), і реальні mark/index до стратегії не
+  доходять: `FundingRateUpdate` несе лише `rate` (`backtest_runner.py:812-824`).
+  Тому гейт базису `basis_max` міряє спот↔перп-базис, а не
+  `|mark − index| / index`, а гілка «index unknown» у бектесті недосяжна. Premium
+  index, який для цього вже завантажено, споживача не має (окремий інваріант
+  вище).
+
+  (c) Виплати фандингу додаються до еквіті стратегії
+  (`funding_strategy.py:486`) та до балансу звіту
+  (`backtest_runner.py:209-212`), але не є транзакцією акаунта рушія — тож
+  `RiskEngine` (`backtest_runner.py:179`) їх не бачить.
+
+  (d) Плече жорстко 1× (`backtest_runner.py:189`), полів плеча немає ні в
+  `Settings`, ні в `BacktestRequest`, і моделі ліквідації в коді немає взагалі
+  (`grep -rni "liquidat" src/` порожній). Для cash-and-carry це припущення, а не
+  факт, і воно має бути видно зі спеки робота
+  (`specs/strategies/funding.yaml`), а не тільки звідси.
+
+  Що зміниться в status: (a) і (b) закриваються кодом (per-leg каталоги або
+  спільний каталог; протягнути mark/index у `FundingRateUpdate` або в читання
+  снапшота) і тоді отримують `verified_by`; (c) і (d) закриваються лише разом із
+  рішенням про плече й нарахування — доти це записані прогалини, а не борг, який
+  хтось не помітив.
+
+  Розходження з docs/: `docs/23-infrastruktura-danyh-plan.md` Фаза 3 (рядки
+  166-176) обіцяла цей файл і сама ж зафіксувала, що його не створено — тепер
+  створено, і це перший пункт тієї фази, що закритий. `docs/23` §2 (рядок 50) і
+  §4 Фаза 2 (рядки 160-164) уже виправили себе щодо джерела index price:
+  `fapi/v1/premiumIndex` дає mark і index лише поточним знімком, тому код бере
+  `fapi/v1/indexPriceKlines` і джойнить за годиною розрахунку — спека фіксує
+  саме код, а не початкове формулювання документа. `specs/components/data-catalog.yaml`
+  описує бар-серію й taker-flow і про фандинг не згадує — саме тому ця спека
+  окрема, а не розділ у тій.
+
+references:
+  - docs/23-infrastruktura-danyh-plan.md
+  - docs/35-plan-pokrashchen-bektestiv-ta-lohu-rishen.md
+  - specs/strategies/funding.yaml
+  - specs/components/data-catalog.yaml
+  - docs/12-karta-fayliv.md

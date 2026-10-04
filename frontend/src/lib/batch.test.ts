@@ -60,6 +60,16 @@ describe('batch table', () => {
     expect(sortRows(rows, 'mean_oos', false).map((r) => r.cell_id)).toEqual(['c', 'a', 'b']);
   });
 
+  test('sorts by headroom (breakeven minus paid cost rate)', () => {
+    const rows = [
+      row({ cell_id: 'a', numbers: { mean_breakeven_cost: 0.0005, mean_paid_cost_rate: 0.0002 } }), // 3 bps
+      row({ cell_id: 'b', numbers: { mean_breakeven_cost: null, mean_paid_cost_rate: null } }),
+      row({ cell_id: 'c', numbers: { mean_breakeven_cost: 0.0001, mean_paid_cost_rate: 0.0004 } }), // -3 bps
+    ];
+    expect(sortRows(rows, 'headroom', true).map((r) => r.cell_id)).toEqual(['a', 'c', 'b']);
+    expect(sortRows(rows, 'headroom', false).map((r) => r.cell_id)).toEqual(['c', 'a', 'b']);
+  });
+
   test('blocked share and warnings read the decision counts', () => {
     const blocked = row({
       numbers: { total_oos_fills: 10 },

@@ -7,8 +7,9 @@ Why (docs/27 E-2.6): an upgrade of NautilusTrader, pandas or numpy can change fi
 fees or the equity curve without a single line changing in this repository. Every OOS
 number in the research journal would then silently mean something else. These runs
 use deterministic synthetic bars (seeded) and settings built from the code defaults
-only — no `.env`, no shell variables (AGENTS.md: shell `TAKER_FEE` overrides `.env`) —
-so the only thing that can move the numbers is code: ours or a dependency's.
+only — no `.env`, no shell variables (AGENTS.md: shell `MAKER_FEE`/`TAKER_FEE` are dead,
+fees come from `SPOT_*`/`USDM_*`) — so the only thing that can move the numbers is code:
+ours or a dependency's.
 
 The snapshot (`tests/golden/backtests.json`) records the engine version it was made
 with. `tests/integration/test_golden_backtest.py` fails on any difference and prints

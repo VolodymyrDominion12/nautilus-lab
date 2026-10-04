@@ -64,6 +64,7 @@ class BacktestRequest:
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
     formulaic_model_path: str | None = None
     formulaic_threshold: Decimal = Decimal("0.55")
+    formulaic_min_hold_bars: int = 0
     meta_label_model_path: str | None = None
     meta_label_threshold: Decimal = Decimal("0.55")
     ml_obi_model_path: str | None = None

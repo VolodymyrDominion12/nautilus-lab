@@ -532,7 +532,7 @@ uv run lab research --robot vpin_momentum --slice ftx2022 --catalog catalog_long
 | 5.2 Трикутний арбітраж | `domain/triangular_arb.py`, `application/scan_triangular.py` | Дані стакану/глибини (знімки L2 уже збирає `lab ingest --depth`), оцінка прослизання | 🟠 середньо |
 | 6.1 Волатильність (HAR-RV, EGARCH) | `domain/volatility.py`, `infrastructure/egarch_forecast.py` | Нічого — `vol_scaled_risk_fraction` підключено в ризик-шар (`USE_VOL_SCALING`, `VOL_MODEL`) | ✅ готово |
 | 6.2 Келлі / VaR | `domain/portfolio_risk.py`, `application/risk.py` | Нічого — статистику угод передає `SignalRobot` (`USE_FRACTIONAL_KELLY`, `KELLY_MIN_TRADES`) | ✅ готово |
-| 7. Комісії / інфраструктура | `domain/fees.py`, `MAKER_FEE`/`TAKER_FEE` | Нічого — вже враховано | ✅ готово |
+| 7. Комісії / інфраструктура | `domain/fees.py`, `SPOT_MAKER_FEE`/`SPOT_TAKER_FEE` і `USDM_MAKER_FEE`/`USDM_TAKER_FEE` | Нічого — вже враховано | ✅ готово |
 | 8. Податки | — | Поза кодом (облік операцій для звітності — окрема задача) | ⚪ не в скоупі |
 
 **Порада для початківця:** почніть з 🟢-рядків. Вони дають закінченого робота за вечір

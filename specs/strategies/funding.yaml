@@ -162,12 +162,25 @@ invariants:
   fail_closed_without_adapter: false
 
 evidence:
-  measured: false
-  beats_buy_hold: null
+  measured: true
+  beats_buy_hold: false
+  reproduce: >
+    Клітинки funding_BTC і funding_ETH пакета reports/batches/20261003_182518_batch
+    (дашборд → «Пакетний бектест»: robots=["funding"], symbols=["BTCUSDT","ETHUSDT"],
+    folds=6, days=1000; клітинки funding ідуть у catalog_2019_4h / 4h).
+    Той самий прогін із CLI — підкоманди `lab batch` не існує, тому через env:
+    CATALOG_PATH=catalog_2019_4h INSTRUMENT_ID=BTC/USDT.SIM BAR_INTERVAL=4h
+    FUNDING_SPOT_ID=BTC/USDT.SIM FUNDING_PERP_ID=BTCUSDT-PERP.SIM
+    .venv/bin/lab research --robot funding --folds 6 --days 1000
   notes: >
-    Адаптер підключено до рушія backtest, статус переведено в candidate. Вимірювання
-    OOS на історичних каталогах ще не проводилось (потрібен запуск lab research --robot funding
-    або lab xsmom).
+    Виміряно в пакеті 20261003_182518_batch (1000 днів, 6 фолдів, catalog_2019_4h, 4h):
+    - BTC: 3/6 прибуткових фолдів, mean_oos = +0.077%, buy&hold = -0.114%, beats_buy_and_hold = true,
+      20 total OOS fills, breakeven cost = 12.29 bps > paid cost 6.25 bps.
+    - ETH: 4/6 прибуткових фолдів, mean_oos = +0.025%, buy&hold = +0.344%, beats_buy_and_hold = false,
+      24 total OOS fills, breakeven cost = 7.48 bps > paid cost 6.25 bps.
+    За сукупністю двох інструментів beats_buy_hold = false (перевага над buy&hold не підтверджена на ETH).
+    Плече 1× (default_leverage = 1), ліквідація короткої ноги перпетуалу в бектесті не моделюється.
+    Статус робота: candidate.
 
 notes: >
   Доменний модуль: `FundingCashAndCarry` з методом

@@ -5,7 +5,7 @@ needs (catalog, interval, model paths, the funding perp), and which cells cannot
 why — said **before** the batch starts, instead of discovering it as a failed cell an
 hour later (the 2026-09-29 sweep: `ml_obi` had no model, `glft` has no adapter).
 
-The running half lives in `api/batch_runner.py`; the result rows in `api/batch_store.py`.
+The running half lives in `api/run_batch_job.py`; the result rows in `api/batch_store.py`.
 """
 
 from __future__ import annotations
@@ -123,6 +123,7 @@ def plan_cells(
     request: BatchRequest,
     *,
     exists: Callable[[str], bool],
+    series: Callable[[str, str, str], bool] | None = None,
     wired: Sequence[str] | None = None,
 ) -> list[BatchCell]:
     """Expand the request into cells, marking the ones that cannot run and why.
@@ -130,14 +131,19 @@ def plan_cells(
     `exists` answers "is there a file at this repo-relative path" (models, catalogs), so
     this function stays pure and testable. `wired` is the set of robots with a backtest
     adapter (`domain/regime.py::require_backtest_support`); None = do not check.
+
+    `series(catalog, instrument_id, interval)` answers "is that bar series on disk".
+    Without it the plan only knew that a catalog *directory* exists, so a cell whose
+    instrument was never ingested was planned as runnable and died an hour later (see
+    `_missing_series`); None keeps the old behaviour for callers that cannot look.
     """
     cells: list[BatchCell] = []
     for robot in request.robots:
         if robot == "pairs":
-            cells.append(_pairs_cell(request, exists=exists))
+            cells.append(_pairs_cell(request, exists=exists, series=series))
             continue
         cells.extend(
-            _single_cell(request, robot, symbol, exists=exists, wired=wired)
+            _single_cell(request, robot, symbol, exists=exists, series=series, wired=wired)
             for symbol in request.symbols
         )
     return cells
@@ -149,6 +155,7 @@ def _single_cell(
     symbol: str,
     *,
     exists: Callable[[str], bool],
+    series: Callable[[str, str, str], bool] | None,
     wired: Sequence[str] | None,
 ) -> BatchCell:
     base = base_asset(symbol)
@@ -169,6 +176,8 @@ def _single_cell(
             blocked = f"model {path} not found (train it with an end before the first OOS bar)"
     if blocked is None and not exists(catalog):
         blocked = f"catalog {catalog} not found"
+    if blocked is None and series is not None:
+        blocked = _missing_series(robot, symbol, catalog, interval, exists=exists, series=series)
     return BatchCell(
         cell_id=f"{robot}_{base}",
         robot=robot,
@@ -181,7 +190,47 @@ def _single_cell(
     )
 
 
-def _pairs_cell(request: BatchRequest, *, exists: Callable[[str], bool]) -> BatchCell:
+def _missing_series(
+    robot: str,
+    symbol: str,
+    catalog: str,
+    interval: str,
+    *,
+    exists: Callable[[str], bool],
+    series: Callable[[str, str, str], bool],
+) -> str | None:
+    """The first data series this cell needs and does not have, named before it starts.
+
+    Why this exists: the 2026-10-03 sweep planned `funding_{SOL,BNB,XRP,DOGE,ADA}` against
+    `catalog_2019_4h` — a catalog that exists and holds bars for BTC/ETH only. Five cells
+    were launched, five died on `no bars in catalog`, and the batch had already been
+    running for eight hours. Checking the catalog directory is not checking the data.
+
+    `funding` needs three series, not one: both legs must live in the *same* catalog
+    (`bar_feed.load_multi` reads them through one catalog) and the settlements must be
+    there too. A missing settlement series is the quiet case — the run would finish `ok`
+    with zero fills, which is the most expensive kind of empty result.
+    """
+    instrument = spot_instrument(symbol)
+    if not series(catalog, instrument, interval):
+        return f"no {instrument} {interval} bars in {catalog} (ingest them first)"
+    if robot != "funding":
+        return None
+    perp = perp_instrument(symbol)
+    if not series(catalog, perp, interval):
+        return f"no {perp} {interval} bars in {catalog}: both funding legs must be in one catalog"
+    settlements = f"{catalog}/data/funding/{symbol}/funding.parquet"
+    if not exists(settlements):
+        return f"no funding settlements at {settlements} (ingest --market um --dataset funding)"
+    return None
+
+
+def _pairs_cell(
+    request: BatchRequest,
+    *,
+    exists: Callable[[str], bool],
+    series: Callable[[str, str, str], bool] | None,
+) -> BatchCell:
     """Pairs trades two legs at once: one cell for the first two symbols, not one per symbol."""
     symbols = list(request.symbols)
     blocked = None if len(symbols) >= 2 else "pairs needs two symbols"
@@ -197,6 +246,15 @@ def _pairs_cell(request: BatchRequest, *, exists: Callable[[str], bool]) -> Batc
     }
     if blocked is None and not exists(request.catalog):
         blocked = f"catalog {request.catalog} not found"
+    if blocked is None and series is not None:
+        for leg in (leg_a, leg_b):
+            instrument = spot_instrument(leg)
+            if not series(request.catalog, instrument, request.interval):
+                blocked = (
+                    f"no {instrument} {request.interval} bars in "
+                    f"{request.catalog} (ingest them first)"
+                )
+                break
     return BatchCell(
         cell_id=f"pairs_{base_asset(leg_a)}{base_asset(leg_b)}",
         robot="pairs",

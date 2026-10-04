@@ -12,6 +12,7 @@ import {
   type SortKey,
 } from '../../lib/batch';
 import { TONE_TEXT, formatDateTime, formatPct, toneOf } from '../../lib/format';
+import { GateBadge } from './GateBadge';
 
 interface BatchTablePageProps {
   batchId: string;
@@ -22,6 +23,7 @@ const COLUMNS: { key: SortKey; label: string; title: string }[] = [
   { key: 'mean_oos', label: 'Mean OOS', title: 'середня доходність OOS-фолдів після комісій' },
   { key: 'worst_oos', label: 'Worst', title: 'найгірший OOS-фолд' },
   { key: 'excess', label: 'vs B&H', title: 'mean OOS мінус buy&hold того ж вікна' },
+  { key: 'headroom', label: 'Headroom', title: 'запас над комісією (breakeven cost мінус paid cost rate, bps)' },
   { key: 'trades', label: 'Угоди', title: 'закриті угоди в журналі всіх OOS-фолдів' },
   { key: 'win_rate', label: 'Win', title: 'частка прибуткових угод' },
   { key: 'blocked', label: 'Блоки', title: 'частка барів, де вхід заблоковано' },
@@ -166,6 +168,12 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
                   {sortKey === column.key ? (descending ? ' ↓' : ' ↑') : ''}
                 </th>
               ))}
+              <th
+                className="text-left pr-3"
+                title="вердикт воріт допуску; клітинка пакета ніколи не рахує PBO/DSR, тому найкраще тут — INCOMPLETE"
+              >
+                Ворота
+              </th>
               <th className="text-left pr-3">Що робили бари</th>
               <th className="text-left pr-3">Що блокувало</th>
               <th className="text-left">Стан</th>
@@ -197,12 +205,32 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
                   <td className={`pr-3 font-mono ${TONE_TEXT[toneOf(row.numbers?.mean_excess)]}`}>
                     {formatPct(row.numbers?.mean_excess)}
                   </td>
+                  <td
+                    className={`pr-3 font-mono ${
+                      TONE_TEXT[
+                        toneOf(
+                          row.numbers?.mean_breakeven_cost != null &&
+                            row.numbers?.mean_paid_cost_rate != null
+                            ? row.numbers.mean_breakeven_cost - row.numbers.mean_paid_cost_rate
+                            : null,
+                        )
+                      ]
+                    }`}
+                  >
+                    {row.numbers?.mean_breakeven_cost != null &&
+                    row.numbers?.mean_paid_cost_rate != null
+                      ? `${((row.numbers.mean_breakeven_cost - row.numbers.mean_paid_cost_rate) * 10000).toFixed(1)} bps`
+                      : '—'}
+                  </td>
                   <td className="pr-3 font-mono text-gray-300">{row.trades?.closed ?? '—'}</td>
                   <td className="pr-3 font-mono text-gray-300">
                     {row.trades?.win_rate == null ? '—' : `${Math.round(row.trades.win_rate * 100)}%`}
                   </td>
                   <td className="pr-3 font-mono text-gray-300">
                     {share == null ? '—' : `${Math.round(share * 100)}%`}
+                  </td>
+                  <td className="pr-3">
+                    <GateBadge gate={row.gate} />
                   </td>
                   <td className="pr-3 font-mono text-[10px] text-gray-400">
                     {topCounts(row.decisions?.outcomes)}

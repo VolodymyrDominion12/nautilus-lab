@@ -221,7 +221,8 @@ classDiagram
         +RobotName robot
         +RiskLimits risk
         +BarOrigin source
-        +FeeSchedule fee_schedule
+        +FeeSchedule spot_fees
+        +FeeSchedule usdm_fees
     }
 
     class BacktestReport {

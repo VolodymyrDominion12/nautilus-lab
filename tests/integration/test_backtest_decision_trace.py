@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from nautilus_lab.application.decision_digest import build_digest
 from nautilus_lab.application.decision_trace_codec import record_to_dict
 from nautilus_lab.application.dtos import BacktestRequest
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
@@ -39,6 +40,85 @@ class InMemoryDecisionLog:
 
     def log(self, record: DecisionRecord) -> None:
         self.records.append(record)
+
+
+@pytest.mark.integration
+def test_backtest_records_carry_a_monotonic_bar_seq() -> None:
+    """`bar_seq` is how a reader sees a *missed* bar, and the backtest did not write it.
+
+    The paper terminal has set it since docs/28, so `bar_seq_gaps` in the digest looked
+    like a working check — but every backtest summary in the corpus reported zero gaps
+    (106 of 106) because the field was simply absent (docs/35 §7, L-10).
+    """
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=300, seed=7)
+    log = InMemoryDecisionLog()
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=len(bars),
+        starting_equity=Decimal("10000"),
+        risk=RiskLimits(
+            risk_per_trade=Decimal("0.01"),
+            stop_pct=Decimal("0.02"),
+            max_daily_loss=Decimal("0.02"),
+            max_drawdown=Decimal("0.06"),
+        ),
+        robot=RobotName.REGIME,
+        seed=7,
+        source=BarOrigin.SYNTHETIC,
+        session_id="bt-bar-seq-test",
+    )
+    NautilusResearchBacktest(decision_log=log).run(request, bars)
+
+    decisions = [r for r in log.records if r.kind.value == "bar_decision"]
+    sequences = [r.bar_seq for r in decisions]
+    assert all(seq is not None for seq in sequences), "every bar decision needs a bar_seq"
+    assert sequences == list(range(1, len(decisions) + 1)), "one bar, one increment"
+
+    # The digest reads it, so its gap check stops being a check that always passes.
+    digest = build_digest([record_to_dict(r) for r in decisions])
+    assert digest.bar_seq_gaps == 0, "a gapless synthetic series must report no gaps"
+
+
+@pytest.mark.integration
+def test_a_vetoed_signal_names_the_step_that_blocked_it() -> None:
+    """A veto inside the robot must carry `blocked_by`, not vanish as a bare no-signal bar.
+
+    With `REGIME_LEGS=range` every breakout is dropped by `gate_leg`, and the bar used to
+    be written as `SIGNAL_VETOED` with `blocked_by=None` — the largest class of refusals in
+    the corpus (54 964 records, all reasonless), invisible to the batch table's "what
+    blocked entries" column and to the digest's blocked tally (docs/35 §7, L-8).
+    """
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=300, seed=3)
+    log = InMemoryDecisionLog()
+    request = BacktestRequest(
+        mode=TradingMode.RESEARCH,
+        instrument_id="ETH/USDT.SIM",
+        bar_count=len(bars),
+        starting_equity=Decimal("10000"),
+        risk=RiskLimits(
+            risk_per_trade=Decimal("0.01"),
+            stop_pct=Decimal("0.02"),
+            max_daily_loss=Decimal("0.02"),
+            max_drawdown=Decimal("0.06"),
+        ),
+        robot=RobotName.REGIME,
+        seed=3,
+        source=BarOrigin.SYNTHETIC,
+        session_id="bt-veto-reason-test",
+        regime_legs="range",
+    )
+    NautilusResearchBacktest(decision_log=log).run(request, bars)
+
+    vetoed = [r for r in log.records if r.outcome == "SIGNAL_VETOED"]
+    assert vetoed, "a disabled leg must refuse at least one breakout signal"
+    assert all(r.blocked_by == "filter.regime_legs" for r in vetoed), (
+        "the refusal must name the step, not stay an anonymous veto"
+    )
+    digest = build_digest([record_to_dict(r) for r in log.records])
+    assert digest.blocked_by.get("filter.regime_legs"), (
+        "the digest must be able to count a filter veto, not only risk breakers"
+    )
 
 
 @pytest.mark.integration

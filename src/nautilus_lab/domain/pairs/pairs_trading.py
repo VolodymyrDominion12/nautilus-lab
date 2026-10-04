@@ -214,7 +214,16 @@ class PairsTrading:
         )
 
     def _fit_step(self, note: str | None = None) -> TraceStep:
-        """The cointegration gate: PASS while a fit is held, INFO (no trading) otherwise."""
+        """The cointegration gate: PASS while a fit is held, INFO (no trading) otherwise.
+
+        INFO, not BLOCK, is deliberate and stays (pinned by
+        `tests/unit/test_two_leg_decisions.py::test_pairs_fit_failure_is_explained`): on a
+        bar without a fit the robot never evaluated an entry, so "this step refused a
+        signal" would overstate what happened, and the same step sits on every flat bar.
+        The price of that choice is measurable: a refused gate is uncountable, so 850 081
+        such steps in the 2026-10 corpus left neither `blocked_by` nor the digest able to
+        say why `pairs` was flat (docs/35 §7, L-9 — open, with the trade-off written down).
+        """
         fit = self._last_fit
         thresholds: dict[str, TraceValue] = {
             "adf_pvalue_max": self._params.adf_pvalue_max,

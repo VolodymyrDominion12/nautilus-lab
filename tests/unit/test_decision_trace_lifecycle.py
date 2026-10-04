@@ -102,6 +102,38 @@ def test_margin_pct_is_signed_share_of_the_threshold() -> None:
     assert margin_pct(None, Decimal("1")) is None
 
 
+def test_a_zero_threshold_has_no_margin_but_keeps_its_numbers() -> None:
+    """A missing `*_margin_pct` must trace back to a zero threshold, not to lost data.
+
+    Every funding record in the 2026-10 corpus with the default `min_net_apy=0` has no
+    `apy_margin_pct` (11 223 of 11 223), which looks like a logging hole until you read the
+    step: the raw `net_apy` and the `min_net_apy` it was compared against are both there,
+    so the *measure* is undefined while the evidence is intact (docs/35 §7, L-11).
+    """
+    from nautilus_lab.domain.funding import FundingCashAndCarry, FundingParams, FundingSnapshot
+
+    robot = FundingCashAndCarry(
+        spot_id="ETH/USDT.SIM",
+        perp_id="ETHUSDT-PERP.SIM",
+        params=FundingParams(min_net_apy=Decimal("0")),
+    )
+    robot.on_funding(
+        FundingSnapshot(
+            instrument="ETHUSDT-PERP.SIM",
+            funding_rate=Decimal("0.0004"),
+            mark_price=Decimal("2600"),
+            index_price=Decimal("2599"),
+            ts_utc=ORIGIN,
+        ),
+        is_open=False,
+    )
+    values = dict(robot.last_trace[-1].values)
+    thresholds = dict(robot.last_trace[-1].thresholds or {})
+    assert values.get("apy_margin_pct") is None, "a zero threshold has no percentage scale"
+    assert values.get("net_apy") is not None, "the measured value must stay in the step"
+    assert thresholds.get("min_net_apy") == Decimal("0"), "the threshold must stay too"
+
+
 def test_meta_label_logs_a_rejected_primary_signal_as_a_block() -> None:
     signal, trace = _run_meta(Decimal("0.40"))[59]
     assert signal is None
@@ -298,6 +330,63 @@ def test_digest_reports_a_filter_just_short_of_its_threshold_as_a_near_miss() ->
     ]
     digest = build_digest(rows)
     assert digest.near_misses == 1
+
+
+def test_narrative_speaks_the_entry_filters_not_the_flow_reading() -> None:
+    """The entry filters (docs/32) must not be narrated as a VPIN flow reading.
+
+    Their steps carry `slope`/`vol_ratio`, not `vpin`, so the generic filter branch rendered
+    the documented filters as `«HTF_TREND buy None / sell None — потік нормальний.»` —
+    wrong numbers and wrong text, for exactly the switches a batch is run to test
+    (docs/35 §7, L-13). Every branch is fed with the real steps `entry_filters.py` builds.
+    """
+    from nautilus_lab.domain.entry_filters import EntryFilter, EntryFilterParams
+    from nautilus_lab.domain.signals import SignalSide
+
+    entry_filter = EntryFilter(
+        EntryFilterParams(
+            htf_trend=True,
+            vol_expansion=True,
+            htf_ema_period=5,
+            htf_slope_lookback=3,
+            vol_fast_period=3,
+            vol_slow_period=6,
+        )
+    )
+    price = Decimal("100")
+    for index in range(30):
+        price += Decimal("1")
+        entry_filter.update(
+            OhlcvBar(
+                instrument_id="ETH/USDT.SIM",
+                ts_utc=ORIGIN + timedelta(hours=index),
+                open=price,
+                high=price + Decimal("2"),
+                low=price - Decimal("2"),
+                close=price,
+                volume=Decimal("10"),
+            )
+        )
+    # A rising series with a SELL side: both gates refuse, each in its own words.
+    verdict = entry_filter.evaluate(SignalSide.SELL)
+    row = _row(ORIGIN, "SIGNAL_VETOED")
+    row["steps"] = [
+        {
+            "stage": item.stage.value,
+            "component": item.component,
+            "verdict": item.verdict.value,
+            "result": item.result,
+            "values": dict(item.values),
+            "thresholds": dict(item.thresholds or {}),
+        }
+        for item in verdict.steps
+    ]
+    text = render_narrative(row)
+    assert "None" not in text, f"a filter narrative must never print a missing value: {text}"
+    assert "потік нормальний" not in text, "the flow wording belongs to the VPIN filter"
+    assert "Фільтр тренду (HTF)" in text
+    assert "нахил EMA5" in text
+    assert "Фільтр волатильності" in text
 
 
 def test_narrative_speaks_the_new_steps() -> None:

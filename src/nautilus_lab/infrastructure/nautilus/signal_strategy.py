@@ -43,6 +43,7 @@ from nautilus_lab.domain.decision_trace import (
     blocked_by_label,
     pct_distance,
     step,
+    veto_reason,
 )
 from nautilus_lab.domain.drawdown_cooldown import PeakState, advance, on_refusal
 from nautilus_lab.domain.ema_crossover import EmaCrossover
@@ -272,6 +273,12 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._last_account: dict[str, TraceValue] | None = None
         self._last_regime: str = ""
         self._current_bar_ts: datetime | None = None
+        # Closed bars this run has written a decision for. `bar_seq` is the only way a
+        # reader can see a *missed* bar: the digest counts `bar_seq_gaps`
+        # (`application/decision_digest.py`), and without the field every summary claimed
+        # zero gaps — 106 of 106 of them — even when the feed had holes (docs/35 §7, L-10).
+        # The paper terminal has written it since docs/28; the backtest writer did not.
+        self._bar_seq: int = 0
         self._protective_level: Decimal | None = None
         self._entry_fill_price: Decimal | None = None
         self._entry_fill_qty: Decimal | None = None
@@ -353,8 +360,11 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return
 
         outcome, blocked_by, execution_steps = self._process_signal(signal, domain_bar.close)
-        if outcome is Outcome.NO_SIGNAL and signal is None and _vetoed(steps):
-            outcome = Outcome.SIGNAL_VETOED
+        if outcome is Outcome.NO_SIGNAL and signal is None:
+            veto = veto_reason(steps)
+            if veto is not None:
+                outcome = Outcome.SIGNAL_VETOED
+                blocked_by = veto
         self._record_decision_log(
             domain_bar, signal, outcome, steps, blocked_by, self._overlay_steps + execution_steps
         )
@@ -969,6 +979,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         if self.decision_log is None or self.session_id is None:
             return
         self._write_run_header(bar)
+        # Counted here, in the single writer, so no call site can forget it and an intrabar
+        # record (written elsewhere, `_record_stop_fill`) cannot inflate the bar sequence.
+        self._bar_seq += 1
 
         all_steps = tuple(steps) + tuple(execution_steps or ())
         regime = self._record_regime(signal, steps)
@@ -991,6 +1004,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             indicators=legacy_indicators(all_steps),
             states=states,
             session_id=self.session_id,
+            bar_seq=self._bar_seq,
             bar={"o": bar.open, "h": bar.high, "l": bar.low, "c": bar.close, "v": bar.volume},
             account=account,
             steps=all_steps,
@@ -1217,14 +1231,6 @@ class SignalRobot(Strategy):  # type: ignore[misc]
 
 #: Outcomes after which the bar's position is being closed: no stop level is carried.
 _CLOSING_OUTCOMES = frozenset({Outcome.EXIT, Outcome.RATCHET_EXIT})
-
-
-def _vetoed(steps: list[TraceStep]) -> bool:
-    """True when a filter or strategy step inside the robot blocked its own signal."""
-    return any(
-        item.verdict is Verdict.BLOCK and item.stage in (Stage.FILTER, Stage.STRATEGY)
-        for item in steps
-    )
 
 
 def _event_ts(event: object) -> datetime:

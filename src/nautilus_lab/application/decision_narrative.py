@@ -162,10 +162,19 @@ def _filter(step: Mapping[str, Any]) -> str:
     verdict = step.get("verdict")
     if verdict == "skip":
         return f"{name}: ще немає даних."
-    if step.get("component") == "meta_label":
+    component = step.get("component")
+    if component == "meta_label":
         return _meta_label(step)
-    if step.get("component") == "cointegration":
+    if component == "cointegration":
         return _cointegration(step)
+    if component == "htf_trend":
+        return _htf_trend(step)
+    if component == "vol_expansion":
+        return _vol_expansion(step)
+    if component == "regime_legs":
+        return _regime_legs(step)
+    if component == "min_hold_bars":
+        return _min_hold_bars(step)
     reading = _v(step, "vpin")
     threshold = _t(step, "toxic_threshold")
     if reading is not None and threshold is not None:
@@ -180,6 +189,60 @@ def _filter(step: Mapping[str, Any]) -> str:
     if verdict == "modify":
         text += f"; фільтр змінив маршрут ({step.get('note')})"
     return text + "."
+
+
+def _htf_trend(step: Mapping[str, Any]) -> str:
+    """The slow-EMA slope gate (`ENTRY_FILTER_HTF_TREND`).
+
+    Without this branch the generic filter text rendered entry filters as a flow reading
+    ("buy None / sell None — потік нормальний"), because their steps carry `slope` and
+    `vol_ratio` rather than `vpin` (docs/35 §7, L-13).
+    """
+    slope = fmt(_v(step, "slope"), signed=True)
+    side = str(_v(step, "side") or "")
+    lookback = fmt(_t(step, "htf_slope_lookback"))
+    period = fmt(_t(step, "htf_ema_period"))
+    if step.get("result") == "warming up":
+        return (
+            f"Фільтр тренду (HTF): EMA{period} ще не готова "
+            f"({fmt(_v(step, 'bars_seen'))} барів) — входів немає."
+        )
+    tail = "вхід дозволено" if step.get("verdict") == "pass" else "вхід заблоковано"
+    return (
+        f"Фільтр тренду (HTF): нахил EMA{period} за {lookback} барів {slope} "
+        f"проти сторони {side or '—'} — {tail}."
+    )
+
+
+def _vol_expansion(step: Mapping[str, Any]) -> str:
+    """The volatility-expansion gate (`ENTRY_FILTER_VOL_EXPANSION`)."""
+    ratio = fmt(_v(step, "vol_ratio"))
+    minimum = fmt(_t(step, "min_vol_ratio"))
+    fast, slow = fmt(_t(step, "vol_fast_period")), fmt(_t(step, "vol_slow_period"))
+    if step.get("result") == "warming up":
+        return (
+            f"Фільтр волатильності: історії діапазону ще немає "
+            f"({fmt(_v(step, 'bars_seen'))} барів) — входів немає."
+        )
+    tail = "вхід дозволено" if step.get("verdict") == "pass" else "вхід заблоковано"
+    return (
+        f"Фільтр волатильності: відношення діапазонів {fast}/{slow} = {ratio} "
+        f"проти порогу {minimum} — {tail}."
+    )
+
+
+def _regime_legs(step: Mapping[str, Any]) -> str:
+    """A leg switched off by `REGIME_LEGS` (docs/31)."""
+    leg = fmt(_v(step, "leg"))
+    enabled = fmt(_v(step, "enabled"))
+    if step.get("verdict") == "block":
+        return f"Ногу {leg} вимкнено (REGIME_LEGS=[{enabled}]) — сигнал відкинуто."
+    return f"Нога {leg} вимкнена (REGIME_LEGS=[{enabled}]), сигналу на цьому барі не було."
+
+
+def _min_hold_bars(step: Mapping[str, Any]) -> str:
+    """`REGIME_MIN_HOLD_BARS`: a reversal held back until the position is old enough."""
+    return f"Мінімальний строк утримання: {step.get('result')} — розворот відкладено."
 
 
 def _cointegration(step: Mapping[str, Any]) -> str:

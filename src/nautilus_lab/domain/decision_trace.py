@@ -18,7 +18,7 @@ to serialise them.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
@@ -154,7 +154,15 @@ def margin_pct(value: Decimal | None, threshold: Decimal | None) -> Decimal | No
 
     The one number that makes near-misses comparable across robots: a VPIN of 0.62 against
     a 0.70 trigger is -11.4%, a breakout 0.2% below the channel is -0.2%. None when either
-    side is missing or the threshold is 0.
+    side is missing — including a threshold of 0, where the scale does not exist: there is
+    no percentage of zero to be short of, and "5% softer" would still be zero.
+
+    That is a limit of the measure, not a hole in the log. A caller whose threshold may be
+    zero still has to write the raw pair (`domain/funding.py` logs `net_apy` beside
+    `min_net_apy`), so a reader that finds no `*_margin_pct` can see the two numbers the
+    percent would have been derived from. The 2026-10 corpus has 11 223 funding records
+    with `min_net_apy=0` and therefore no `apy_margin_pct` — every one of them still
+    carries the rate, the amortised fee and the annualised net (docs/35 §7, L-11).
     """
     if value is None or threshold is None or threshold == 0:
         return None
@@ -164,6 +172,25 @@ def margin_pct(value: Decimal | None, threshold: Decimal | None) -> Decimal | No
 def is_warmup(trace: tuple[TraceStep, ...]) -> bool:
     """True when the robot could not decide because it is still warming up."""
     return bool(trace) and all(item.stage is Stage.WARMUP for item in trace)
+
+
+def veto_reason(trace: Sequence[TraceStep]) -> str | None:
+    """`<stage>.<component>` of the step that blocked the robot's own signal, if any.
+
+    A robot that refuses inside itself — a meta-label veto, an entry filter, a disabled
+    `REGIME_LEGS` leg, `min_hold_bars`, a closed cointegration gate — leaves a
+    `Verdict.BLOCK` step and no signal. Both writers (single-leg `signal_strategy` and the
+    two-leg `spread_strategy`) turn that into `Outcome.SIGNAL_VETOED` carrying this label,
+    because a veto with no reason is invisible in exactly the place a reader looks for it:
+    the batch table's blocked column and the digest's blocked tally count `blocked_by`, not
+    steps. The corpus that motivated it: 54 964 `SIGNAL_VETOED` records, every one with no
+    reason (docs/35 §7, L-8). The label is the vocabulary the entry filters already
+    document (`filter.htf_trend`, `filter.vol_expansion`).
+    """
+    for item in trace:
+        if item.verdict is Verdict.BLOCK and item.stage in (Stage.FILTER, Stage.STRATEGY):
+            return f"{item.stage.value}.{item.component}"
+    return None
 
 
 def blocked_by_label(code: str) -> str:

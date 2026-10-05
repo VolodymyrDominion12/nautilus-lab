@@ -15,10 +15,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     payload = cast(dict[str, Any], json.loads(Path(args.config_json).read_text(encoding="utf-8")))
     reports_dir = Path(args.reports_dir)
+    model_types_raw = payload.get("model_types")
+    instruments_raw = payload.get("instruments")
     job = MLTrainConfig(
         model_type=str(payload.get("model_type", "formulaic")),
+        model_types=tuple(model_types_raw) if isinstance(model_types_raw, list) else None,
         catalog_path=payload.get("catalog_path"),
         instrument_id=payload.get("instrument_id"),
+        instruments=tuple(instruments_raw) if isinstance(instruments_raw, list) else None,
         bar_interval=payload.get("bar_interval"),
         output_path=payload.get("output_path"),
         folds=int(payload.get("folds", 5)),

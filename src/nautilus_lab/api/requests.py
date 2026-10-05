@@ -72,8 +72,10 @@ class SettingsUpdate(BaseModel):
 
 class MLTrainRequest(BaseModel):
     model_type: str = "formulaic"
+    model_types: list[str] | None = None
     catalog_path: str | None = None
     instrument_id: str | None = None
+    instruments: list[str] | None = None
     bar_interval: str | None = None
     output_path: str | None = None
     folds: int = 5

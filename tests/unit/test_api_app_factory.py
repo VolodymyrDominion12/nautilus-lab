@@ -35,6 +35,7 @@ ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/batches/{batch_id}/restart"),
         ("POST", "/api/batches/{batch_id}/retry"),
         ("DELETE", "/api/batches/{batch_id}"),
+        ("DELETE", "/api/ml/models/{model_path}"),
         ("GET", "/api/batches/{batch_id}/runs/{cell_id}"),
         ("GET", "/api/batches/{batch_id}/runs/{cell_id}/decisions"),
         ("GET", "/api/batches/{batch_id}/runs/{cell_id}/digest"),

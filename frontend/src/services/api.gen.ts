@@ -133,6 +133,13 @@ export interface MlModelInfo {
   size_kb: number;
   /** File modification time, seconds since the epoch. */
   modified: number;
+  instrument_id: string | null;
+  robot: string | null;
+  bar_type: string | null;
+  rows: number | null;
+  horizon: number | null;
+  train_first_ts: string | null;
+  train_last_ts: string | null;
 }
 
 export interface MlModelsResponse {
@@ -308,8 +315,10 @@ export interface SettingsUpdate {
 
 export interface MLTrainRequest {
   model_type?: string;
+  model_types?: string[] | null;
   catalog_path?: string | null;
   instrument_id?: string | null;
+  instruments?: string[] | null;
   bar_interval?: string | null;
   output_path?: string | null;
   folds?: number;

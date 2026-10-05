@@ -188,6 +188,13 @@ class MlModelInfo(ApiModel):
     size_kb: float
     modified: float
     """File modification time, seconds since the epoch."""
+    instrument_id: str | None = None
+    robot: str | None = None
+    bar_type: str | None = None
+    rows: int | None = None
+    horizon: int | None = None
+    train_first_ts: str | None = None
+    train_last_ts: str | None = None
 
 
 class MlModelsResponse(ApiModel):

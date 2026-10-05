@@ -47,6 +47,25 @@ def run_ml_train(
     return {"status": "started", "message": f"ML training started for {req.model_type}"}
 
 
+@router.delete("/api/ml/models/{model_path:path}", response_model=ActionResult)
+def delete_ml_model(model_path: str) -> dict[str, Any]:
+    from pathlib import Path
+
+    try:
+        clean_path = Path(model_path).resolve()
+        base_dir = Path("models").resolve()
+        is_safe = clean_path.is_relative_to(base_dir) and clean_path.suffix == ".txt"
+        if not is_safe or not clean_path.is_file():
+            return {"status": "error", "message": "Model not found or invalid path"}
+        clean_path.unlink(missing_ok=True)
+        card = Path(f"{clean_path}.card.json")
+        if card.exists():
+            card.unlink(missing_ok=True)
+        return {"status": "ok", "message": f"Deleted {clean_path.name}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "message": f"Failed to delete model: {exc}"}
+
+
 @router.post("/api/ml/train/cancel", response_model=ActionResult, response_model_exclude_none=True)
 def cancel_ml_train(ctx: Lab) -> dict[str, Any]:
     if not ctx.jobs.cancel("ml_train"):
@@ -77,6 +96,10 @@ def get_ml_train_log(ctx: Lab) -> dict[str, Any]:
             "train_window": result.get("train_window"),
             "created_at": result.get("created_at"),
             "error_message": result.get("error_message"),
+            "instrument": result.get("instrument"),
+            "total_tasks": result.get("total_tasks"),
+            "succeeded": result.get("succeeded"),
+            "runs": result.get("runs"),
         }
     elif content:
         summary["is_finished"] = "Process finished with code" in content

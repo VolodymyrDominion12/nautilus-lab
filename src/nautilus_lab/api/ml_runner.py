@@ -26,8 +26,13 @@ from nautilus_lab.application.train_meta_label import (
 from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.model_card import ModelCard
 from nautilus_lab.domain.triple_barrier import TripleBarrierConfig
-from nautilus_lab.infrastructure.model_card_store import file_sha256, write_model_card
+from nautilus_lab.infrastructure.model_card_store import (
+    JsonModelCardSource,
+    file_sha256,
+    write_model_card,
+)
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
+from nautilus_lab.infrastructure.settings import Settings
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
 from nautilus_lab.interfaces.composition import settings
 
@@ -35,8 +40,10 @@ from nautilus_lab.interfaces.composition import settings
 @dataclass(frozen=True, slots=True)
 class MLTrainConfig:
     model_type: str = "formulaic"
+    model_types: tuple[str, ...] | None = None
     catalog_path: str | None = None
     instrument_id: str | None = None
+    instruments: tuple[str, ...] | None = None
     bar_interval: str | None = None
     output_path: str | None = None
     folds: int = 5
@@ -100,6 +107,188 @@ def _write_card(
     return str(write_model_card(model_path, card))
 
 
+def _train_single(
+    job: MLTrainConfig,
+    instrument: str,
+    model_type: str,
+    output_path: Path,
+    cfg: Settings,
+    catalog_path: Path,
+    start: datetime | None,
+    end: datetime | None,
+    window: str,
+) -> dict[str, Any]:
+    store = NautilusParquetCatalog(catalog_path, spot_fees=FeeSchedule.binance_spot_vip0())
+    interval = job.bar_interval or cfg.bar_interval
+    bar_type = nautilus_bar_type(instrument, interval)
+    bars = store.load(bar_type=bar_type, start=start, end=end)
+    if model_type != "obi" and not bars:
+        raise ValueError(f"no bars in catalog for {bar_type} in the requested window")
+
+    if model_type == "formulaic":
+        dataset = build_formulaic_dataset(bars, horizon=job.horizon)
+        report = train_formulaic_lightgbm(
+            dataset,
+            output_path,
+            n_splits=job.folds,
+            embargo=job.embargo,
+            train_window=window,
+        )
+        card = _write_card(
+            report.model_path,
+            robot="formulaic_lgbm",
+            instrument_id=instrument,
+            bar_type=bar_type,
+            first_ts=bars[0].ts_utc,
+            last_ts=bars[-1].ts_utc,
+            horizon=job.horizon,
+            rows=report.rows,
+        )
+        accuracy = _pct(report.accuracy)
+        majority = _pct(report.majority_rate)
+        beats = _flag(report.beats_majority)
+        print(
+            f"saved={report.model_path} card={card} rows={report.rows} folds={report.folds} "
+            f"purged_cv_accuracy={accuracy} majority_rate={majority} "
+            f"beats_majority={beats} train_window={report.train_window}"
+        )
+        return {
+            "is_finished": True,
+            "is_error": False,
+            "model_type": "formulaic",
+            "instrument": instrument,
+            "model_path": report.model_path,
+            "rows": report.rows,
+            "folds": report.folds,
+            "accuracy": accuracy,
+            "accuracy_raw": str(report.accuracy) if report.accuracy is not None else None,
+            "majority_rate": majority,
+            "beats_majority": beats,
+            "train_window": report.train_window,
+        }
+
+    if model_type == "meta_label":
+        barrier = TripleBarrierConfig(
+            profit_multiple=Decimal(job.profit_multiple),
+            stop_multiple=Decimal(job.stop_multiple),
+            horizon=job.horizon,
+        )
+        meta_dataset = build_meta_label_dataset(
+            bars,
+            instrument_id=instrument,
+            barrier=barrier,
+            volatility_window=job.vol_window,
+        )
+        meta_report = train_meta_label_lightgbm(
+            meta_dataset,
+            output_path,
+            n_splits=job.folds,
+            embargo=job.embargo,
+            threshold=Decimal(job.threshold),
+            train_window=window,
+        )
+        card = _write_card(
+            meta_report.model_path,
+            robot="meta_label",
+            instrument_id=instrument,
+            bar_type=bar_type,
+            first_ts=bars[0].ts_utc,
+            last_ts=bars[-1].ts_utc,
+            horizon=job.horizon,
+            rows=meta_report.rows,
+        )
+        print(f"card={card}")
+        accuracy = _pct(meta_report.accuracy)
+        tp_rate = _pct(meta_report.take_profit_rate)
+        precision = _pct(meta_report.oof_precision)
+        recall = _pct(meta_report.oof_recall)
+        beats = _flag(meta_report.beats_always_take)
+        print(
+            f"saved={meta_report.model_path} rows={meta_report.rows} folds={meta_report.folds} "
+            f"purged_cv_accuracy={accuracy} take_profit_rate={tp_rate} "
+            f"oof_precision={precision} oof_recall={recall} beats_always_take={beats} "
+            f"train_window={meta_report.train_window}"
+        )
+        return {
+            "is_finished": True,
+            "is_error": False,
+            "model_type": "meta_label",
+            "instrument": instrument,
+            "model_path": meta_report.model_path,
+            "rows": meta_report.rows,
+            "folds": meta_report.folds,
+            "accuracy": accuracy,
+            "take_profit_rate": tp_rate,
+            "oof_precision": precision,
+            "oof_recall": recall,
+            "beats_always_take": beats,
+            "train_window": meta_report.train_window,
+        }
+
+    if model_type == "obi":
+        from nautilus_lab.application.train_obi import (
+            build_obi_dataset,
+            obi_book_symbol,
+            train_obi_lightgbm,
+        )
+        from nautilus_lab.interfaces.composition import orderbook_catalog
+
+        store_books = orderbook_catalog(cfg, path=str(catalog_path))
+        symbol = obi_book_symbol(instrument)
+        books = store_books.load(symbol=symbol, start=start, end=end)
+        if not books:
+            msg = f"No order books found in catalog for {symbol} in the requested window"
+            raise ValueError(msg)
+
+        obi_dataset = build_obi_dataset(
+            books, horizon=job.horizon, threshold_bps=Decimal(job.threshold)
+        )
+        obi_report = train_obi_lightgbm(
+            obi_dataset,
+            output_path,
+            n_splits=job.folds,
+            embargo=job.embargo,
+            train_window=window,
+        )
+        card = _write_card(
+            obi_report.model_path,
+            robot="ml_obi",
+            instrument_id=instrument,
+            bar_type=None,
+            first_ts=min(book.ts_utc for book in books),
+            last_ts=max(book.ts_utc for book in books),
+            horizon=job.horizon,
+            rows=obi_report.rows,
+        )
+        print(f"card={card}")
+        accuracy = _pct(obi_report.accuracy)
+        majority = _pct(obi_report.majority_rate)
+        beats = _flag(obi_report.beats_majority)
+        print(
+            f"saved={obi_report.model_path} rows={obi_report.rows} "
+            f"folds={obi_report.folds} purged_cv_accuracy={accuracy} "
+            f"majority_rate={majority} beats_majority={beats} "
+            f"train_window={obi_report.train_window}"
+        )
+        return {
+            "is_finished": True,
+            "is_error": False,
+            "model_type": "obi",
+            "instrument": instrument,
+            "model_path": obi_report.model_path,
+            "rows": obi_report.rows,
+            "folds": obi_report.folds,
+            "accuracy": accuracy,
+            "accuracy_raw": (str(obi_report.accuracy) if obi_report.accuracy is not None else None),
+            "majority_rate": majority,
+            "beats_majority": beats,
+            "train_window": obi_report.train_window,
+        }
+
+    msg = f"unknown model_type: {model_type}"
+    raise ValueError(msg)
+
+
 def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
     buffer = io.StringIO()
     original = cast(TextIO, sys.stdout)
@@ -107,187 +296,101 @@ def execute_ml_train(job: MLTrainConfig) -> tuple[dict[str, Any], str]:
     cfg = settings()
     try:
         catalog_path = resolve_catalog_path(job.catalog_path)
-        instrument = job.instrument_id or cfg.instrument_id
-        interval = job.bar_interval or cfg.bar_interval
-        store = NautilusParquetCatalog(catalog_path, spot_fees=FeeSchedule.binance_spot_vip0())
-        bar_type = nautilus_bar_type(instrument, interval)
         start = parse_optional_utc(job.start)
         end = parse_optional_utc(job.end)
         require_exclusive_window(start, end)
         window = describe_train_window(start=start, end=end)
-        bars = store.load(bar_type=bar_type, start=start, end=end)
-        if job.model_type != "obi" and not bars:
-            raise ValueError(f"no bars in catalog for {bar_type} in the requested window")
 
-        if job.model_type == "formulaic":
-            output = Path(job.output_path or "models/formulaic_lgbm.txt")
-            dataset = build_formulaic_dataset(bars, horizon=job.horizon)
-            report = train_formulaic_lightgbm(
-                dataset,
-                output,
-                n_splits=job.folds,
-                embargo=job.embargo,
-                train_window=window,
+        model_list = list(job.model_types) if job.model_types else [job.model_type]
+        instruments_list = (
+            list(job.instruments) if job.instruments else [job.instrument_id or cfg.instrument_id]
+        )
+
+        total_tasks = len(model_list) * len(instruments_list)
+        is_batch = total_tasks > 1
+
+        if not is_batch:
+            m = model_list[0]
+            inst = instruments_list[0]
+            if m == "obi":
+                default_name = "obi_lgbm"
+            elif m == "meta_label":
+                default_name = "meta_label"
+            else:
+                default_name = "formulaic_lgbm"
+            out_file = Path(job.output_path or f"models/{default_name}.txt")
+            result = _train_single(
+                job,
+                instrument=inst,
+                model_type=m,
+                output_path=out_file,
+                cfg=cfg,
+                catalog_path=catalog_path,
+                start=start,
+                end=end,
+                window=window,
             )
-            card = _write_card(
-                report.model_path,
-                robot="formulaic_lgbm",
-                instrument_id=instrument,
-                bar_type=bar_type,
-                first_ts=bars[0].ts_utc,
-                last_ts=bars[-1].ts_utc,
-                horizon=job.horizon,
-                rows=report.rows,
-            )
-            accuracy = _pct(report.accuracy)
-            majority = _pct(report.majority_rate)
-            beats = _flag(report.beats_majority)
-            print(
-                f"saved={report.model_path} card={card} rows={report.rows} folds={report.folds} "
-                f"purged_cv_accuracy={accuracy} majority_rate={majority} "
-                f"beats_majority={beats} train_window={report.train_window}"
-            )
-            result = {
-                "is_finished": True,
-                "is_error": False,
-                "model_type": "formulaic",
-                "model_path": report.model_path,
-                "rows": report.rows,
-                "folds": report.folds,
-                "accuracy": accuracy,
-                "accuracy_raw": str(report.accuracy) if report.accuracy is not None else None,
-                "majority_rate": majority,
-                "beats_majority": beats,
-                "train_window": report.train_window,
-            }
             return result, buffer.getvalue()
 
-        if job.model_type == "meta_label":
-            output = Path(job.output_path or "models/meta_label.txt")
-            barrier = TripleBarrierConfig(
-                profit_multiple=Decimal(job.profit_multiple),
-                stop_multiple=Decimal(job.stop_multiple),
-                horizon=job.horizon,
-            )
-            meta_dataset = build_meta_label_dataset(
-                bars,
-                instrument_id=instrument,
-                barrier=barrier,
-                volatility_window=job.vol_window,
-            )
-            meta_report = train_meta_label_lightgbm(
-                meta_dataset,
-                output,
-                n_splits=job.folds,
-                embargo=job.embargo,
-                threshold=Decimal(job.threshold),
-                train_window=window,
-            )
-            card = _write_card(
-                meta_report.model_path,
-                robot="meta_label",
-                instrument_id=instrument,
-                bar_type=bar_type,
-                first_ts=bars[0].ts_utc,
-                last_ts=bars[-1].ts_utc,
-                horizon=job.horizon,
-                rows=meta_report.rows,
-            )
-            print(f"card={card}")
-            accuracy = _pct(meta_report.accuracy)
-            tp_rate = _pct(meta_report.take_profit_rate)
-            precision = _pct(meta_report.oof_precision)
-            recall = _pct(meta_report.oof_recall)
-            beats = _flag(meta_report.beats_always_take)
-            print(
-                f"saved={meta_report.model_path} rows={meta_report.rows} folds={meta_report.folds} "
-                f"purged_cv_accuracy={accuracy} take_profit_rate={tp_rate} "
-                f"oof_precision={precision} oof_recall={recall} beats_always_take={beats} "
-                f"train_window={meta_report.train_window}"
-            )
-            result = {
-                "is_finished": True,
-                "is_error": False,
-                "model_type": "meta_label",
-                "model_path": meta_report.model_path,
-                "rows": meta_report.rows,
-                "folds": meta_report.folds,
-                "accuracy": accuracy,
-                "take_profit_rate": tp_rate,
-                "oof_precision": precision,
-                "oof_recall": recall,
-                "beats_always_take": beats,
-                "train_window": meta_report.train_window,
-            }
-            return result, buffer.getvalue()
+        # Batch execution
+        print(
+            f"=== Starting ML Batch Training: {len(model_list)} model(s) x "
+            f"{len(instruments_list)} instrument(s) ({total_tasks} total tasks) ==="
+        )
+        runs: list[dict[str, Any]] = []
+        task_idx = 1
+        succeeded = 0
 
-        if job.model_type == "obi":
-            from nautilus_lab.application.train_obi import (
-                build_obi_dataset,
-                obi_book_symbol,
-                train_obi_lightgbm,
-            )
-            from nautilus_lab.interfaces.composition import orderbook_catalog
+        for m in model_list:
+            for inst in instruments_list:
+                clean_sym = (
+                    inst.replace("/", "")
+                    .replace(".SIM", "")
+                    .replace(".BINANCE", "")
+                    .replace("-", "_")
+                )
+                sub_out = Path(f"models/{m}_{clean_sym}.txt")
+                print(f"\n[{task_idx}/{total_tasks}] Training {m} on {inst} -> {sub_out} ...")
+                try:
+                    res = _train_single(
+                        job,
+                        instrument=inst,
+                        model_type=m,
+                        output_path=sub_out,
+                        cfg=cfg,
+                        catalog_path=catalog_path,
+                        start=start,
+                        end=end,
+                        window=window,
+                    )
+                    runs.append(res)
+                    succeeded += 1
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[{task_idx}/{total_tasks}] ERROR training {m} on {inst}: {exc}")
+                    runs.append(
+                        {
+                            "is_finished": True,
+                            "is_error": True,
+                            "model_type": m,
+                            "instrument": inst,
+                            "error_message": str(exc),
+                        }
+                    )
+                task_idx += 1
 
-            output = Path(job.output_path or "models/obi_lgbm.txt")
-            store_books = orderbook_catalog(cfg, path=str(catalog_path))
+        print(f"\n=== Batch ML Training Completed: {succeeded}/{total_tasks} successful ===")
+        result = {
+            "is_finished": True,
+            "is_error": succeeded == 0 and total_tasks > 0,
+            "model_type": "batch",
+            "total_tasks": total_tasks,
+            "succeeded": succeeded,
+            "accuracy": f"{succeeded}/{total_tasks} ok",
+            "runs": runs,
+            "rows": sum(int(r.get("rows") or 0) for r in runs if not r.get("is_error")),
+        }
+        return result, buffer.getvalue()
 
-            symbol = obi_book_symbol(instrument)
-
-            books = store_books.load(symbol=symbol, start=start, end=end)
-
-            if not books:
-                raise ValueError("No order books found in catalog for the requested window")
-
-            obi_dataset = build_obi_dataset(
-                books, horizon=job.horizon, threshold_bps=Decimal(job.threshold)
-            )
-            obi_report = train_obi_lightgbm(
-                obi_dataset,
-                output,
-                n_splits=job.folds,
-                embargo=job.embargo,
-                train_window=window,
-            )
-            card = _write_card(
-                obi_report.model_path,
-                robot="ml_obi",
-                instrument_id=instrument,
-                bar_type=None,
-                first_ts=min(book.ts_utc for book in books),
-                last_ts=max(book.ts_utc for book in books),
-                horizon=job.horizon,
-                rows=obi_report.rows,
-            )
-            print(f"card={card}")
-            accuracy = _pct(obi_report.accuracy)
-            majority = _pct(obi_report.majority_rate)
-            beats = _flag(obi_report.beats_majority)
-            print(
-                f"saved={obi_report.model_path} rows={obi_report.rows} "
-                f"folds={obi_report.folds} purged_cv_accuracy={accuracy} "
-                f"majority_rate={majority} beats_majority={beats} "
-                f"train_window={obi_report.train_window}"
-            )
-            result = {
-                "is_finished": True,
-                "is_error": False,
-                "model_type": "obi",
-                "model_path": obi_report.model_path,
-                "rows": obi_report.rows,
-                "folds": obi_report.folds,
-                "accuracy": accuracy,
-                "accuracy_raw": (
-                    str(obi_report.accuracy) if obi_report.accuracy is not None else None
-                ),
-                "majority_rate": majority,
-                "beats_majority": beats,
-                "train_window": obi_report.train_window,
-            }
-            return result, buffer.getvalue()
-
-        msg = f"unknown model_type: {job.model_type}"
-        raise ValueError(msg)
     except Exception as exc:  # noqa: BLE001 — job boundary: the error goes into the result file
         traceback.print_exc()
         return (
@@ -308,14 +411,29 @@ def list_models(models_dir: Path | None = None) -> list[dict[str, Any]]:
     if not root.exists():
         return []
     models: list[dict[str, Any]] = []
-    for path in sorted(root.glob("*.txt"), key=lambda item: item.stat().st_mtime, reverse=True):
+    card_source = JsonModelCardSource()
+    seen: set[str] = set()
+
+    for path in sorted(root.rglob("*.txt"), key=lambda item: item.stat().st_mtime, reverse=True):
+        rel = str(path)
+        if rel in seen:
+            continue
+        seen.add(rel)
         stat = path.stat()
-        models.append(
-            {
-                "filename": path.name,
-                "path": str(path),
-                "size_kb": round(stat.st_size / 1024, 1),
-                "modified": stat.st_mtime,
-            }
-        )
+        item: dict[str, Any] = {
+            "filename": path.name,
+            "path": rel,
+            "size_kb": round(stat.st_size / 1024, 1),
+            "modified": stat.st_mtime,
+        }
+        card = card_source.card_for(rel)
+        if card:
+            item["instrument_id"] = card.instrument_id
+            item["robot"] = card.robot
+            item["bar_type"] = card.bar_type
+            item["rows"] = card.rows
+            item["horizon"] = card.horizon
+            item["train_first_ts"] = card.train_first_ts.isoformat()
+            item["train_last_ts"] = card.train_last_ts.isoformat()
+        models.append(item)
     return models

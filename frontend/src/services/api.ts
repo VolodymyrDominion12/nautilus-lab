@@ -596,13 +596,36 @@ export interface JournalEntry {
   artifact?: string | null;
 }
 
+export interface MlRunResult {
+  is_finished?: boolean;
+  is_error?: boolean;
+  model_type?: string;
+  instrument?: string;
+  model_path?: string;
+  rows?: number;
+  folds?: number;
+  accuracy?: string;
+  majority_rate?: string;
+  beats_majority?: string;
+  take_profit_rate?: string;
+  oof_precision?: string;
+  oof_recall?: string;
+  beats_always_take?: string;
+  train_window?: string;
+  error_message?: string;
+}
+
 export interface MlTrainSummary {
   is_finished: boolean;
   is_error: boolean;
   model_type?: string;
+  instrument?: string;
   model_path?: string;
   accuracy?: string;
   rows?: number;
+  total_tasks?: number;
+  succeeded?: number;
+  runs?: MlRunResult[];
   /** Meta-label runs only: share of labels that hit the profit barrier. */
   take_profit_rate?: string | null;
   oof_precision?: string | null;
@@ -668,15 +691,28 @@ export async function fetchMlModels(): Promise<MlModelsResponse> {
   return parseJson(await fetch(apiUrl('/api/ml/models')));
 }
 
+export async function deleteMlModel(modelPath: string): Promise<ActionResult> {
+  return parseJson(
+    await fetch(apiUrl(`/api/ml/models/${encodeURIComponent(modelPath)}`), {
+      method: 'DELETE',
+    }),
+  );
+}
+
 export async function runMlTrain(params: {
-  model_type: string;
+  model_type?: string;
+  model_types?: string[];
   folds?: number;
   embargo?: number;
   horizon?: number;
   catalog_path?: string;
   instrument_id?: string;
+  instruments?: string[];
   bar_interval?: string;
   output_path?: string;
+  profit_multiple?: string;
+  stop_multiple?: string;
+  vol_window?: number;
   start?: string;
   end?: string;
   threshold?: string;

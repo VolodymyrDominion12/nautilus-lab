@@ -270,6 +270,10 @@ def _single_cell(
         catalog, interval = request.funding_catalog, request.funding_interval
         env["FUNDING_SPOT_ID"] = spot_instrument(symbol)
         env["FUNDING_PERP_ID"] = perp_instrument(symbol)
+    if robot == "vpin_momentum":
+        env.setdefault("USE_QUANTILE_VPIN", "true")
+    if robot == "formulaic_lgbm":
+        env.setdefault("FORMULAIC_MIN_HOLD_BARS", "4")
     if robot in _MODEL_ENV:
         variable, kind = _MODEL_ENV[robot]
         path = env.get(variable) or f"{request.models_dir}/{kind}_{base}_preoos.txt"

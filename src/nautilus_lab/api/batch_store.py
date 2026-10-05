@@ -198,8 +198,8 @@ def list_batches(reports_dir: Path, *, limit: int = 50) -> list[dict[str, Any]]:
                 "status": effective_status(batch),
                 "cells": len(batch.get("cells", [])),
                 "counts": dict(counts),
-                "robots": batch.get("request", {}).get("robots", []),
-                "symbols": batch.get("request", {}).get("symbols", []),
+                "robots": (batch.get("request") or {}).get("robots", []),
+                "symbols": (batch.get("request") or {}).get("symbols", []),
                 "imported_from": batch.get("imported_from"),
             }
         )
@@ -607,7 +607,7 @@ def _collect_breaches(multi: dict[str, Any], result: dict[str, Any] | None) -> d
             for k, v in fb.items():
                 totals[k] = totals.get(k, 0) + int(v)
     if not totals and result:
-        sb = result.get("single_backtest", {}).get("risk_breaches")
+        sb = (result.get("single_backtest") or {}).get("risk_breaches")
         if isinstance(sb, dict):
             for k, v in sb.items():
                 totals[k] = totals.get(k, 0) + int(v)

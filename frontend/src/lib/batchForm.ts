@@ -64,7 +64,7 @@ export const ALL_LAB_SYMBOLS = [
   'AVAXUSDT',
   'DOTUSDT',
   'LINKUSDT',
-  'MATICUSDT',
+  'LTCUSDT',
 ] as const;
 
 export function normalizeSymbol(raw: string): string {

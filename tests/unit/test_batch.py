@@ -22,6 +22,7 @@ from nautilus_lab.api.batch_store import (
     RUNNING,
     SUMMARY_VERSION,
     batch_payload,
+    build_cell_summary,
     cell_dir,
     cell_summary,
     create_batch,
@@ -842,3 +843,47 @@ def test_batch_request_carries_embargo_bars() -> None:
 
     with pytest.raises(ValueError, match="embargo_bars must be >= 0"):
         BatchRequest(robots=("ema",), symbols=("ETHUSDT",), folds=2, embargo_bars=-1)
+
+
+def test_cell_summary_handles_none_single_backtest(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    batch_id = "test_batch"
+    bdir = reports / "batches" / batch_id
+    cdir = bdir / "cells" / "cell_1"
+    cdir.mkdir(parents=True)
+    write_json(
+        cdir / "last_run.json",
+        {
+            "multi_window": {"folds": []},
+            "single_backtest": None,
+        },
+    )
+    cell = {"cell_id": "cell_1", "status": OK}
+    summary = build_cell_summary(cdir, cell, Settings())
+    assert summary["numbers"]["risk_breaches"] == {}
+
+    write_json(
+        bdir / "batch.json",
+        {
+            "id": batch_id,
+            "status": OK,
+            "cells": [cell],
+            "request": None,
+        },
+    )
+    payload = batch_payload(reports, batch_id, Settings())
+    assert payload is not None
+    assert len(payload["rows"]) == 1
+    assert payload["rows"][0]["cell_id"] == "cell_1"
+
+
+def test_plan_cells_sets_safeguards_for_vpin_and_formulaic() -> None:
+    request = BatchRequest(
+        robots=("vpin_momentum", "formulaic_lgbm"),
+        symbols=("BTCUSDT",),
+    )
+    cells = plan_cells(request, exists=_all_exist, wired=["vpin_momentum", "formulaic_lgbm"])
+    by_id = {c.cell_id: c for c in cells}
+    assert by_id["vpin_momentum_BTC"].env.get("USE_QUANTILE_VPIN") == "true"
+    assert by_id["formulaic_lgbm_BTC"].env.get("FORMULAIC_MIN_HOLD_BARS") == "4"

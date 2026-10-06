@@ -98,6 +98,10 @@ class BatchRunRequest(BaseModel):
     #: Named override sets: every cell runs once per variant, so hypotheses are comparable
     #: inside one batch instead of across several (docs/32 §4).
     variants: list[VariantRequest] = Field(default_factory=list)
+    #: One key with several values: every cell runs once per combination (`batch_plan.py`).
+    #: The matrix grows by a dimension, not by a second batch — and the plan preview shows
+    #: the cells it will create before anything starts.
+    sweep: dict[str, list[str]] = Field(default_factory=dict)
     dry_run: bool = False
 
 
@@ -134,6 +138,7 @@ def _to_request(req: BatchRunRequest) -> BatchRequest:
                 )
                 for variant in req.variants
             ),
+            sweep={key: tuple(values) for key, values in req.sweep.items()},
         )
     except (ValueError, InvalidOperation) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -184,6 +189,9 @@ def _plan_payload(cells: list[BatchCell]) -> list[dict[str, Any]]:
             "cost_profile": cell.cost_profile,
             "runnable": cell.runnable,
             "blocked": cell.blocked,
+            # The overrides of this cell, so the preview shows which sweep value it carries
+            # instead of leaving the researcher to decode the cell id.
+            "env": dict(cell.env),
         }
         for cell in cells
     ]

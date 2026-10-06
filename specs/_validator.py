@@ -75,6 +75,9 @@ class CodeFacts:
     warmup_bars: dict[str, int] = field(default_factory=dict)
     warmup_bars_default: int | None = None
     grid_robots: set[str] = field(default_factory=set)
+    #: env-ключі, які рухає сітка підбору: по роботах і для гілки за замовчуванням.
+    grid_varied: dict[str, set[str]] = field(default_factory=dict)
+    grid_varied_default: set[str] = field(default_factory=set)
     setting_fields: set[str] = field(default_factory=set)
     problems: list[str] = field(default_factory=list)
 
@@ -294,6 +297,115 @@ def collect_grid_robots(facts: CodeFacts) -> None:
         facts.problems.append("у param_grid.py не знайдено жодної гілки RobotName.*")
 
 
+def _field_env_map(tree: ast.Module) -> dict[str, str]:
+    """`_FIELD_ENV` з param_grid.py: поле SelectedParams → ключ із Settings."""
+    for node in tree.body:
+        target: ast.expr | None = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+        elif isinstance(node, ast.AnnAssign):
+            target = node.target
+        if not isinstance(target, ast.Name) or target.id != "_FIELD_ENV":
+            continue
+        if not isinstance(node.value, ast.Dict):
+            return {}
+        mapping: dict[str, str] = {}
+        for key, value in zip(node.value.keys, node.value.values, strict=True):
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    mapping[key.value] = value.value
+        return mapping
+    return {}
+
+
+def _is_base_attr(node: ast.AST, field: str) -> bool:
+    """`base.<field>` — значення, узяте з налаштувань прогону, а не з сітки."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == field
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "base"
+    )
+
+
+def _varied_fields(node: ast.AST) -> set[str]:
+    """Поля, яким у цих `SelectedParams(...)` дано НЕ базове значення."""
+    varied: set[str] = set()
+    for child in ast.walk(node):
+        if not (isinstance(child, ast.Call) and isinstance(child.func, ast.Name)):
+            continue
+        if child.func.id != "SelectedParams":
+            continue
+        for keyword in child.keywords:
+            if keyword.arg and not _is_base_attr(keyword.value, keyword.arg):
+                varied.add(keyword.arg)
+    return varied
+
+
+def _robot_guard(test: ast.AST) -> str | None:
+    """`if robot is RobotName.REGIME:` → 'regime', інакше None."""
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return None
+    if not isinstance(test.ops[0], ast.Is) or not isinstance(test.left, ast.Name):
+        return None
+    if test.left.id != "robot" or len(test.comparators) != 1:
+        return None
+    return _robot_member(test.comparators[0])
+
+
+def collect_grid_varied(facts: CodeFacts) -> None:
+    """Які env-ключі рухає сітка підбору: для кожного робота і для гілки за замовчуванням.
+
+    Навіщо: значення з `env` пакета доживає до прогону лише тоді, коли сітка цей ключ НЕ
+    рухає — інакше walk-forward підставляє вибране на IS (`apply_selected`). Через це
+    `DONCHIAN_PERIOD=40` для `regime` не робить нічого, і мовчки. Форма пакета попереджає
+    про такі ключі, а ця перевірка тримає попередження й спеки однаковими: `params[].grid`
+    у спеці мусить декларувати рівно те, що рухає код.
+
+    Ключ вважається рухомим, якщо в гілці його передано в `SelectedParams(...)` не як
+    `base.<поле>` — тобто значенням із сітки, а не з налаштувань прогону. Імена полів → env
+    беруться з `_FIELD_ENV` того ж файлу (поля без env, як `z_entry`, пропускаються: їх не
+    можна задати ні з `env`, ні з вкладки Settings).
+    """
+    try:
+        tree = _parse(PARAM_GRID_PY)
+    except (OSError, SyntaxError) as exc:
+        facts.problems.append(f"не читається {PARAM_GRID_PY.relative_to(ROOT)}: {exc}")
+        return
+    fields = _field_env_map(tree)
+    if not fields:
+        facts.problems.append("у param_grid.py не знайдено мапи _FIELD_ENV (поле → env)")
+        return
+    grid_fn = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "iter_grid"
+        ),
+        None,
+    )
+    if grid_fn is None:
+        facts.problems.append("у param_grid.py не знайдено функції iter_grid()")
+        return
+
+    def envs(varied: set[str]) -> set[str]:
+        return {fields[field] for field in varied if field in fields}
+
+    explicit: dict[str, set[str]] = {}
+    default: set[str] = set()
+    for stmt in grid_fn.body:
+        guard = _robot_guard(stmt.test) if isinstance(stmt, ast.If) else None
+        if guard is not None:
+            explicit.setdefault(guard, set()).update(envs(_varied_fields(stmt)))
+        else:
+            default.update(envs(_varied_fields(stmt)))
+    if not explicit and not default:
+        facts.problems.append("у iter_grid() не знайдено жодного виклику SelectedParams(...)")
+        return
+    facts.grid_varied = explicit
+    facts.grid_varied_default = default
+
+
 def collect_setting_fields(facts: CodeFacts) -> None:
     """Анотовані поля класу Settings (їхні імена ↔ env-змінні у верхньому регістрі)."""
     try:
@@ -317,6 +429,7 @@ def collect_facts() -> CodeFacts:
     collect_wired(facts)
     collect_minimum_bars(facts)
     collect_grid_robots(facts)
+    collect_grid_varied(facts)
     collect_setting_fields(facts)
     return facts
 
@@ -515,6 +628,44 @@ def check_strategy(spec: dict, name: str, report: Report, schema: dict, facts: C
                         f"params[{env}].grid порожній: або дай значення сітки, "
                         "або постав tuned: false з note (чому не підбираємо)"
                     )
+
+    _check_grid_matches_code(spec, name, report, facts)
+
+
+def _check_grid_matches_code(spec: dict, name: str, report: Report, facts: CodeFacts) -> None:
+    """`params[].grid` ⟺ те, що справді рухає сітка в param_grid.py.
+
+    Навіщо саме так: форма пакета попереджає «цей параметр підбирається на IS, твоє
+    значення буде перебито» саме за непорожнім `grid` у спеці. Якщо спека декларує grid
+    для ключа, якого сітка не рухає (або мовчить про той, який рухає), попередження
+    бреше — а це гірше за його відсутність. Тому обидва напрямки перевіряються тут.
+    """
+    if not facts.grid_varied_default and not facts.grid_varied:
+        return  # не розібрали param_grid.py — про це вже сказано в facts.problems
+    declared = {
+        str(param["env"]).upper() for param in (spec.get("params") or []) if param.get("grid")
+    }
+    expected = facts.grid_varied.get(name, facts.grid_varied_default)
+    missing = expected - declared
+    extra = declared - expected
+    if missing:
+        if name not in facts.grid_varied:
+            # Немає власної гілки: сітка чужа (grid_source: default_branch) — це не помилка
+            # специфікації, а пастка проєкту, названа вголос.
+            report.warn(
+                f"сітка підбирає {', '.join(sorted(missing))} — це сітка іншого робота "
+                "(grid_source: default_branch), у params вона не декларується"
+            )
+        else:
+            report.error(
+                f"сітка рухає {', '.join(sorted(missing))}, а спека цього не декларує "
+                "(params[].grid): значення цих ключів з пакета будуть перебиті на IS"
+            )
+    if extra:
+        report.error(
+            f"params[].grid декларує {', '.join(sorted(extra))}, але сітка підбору цей ключ "
+            "не рухає: значення доходить до прогону — grid тут бреше"
+        )
 
 
 def check_component(spec: dict, name: str, report: Report, schema: dict, facts: CodeFacts) -> None:

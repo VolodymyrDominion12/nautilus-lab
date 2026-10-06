@@ -8,6 +8,7 @@ import { EquityCurveChart } from '../EquityCurveChart';
 import { GateSummary } from './GateSummary';
 import { SelectionRanking } from './SelectionCandidates';
 import { RunAnalysisTab } from './RunAnalysisTab';
+import { RunOverrides } from './RunOverrides';
 import { RunTradesTab } from './RunTradesTab';
 
 interface RunPageProps {
@@ -154,6 +155,7 @@ export const RunPage: React.FC<RunPageProps> = ({
       )}
 
       {cell.error && <div className="text-xs text-red-400">{cell.error}</div>}
+      <RunOverrides env={cell.env} />
       {warnings.map((warning) => (
         <div key={warning} className="flex items-center gap-1.5 text-xs text-amber-400">
           <AlertTriangle className="w-3.5 h-3.5" /> {warning}

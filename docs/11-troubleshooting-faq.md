@@ -571,6 +571,42 @@ env | grep -iE "maker|taker|risk|robot|trading"
 `SPOT_*`/`USDM_*` у `.env` (спот 0.00075/0.00075, перп 0.0002/0.0005); перевірка —
 `Settings().spot_fee_schedule()`.
 
+### У пакеті задав параметр, а результат не змінився
+
+Дві різні причини, і обидві колись були тихими (тепер про першу попереджає форма, а другу
+відхиляє API):
+
+1. **Параметр підбирається на IS, і твоє значення перебивається.** Walk-forward вибирає частину
+   параметрів на in-sample і підставляє вибране на OOS (`application/param_grid.py`,
+   `dtos.apply_selected`). Для `regime` це `DONCHIAN_PERIOD`, `BB_PERIOD`, `BB_K`; для `ema` —
+   `FAST_EMA`/`SLOW_EMA`; для `adaptive_ema` — `ADAPTIVE_*`; для `funding` —
+   `FUNDING_MIN_NET_APY`/`FUNDING_HOLDING_PERIODS`; для `meta_label`/`formulaic_lgbm` — пороги.
+   Перевірити будь-коли:
+
+   ```bash
+   .venv/bin/python -c "from nautilus_lab.application.param_grid import gridded_env_names
+   from nautilus_lab.domain.regime import RobotName
+   print({r.value: sorted(gridded_env_names(r)) for r in RobotName})"
+   ```
+
+   У формі пакета такі ключі мають бейдж **«підбирається на IS»**. Параметри, яких сітка не
+   рухає (`ENTER_TREND_ER`, `EXIT_TREND_ER`, пороги режиму, фільтри входу, ризик), свіпуються
+   й діють як задані.
+2. **Ключа немає в `Settings`** (друкарська помилка) або його перекриває сам пакет. Обидва
+   випадки повертають `422` з причиною: `env override 'DONCHIAN_PERIODD' is not a setting`,
+   `env override 'CATALOG_PATH' cannot be set here: the batch picks the catalog`. Ключі, що
+   належать пакету: `CATALOG_PATH`, `BAR_INTERVAL`, `INSTRUMENT_ID`, `EMBARGO_BARS`,
+   `COST_PROFILE`, `DECISION_LOG_*`, `TRIALS_LEDGER_PATH`, `JOURNAL_ENABLED`.
+
+**Як задати кілька значень (свіп).** У панелі параметрів — через `;`: `BB_K` = `2;2.5;3`. У
+текстовому полі — або так само, або повторити ключ: `ENTER_TREND_ER=0.30` і наступним рядком
+`ENTER_TREND_ER=0.42`. Кожне значення отримує власний прогін; кілька ключів дають кілька
+прогонів на **комбінацію** (`2 × 3` значень = 6), а не на пару. Свіп не можна задати для `folds`,
+`is_fraction`, `days` і `embargo_bars` — вони їдуть у `config.json` клітинки й перекривають `env`.
+
+Пам'ятай: свіп — це тріаж. Найкраща клітинка свіпу вибрана на OOS; щоб говорити про перевагу,
+прогони переможця окремо як кандидата (`promote`), див. `docs/30`.
+
 ---
 
 ## Часті питання

@@ -14,8 +14,10 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
+from itertools import product
 
 from nautilus_lab.domain.regime import RobotName
+from nautilus_lab.infrastructure.settings import Settings
 
 #: Robots the batch form offers by default: every one with a backtest adapter.
 DEFAULT_ROBOTS: tuple[str, ...] = (
@@ -29,6 +31,36 @@ DEFAULT_ROBOTS: tuple[str, ...] = (
     "funding",
 )
 DEFAULT_SYMBOLS: tuple[str, ...] = ("BTCUSDT", "ETHUSDT")
+
+#: Keys a batch reads itself instead of handing to the child process, so they are legal in
+#: `env` even though `Settings` has no such field (`routes/batches.py` turns `BACKTEST_DAYS`
+#: into the request's `days`).
+_EXTRA_ENV_KEYS: frozenset[str] = frozenset({"BACKTEST_DAYS"})
+
+#: Keys the batch process overwrites for every cell (`api/run_batch_job.py`) or that its
+#: `config.json` payload applies on top of the environment (`api/research_runner.py`). A value
+#: typed for one of these looks applied and is not, so it is refused by name instead of being
+#: silently dropped (docs/35 §1 B-2: the form used to offer keys the runner then ignored).
+_JOB_OWNED_KEYS: dict[str, str] = {
+    "CATALOG_PATH": "the batch picks the catalog (the «Каталог» field)",
+    "BAR_INTERVAL": "the batch picks the timeframe (the «Таймфрейм» field)",
+    "INSTRUMENT_ID": "the batch derives the instrument from the robot and the symbol",
+    "EMBARGO_BARS": "the batch passes embargo_bars in the cell's config.json",
+    "DECISION_LOG_ENABLED": "the batch owns the decision log",
+    "DECISION_LOG_DIR": "the batch owns the decision log",
+    "DECISION_LOG_SCOPE": "the batch owns the decision log",
+    "DECISION_LOG_RETENTION_DAYS": "the batch owns the decision log",
+    "TRIALS_LEDGER_PATH": "the batch keeps one trial ledger per cell",
+    "JOURNAL_ENABLED": "the batch keeps exploratory runs out of the tracked journal",
+    "COST_PROFILE": "the cost scenario has its own field («Сценарій витрат»)",
+}
+
+#: Every key `env` and `sweep` may carry. A typo used to pass the plan and do nothing at all
+#: (`Settings` is `extra="ignore"`, and `apply_setting_overrides` skips unknown names), so an
+#: unknown key is refused here, while the batch is still only a plan.
+_ALLOWED_ENV_KEYS: frozenset[str] = (
+    frozenset(name.upper() for name in Settings.model_fields) | _EXTRA_ENV_KEYS
+)
 
 #: Robots whose booster must exist (`models/clean/<kind>_<BASE>_preoos.txt` by default).
 _MODEL_ENV: dict[str, tuple[str, str]] = {
@@ -78,6 +110,7 @@ class BatchVariant:
                 raise ValueError(
                     f"variant {self.name!r}: env override {key!r} is not a SETTINGS_NAME"
                 )
+        _check_env_key(self.env, where=f"variant {self.name!r} override")
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +138,11 @@ class BatchRequest:
     cost_profile: str | None = None
     #: Named override sets; empty = the plain robots x symbols matrix (the old behaviour).
     variants: tuple[BatchVariant, ...] = ()
+    #: One key with several values: every cell runs once per combination (`resolved_variants`).
+    #: `{"ENTER_TREND_ER": ("0.30", "0.42")}` is the same matrix as two explicit variants, but
+    #: the researcher types the values instead of duplicating the whole parameter block — the
+    #: reason a parameter sweep was asked for in the first place.
+    sweep: dict[str, tuple[str, ...]] = field(default_factory=dict)
     models_dir: str = "models/clean"
 
     def __post_init__(self) -> None:
@@ -130,15 +168,27 @@ class BatchRequest:
         for key in self.env:
             if not _SETTINGS_NAME_RE.match(key):
                 raise ValueError(f"env override {key!r} is not a SETTINGS_NAME")
-        if len(self.variants) > MAX_VARIANTS:
+        _check_env_key(self.env, where="env override")
+        _check_sweep(self.sweep, fixed=self.env)
+        variants = self.resolved_variants()
+        if len(variants) > MAX_VARIANTS:
             raise ValueError(
-                f"{len(self.variants)} variants is too many: each one multiplies the whole "
+                f"{len(variants)} variants is too many: each one multiplies the whole "
                 f"matrix (robots x symbols), and the cap is {MAX_VARIANTS}"
             )
-        names = [variant.name for variant in self.variants]
+        names = [variant.name for variant in variants]
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
             raise ValueError(f"variant names must be unique; repeated: {', '.join(duplicates)}")
+
+    def resolved_variants(self) -> tuple[BatchVariant, ...]:
+        """Explicit variants plus one per sweep combination, in that order.
+
+        The stored request keeps `sweep` as it was typed (`variants` stays exactly what the
+        caller passed), so re-planning from `batch.json` — restart, retry — rebuilds the same
+        matrix instead of expanding an already-expanded one.
+        """
+        return self.variants + sweep_variants(self.sweep)
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +229,62 @@ def safe_id(raw: str) -> str:
     return _ID_RE.sub("_", raw).strip("_") or "batch"
 
 
+def _check_env_key(env: dict[str, str], *, where: str) -> None:
+    """Refuse keys that are not settings, and settings the batch overwrites anyway.
+
+    Why refuse instead of ignoring: `Settings` is `extra="ignore"` and
+    `settings_coerce.apply_setting_overrides` skips names it does not know, so a typo
+    (`DONCHIAN_PERIODD=40`) or a job-owned key (`CATALOG_PATH`) produced a batch that ran for
+    hours with a value that never existed. The plan is the last cheap moment to say so.
+    """
+    for key in env:
+        if key not in _ALLOWED_ENV_KEYS:
+            raise ValueError(
+                f"{where} {key!r} is not a setting: keys must be Settings fields "
+                "(or BACKTEST_DAYS, which the batch reads itself)"
+            )
+        reason = _JOB_OWNED_KEYS.get(key)
+        if reason:
+            raise ValueError(f"{where} {key!r} cannot be set here: {reason}")
+
+
+def _check_sweep(sweep: dict[str, tuple[str, ...]], *, fixed: dict[str, str]) -> None:
+    """A sweep key must be a setting the batch does not own, and must not be in `env` too."""
+    for key, values in sweep.items():
+        if not _SETTINGS_NAME_RE.match(key):
+            raise ValueError(f"sweep key {key!r} is not a SETTINGS_NAME")
+        _check_env_key({key: ""}, where="sweep key")
+        if key in fixed:
+            raise ValueError(
+                f"{key!r} is both an env override and a sweep: one transport per key "
+                "(a sweep value replaces the env value, so sending both hides a mistake)"
+            )
+        if not values or any(not str(value).strip() for value in values):
+            raise ValueError(f"sweep {key!r} needs at least one non-empty value")
+
+
+def sweep_variants(sweep: dict[str, tuple[str, ...]]) -> tuple[BatchVariant, ...]:
+    """One variant per combination of the swept values (cross product, not a zip).
+
+    Two keys with two values each give four cells per robot x symbol, which is what a grid
+    means; a zip would silently compare only the pairs the researcher happened to line up.
+
+    Names are built from the key and the value (`ENTER_TREND_ER_0_30`), cut to the 24
+    characters a variant name may take and suffixed with the combination's number: the name
+    is a cell id (`#/run/<batch>/regime_BTC__ENTER_TREND_ER_0_30_01`), so it must stay short
+    and unique, while the values themselves are readable in the plan and on the run page.
+    """
+    if not sweep:
+        return ()
+    keys = list(sweep)
+    variants: list[BatchVariant] = []
+    for index, combination in enumerate(product(*(sweep[key] for key in keys)), start=1):
+        joined = "_".join(f"{key}_{value}" for key, value in zip(keys, combination, strict=True))
+        name = f"{safe_id(joined)[:21]}_{index:02d}"
+        variants.append(BatchVariant(name=name, env=dict(zip(keys, combination, strict=True))))
+    return tuple(variants)
+
+
 def plan_cells(
     request: BatchRequest,
     *,
@@ -200,9 +306,11 @@ def plan_cells(
     With `request.variants` the matrix gains a dimension: every robot x symbol runs once per
     variant, grouped variant-first (`regime_BTC__H0`, `regime_ETH__H0`, …, `regime_BTC__H1`),
     so one artefact holds the comparison that used to be several batches read side by side.
+    `request.sweep` arrives through the same door: its combinations are variants too, which is
+    why a swept parameter costs one dimension and not a second code path.
     """
     cells: list[BatchCell] = []
-    for variant in request.variants or (None,):
+    for variant in request.resolved_variants() or (None,):
         for robot in request.robots:
             if robot == "pairs":
                 cells.append(_pairs_cell(request, variant=variant, exists=exists, series=series))

@@ -210,7 +210,13 @@ export interface PlannedCell {
   runnable: boolean;
   blocked: string | null;
   cost_profile?: string | null;
+  /** The overrides this cell will run with, so a sweep value is visible before the start. */
+  env?: Record<string, string>;
 }
+
+/** The overrides of one cell as `KEY=value` chips, for the plan preview and the run page. */
+export const overridePairs = (env: Record<string, string> | undefined): [string, string][] =>
+  Object.entries(env ?? {}).sort(([left], [right]) => left.localeCompare(right));
 
 // ---- table helpers --------------------------------------------------------------------
 

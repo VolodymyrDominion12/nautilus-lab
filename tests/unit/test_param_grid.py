@@ -123,3 +123,211 @@ def test_vpin_momentum_grid_varies_quantile_when_enabled() -> None:
         Decimal("0.95"),
     }
     assert len({item.label() for item in grid}) == 9
+
+
+# ---- what the search re-selects (the batch form's warning) ------------------------------
+
+
+def test_the_search_varies_exactly_the_keys_its_spec_declares() -> None:
+    """`gridded_env_names` is what the batch form warns about; pin it per robot.
+
+    Measured 2026-10-05. `regime` and the other robots without their own branch
+    (`ml_obi`, `glft`, `tri_scan`) fall into the default branch, i.e. they are searched with
+    the regime grid — the trap `implementation.grid_source: default_branch` names.
+    """
+    from nautilus_lab.application.param_grid import gridded_env_names
+
+    expected = {
+        RobotName.REGIME: {"DONCHIAN_PERIOD", "BB_PERIOD", "BB_K"},
+        RobotName.EMA: {"FAST_EMA", "SLOW_EMA"},
+        RobotName.ADAPTIVE_EMA: {"ADAPTIVE_PERIOD", "ADAPTIVE_SELECTIVITY"},
+        RobotName.VPIN_MOMENTUM: {"VPIN_MOMENTUM_EMA_PERIOD", "VPIN_QUANTILE"},
+        RobotName.FORMULAIC_LGBM: {"FORMULAIC_THRESHOLD"},
+        RobotName.META_LABEL: {"META_LABEL_THRESHOLD"},
+        RobotName.FUNDING: {"FUNDING_MIN_NET_APY", "FUNDING_HOLDING_PERIODS"},
+        # The pairs grid moves `z_entry`, and `z_entry` has no env name at all (it lives in
+        # `PairsParams`), so no key can be warned about — and none can be set from a batch.
+        RobotName.PAIRS: set(),
+        RobotName.ML_OBI: {"DONCHIAN_PERIOD", "BB_PERIOD", "BB_K"},
+        RobotName.GLFT: {"DONCHIAN_PERIOD", "BB_PERIOD", "BB_K"},
+        RobotName.TRI_SCAN: {"DONCHIAN_PERIOD", "BB_PERIOD", "BB_K"},
+    }
+    for robot, keys in expected.items():
+        assert set(gridded_env_names(robot)) == keys, robot
+
+
+def test_a_key_the_search_varies_is_replaced_and_a_free_key_is_kept() -> None:
+    """Why the warning exists: `DONCHIAN_PERIOD=999` never reaches an OOS run.
+
+    The grid builds its candidates from constants and `apply_selected` overwrites the run's
+    own values with the winner's, so for `regime` the in-sample choice replaces whatever the
+    batch was told. `ENTER_TREND_ER` is not in the grid, and survives every candidate.
+    """
+    from dataclasses import replace
+
+    from nautilus_lab.application.dtos import SelectedParams
+    from nautilus_lab.application.param_grid import iter_grid
+
+    base = replace(
+        SelectedParams(
+            fast_ema=10,
+            slow_ema=20,
+            donchian_period=20,
+            bb_period=20,
+            bb_k=Decimal("2"),
+            enter_trend_er=Decimal("0.30"),
+            exit_trend_er=Decimal("0.20"),
+        ),
+        donchian_period=999,
+        enter_trend_er=Decimal("0.42"),
+    )
+    grid = list(iter_grid(RobotName.REGIME, base))
+    assert 999 not in {item.donchian_period for item in grid}
+    assert {item.enter_trend_er for item in grid} == {Decimal("0.42")}
+
+
+def test_a_field_the_grid_never_passes_falls_back_to_its_default() -> None:
+    """The other way a value fails to reach a run, pinned so a change is not silent.
+
+    Candidates are built as fresh `SelectedParams`, so a field a branch never passes takes the
+    dataclass default instead of the run's value — for `regime` that is the parameters of the
+    *other* robots, which the regime strategy does not read. Harmless today; if a robot starts
+    reading one of these keys, the value a researcher set would be dropped, and this is where
+    that shows up. A key that is *varied* is not listed here: `gridded_env_names` reports it,
+    and that is the warning the batch form shows.
+    """
+    from nautilus_lab.application.param_grid import _FIELD_ENV, _probe_params, iter_grid
+
+    # Measured 2026-10-05, robot by robot: the keys each branch does NOT pass from the base.
+    # Written out rather than derived: this is a pin, and a derived expectation would move
+    # with the code it is supposed to notice.
+    default_branch = {
+        "ADAPTIVE_PERIOD",
+        "ADAPTIVE_SELECTIVITY",
+        "EMA_MIN_SPREAD_PCT",
+        "FORMULAIC_THRESHOLD",
+        "FUNDING_HOLDING_PERIODS",
+        "FUNDING_MIN_NET_APY",
+        "META_LABEL_THRESHOLD",
+        "VPIN_MOMENTUM_ATR_MULTIPLE",
+        "VPIN_MOMENTUM_EMA_PERIOD",
+        "VPIN_QUANTILE",
+    }
+    expected: dict[RobotName, set[str]] = {
+        RobotName.VPIN_MOMENTUM: {
+            "ADAPTIVE_PERIOD",
+            "ADAPTIVE_SELECTIVITY",
+            "EMA_MIN_SPREAD_PCT",
+            "FORMULAIC_THRESHOLD",
+            "FUNDING_HOLDING_PERIODS",
+            "FUNDING_MIN_NET_APY",
+            "META_LABEL_THRESHOLD",
+        },
+        RobotName.FORMULAIC_LGBM: {
+            "ADAPTIVE_PERIOD",
+            "ADAPTIVE_SELECTIVITY",
+            "EMA_MIN_SPREAD_PCT",
+            "FUNDING_HOLDING_PERIODS",
+            "FUNDING_MIN_NET_APY",
+            "META_LABEL_THRESHOLD",
+            "VPIN_QUANTILE",
+        },
+        RobotName.META_LABEL: {
+            "ADAPTIVE_PERIOD",
+            "ADAPTIVE_SELECTIVITY",
+            "EMA_MIN_SPREAD_PCT",
+            "FORMULAIC_THRESHOLD",
+            "FUNDING_HOLDING_PERIODS",
+            "FUNDING_MIN_NET_APY",
+            "VPIN_QUANTILE",
+        },
+        RobotName.FUNDING: {
+            "ADAPTIVE_PERIOD",
+            "ADAPTIVE_SELECTIVITY",
+            "EMA_MIN_SPREAD_PCT",
+            "FORMULAIC_THRESHOLD",
+            "META_LABEL_THRESHOLD",
+            "VPIN_MOMENTUM_ATR_MULTIPLE",
+            "VPIN_MOMENTUM_EMA_PERIOD",
+            "VPIN_QUANTILE",
+        },
+        RobotName.ADAPTIVE_EMA: {
+            "EMA_MIN_SPREAD_PCT",
+            "FORMULAIC_THRESHOLD",
+            "FUNDING_HOLDING_PERIODS",
+            "FUNDING_MIN_NET_APY",
+            "META_LABEL_THRESHOLD",
+            "VPIN_MOMENTUM_ATR_MULTIPLE",
+            "VPIN_MOMENTUM_EMA_PERIOD",
+            "VPIN_QUANTILE",
+        },
+        # The `ema` branch is the only one that passes `ema_min_spread_pct` through.
+        RobotName.EMA: default_branch - {"EMA_MIN_SPREAD_PCT"},
+    }
+    for robot in (
+        RobotName.REGIME,
+        RobotName.PAIRS,
+        RobotName.ML_OBI,
+        RobotName.GLFT,
+        RobotName.TRI_SCAN,
+    ):
+        expected[robot] = default_branch
+
+    probe = _probe_params()
+    dropped: dict[RobotName, set[str]] = {}
+    for robot in RobotName:
+        grid = list(iter_grid(robot, probe))
+        for field, key in _FIELD_ENV.items():
+            if key is None:
+                continue
+            values = {getattr(item, field) for item in grid}
+            base_value = getattr(probe, field)
+            if len(values) == 1 and next(iter(values)) != base_value:
+                dropped.setdefault(robot, set()).add(key)
+    assert dropped == expected
+
+
+def test_every_mapped_env_key_is_a_settings_field() -> None:
+    """The map says "this SelectedParams field comes from that env var" — so it must exist."""
+    from nautilus_lab.application.param_grid import _FIELD_ENV
+    from nautilus_lab.infrastructure.settings import Settings
+
+    fields = {name.upper() for name in Settings.model_fields}
+    for field, env_key in _FIELD_ENV.items():
+        if env_key is None:
+            continue
+        assert env_key in fields, f"{field} -> {env_key} is not a Settings field"
+
+
+def test_the_spec_validator_reads_the_same_grid_out_of_the_source() -> None:
+    """`specs/_validator.py` must not import the project, so it parses param_grid.py with ast.
+
+    Two readers of the same truth is exactly how a warning starts lying; this pins that the
+    import-free reader and the runtime function agree for every robot.
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    from nautilus_lab.application.param_grid import gridded_env_names
+
+    spec = importlib.util.spec_from_file_location(
+        "_spec_validator", Path(__file__).resolve().parents[2] / "specs" / "_validator.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    validator = importlib.util.module_from_spec(spec)
+    # Registered before exec: the module defines a dataclass, and `dataclasses` looks the
+    # defining module up in `sys.modules` while resolving its annotations.
+    sys.modules[spec.name] = validator
+    try:
+        spec.loader.exec_module(validator)
+
+        facts = validator.CodeFacts()
+        validator.collect_grid_varied(facts)
+        assert facts.problems == []
+        for robot in RobotName:
+            from_source = facts.grid_varied.get(robot.value, facts.grid_varied_default)
+            assert from_source == set(gridded_env_names(robot)), robot
+    finally:
+        del sys.modules[spec.name]

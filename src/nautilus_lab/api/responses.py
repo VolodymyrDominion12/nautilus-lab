@@ -82,6 +82,9 @@ class StatusResponse(ApiModel):
     hawkes_robots: list[str]
     stress_slices: list[StressSliceInfo]
     cost_profiles: list[CostProfileInfo]
+    max_variants: int
+    """How many variants a batch may hold. Served so the batch form cannot offer more than
+    the planner accepts (`application/batch_plan.py::MAX_VARIANTS`)."""
     catalog_exists: bool
     catalog_instruments: int
     catalog_path: str
@@ -252,6 +255,16 @@ class StrategyParam(ApiModel):
     type: str | None = None
     default: Any = None
     description: str | None = None
+    grid: list[Any] | None = None
+    """Values the in-sample search considers for this key, from the spec.
+
+    Served because the batch form warns with it: a value typed for a key the walk-forward
+    re-selects never reaches the run (`application/param_grid.py::gridded_env_names`), and an
+    empty `grid` here is the spec saying "the search does not move this key" —
+    `specs/_validator.py` checks both directions against the code grid.
+    """
+    tuned: bool | None = None
+    """`false` = deliberately outside the search, with the reason in `description`."""
 
 
 class StrategySpec(ApiModel):

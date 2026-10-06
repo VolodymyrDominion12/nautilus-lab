@@ -15,6 +15,8 @@ export interface StoredBatchForm {
   envText?: string;
   variantsText?: string;
   costProfile?: string;
+  /** Values from the parameter panel, keyed by settings name (`;` separates a sweep). */
+  paramValues?: Record<string, string>;
 }
 
 export const loadStoredBatchForm = (

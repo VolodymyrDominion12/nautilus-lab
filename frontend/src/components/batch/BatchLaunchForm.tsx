@@ -5,6 +5,12 @@ import { launchBatch, type BatchLaunchParams } from '../../services/api';
 import { catalogQuery, catalogsQuery, statusQuery } from '../../services/queries';
 import { parseVariants, type PlannedCell } from '../../lib/batch';
 import {
+  mergeOverrides,
+  parseOverrideText,
+  parseParamRows,
+  sweepVariantCount,
+} from '../../lib/batchSweep';
+import {
   ALL_LAB_SYMBOLS,
   loadStoredBatchForm,
   normalizeSymbol,
@@ -14,6 +20,7 @@ import {
 } from '../../lib/batchForm';
 import { BatchPlanPreview } from './BatchPlanPreview';
 import { BatchMatrixSelectors } from './BatchMatrixSelectors';
+import { BatchParamPanel } from './BatchParamPanel';
 
 interface BatchLaunchFormProps {
   onStarted: (batchId: string) => void;
@@ -46,6 +53,9 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
   const [envText, setEnvText] = useState(initial?.envText ?? '');
   const [variantsText, setVariantsText] = useState(initial?.variantsText ?? '');
   const [costProfile, setCostProfile] = useState(initial?.costProfile ?? '');
+  const [paramValues, setParamValues] = useState<Record<string, string>>(
+    initial?.paramValues ?? {},
+  );
 
   // Catalogs available in the workspace
   const catalogsResult = useQuery(catalogsQuery());
@@ -105,6 +115,7 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
         envText,
         variantsText,
         costProfile,
+        paramValues,
       };
       saveStoredBatchForm(state);
     } catch {
@@ -125,25 +136,44 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
     envText,
     variantsText,
     costProfile,
+    paramValues,
   ]);
 
-  // The scenario names come from the backend (`domain/fees.py`), so the form cannot drift
-  // from what the engine would actually charge.
-  const costProfiles = useQuery(statusQuery(catalog)).data?.cost_profiles ?? [];
+  // The scenario names and the variant cap come from the backend (`domain/fees.py`,
+  // `application/batch_plan.py`), so the form cannot drift from what the batch will accept.
+  const status = useQuery(statusQuery(catalog)).data;
+  const costProfiles = status?.cost_profiles ?? [];
+  const maxVariants = status?.max_variants;
   const [plan, setPlan] = useState<PlannedCell[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * What the two parameter sources say together: the panel's rows and the free-text box.
+   *
+   * A key named by both with different values is refused here (`lib/batchSweep.ts`) instead
+   * of being resolved by guessing — and the key checks that need `Settings` are the server's
+   * (`application/batch_plan.py`), which is why a typo comes back as a 422 with a reason.
+   * Parsing a handful of lines on each render is cheaper than the state it would take to
+   * memoize it, and the React compiler flags a `useMemo` it cannot prove.
+   */
+  const overrides = mergeOverrides(
+    parseParamRows(Object.entries(paramValues).map(([key, values]) => ({ key, values }))),
+    parseOverrideText(envText),
+  );
+
+  /** The variant box and the sweep box are validated here: a typo would run the wrong matrix. */
+  const variantError = parseVariants(variantsText).error ?? overrides.error;
+
+  /** How many variants the whole matrix multiplies by: hypotheses plus sweep combinations. */
+  const variantsToRun =
+    parseVariants(variantsText).variants.length + sweepVariantCount(overrides.sweep);
 
   const params = (dryRun: boolean): BatchLaunchParams => {
     const extra = extraSymbols
       .split(/[\s,]+/)
       .map(normalizeSymbol)
       .filter(Boolean);
-    const env: Record<string, string> = {};
-    for (const line of envText.split('\n')) {
-      const [key, ...rest] = line.split('=');
-      if (key && rest.length) env[key.trim()] = rest.join('=').trim();
-    }
     const parsed = parseVariants(variantsText);
     return {
       robots,
@@ -156,15 +186,13 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
       embargo_bars: embargoBars,
       parallel,
       label,
-      env,
+      env: overrides.env,
+      sweep: overrides.sweep,
       variants: parsed.variants,
       cost_profile: costProfile || undefined,
       dry_run: dryRun,
     };
   };
-
-  /** The variant box is validated here, not by the API: a typo would run the wrong matrix. */
-  const variantError = parseVariants(variantsText).error;
 
   const submit = async (dryRun: boolean) => {
     if (variantError) {
@@ -295,15 +323,17 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
         </label>
       </div>
 
-      <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
-        Налаштування для всіх прогонів (KEY=value, по рядку)
-        <textarea
-          className={`${input} h-16`}
-          placeholder={'BACKTEST_DAYS=30\nDRAWDOWN_COOLDOWN_DAYS=7\nRISK_PER_TRADE=0.01'}
-          value={envText}
-          onChange={(e) => setEnvText(e.target.value)}
-        />
-      </label>
+      <BatchParamPanel
+        robots={robots}
+        values={paramValues}
+        setValues={setParamValues}
+        envText={envText}
+        setEnvText={setEnvText}
+        variantsText={variantsText}
+        setVariantsText={setVariantsText}
+        variantCount={variantsToRun}
+        maxVariants={maxVariants}
+      />
 
       <div className="flex flex-wrap items-end gap-4">
         <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
@@ -323,28 +353,19 @@ export const BatchLaunchForm: React.FC<BatchLaunchFormProps> = ({ onStarted }) =
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-gray-500">
-          Варіанти (гіпотези): [НАЗВА] і KEY=value під нею — кожен прогін виконається для кожного
-          варіанта
-          <textarea
-            className={`${input} h-24 ${variantError ? 'border-red-800' : ''}`}
-            placeholder={'[H0]\nREGIME_LEGS=uptrend,downtrend\n\n[H1]\nREGIME_LEGS=uptrend,downtrend\nENTRY_FILTER_HTF_TREND=true'}
-            value={variantsText}
-            onChange={(e) => setVariantsText(e.target.value)}
-          />
-        </label>
       </div>
       {variantError ? (
         <div className="text-xs text-red-400">{variantError}</div>
       ) : (
-        parseVariants(variantsText).variants.length > 0 && (
+        variantsToRun > 0 && (
           <p className="text-[11px] text-gray-500">
-            Варіантів: {parseVariants(variantsText).variants.length} · прогін{' '}
-            {robots.length} × {symbols.length + extraSymbols.split(/[\s,]+/).filter(Boolean).length}{' '}
-            інструментів стане в стільки разів більше. Клітинки матимуть ідентифікатори на кшталт{' '}
+            Матриця помножиться на {variantsToRun}{' '}
+            {variantsToRun === 1 ? 'варіант' : 'варіантів'} · прогін {robots.length} ×{' '}
+            {symbols.length + extraSymbols.split(/[\s,]+/).filter(Boolean).length} інструментів.
+            Клітинки матимуть ідентифікатори на кшталт{' '}
             <span className="font-mono">
               {robots[0] ?? 'robot'}_{(symbols[0] ?? 'BTCUSDT').replace('USDT', '')}__
-              {parseVariants(variantsText).variants[0]?.name ?? 'H0'}
+              {parseVariants(variantsText).variants[0]?.name ?? 'ENTER_TREND_ER_0_30_01'}
             </span>
             .
           </p>

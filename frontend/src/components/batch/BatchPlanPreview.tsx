@@ -1,5 +1,5 @@
 import React from 'react';
-import type { PlannedCell } from '../../lib/batch';
+import { overridePairs, type PlannedCell } from '../../lib/batch';
 
 interface BatchPlanPreviewProps {
   plan: PlannedCell[];
@@ -23,6 +23,7 @@ export const BatchPlanPreview: React.FC<BatchPlanPreviewProps> = ({ plan }) => {
             <th className="text-left">Інструмент</th>
             <th className="text-left">TF</th>
             <th className="text-left">Каталог</th>
+            <th className="text-left">Параметри</th>
             <th className="text-left">Витрати</th>
             <th className="text-left">Стан</th>
           </tr>
@@ -34,6 +35,12 @@ export const BatchPlanPreview: React.FC<BatchPlanPreviewProps> = ({ plan }) => {
               <td className="text-gray-400">{cell.instrument_id ?? cell.symbol}</td>
               <td className="text-gray-400">{cell.interval}</td>
               <td className="text-gray-400">{cell.catalog}</td>
+              {/* A sweep is only readable here if the value is spelled out next to the cell. */}
+              <td className="text-[10px] text-gray-300">
+                {overridePairs(cell.env)
+                  .map(([key, value]) => `${key}=${value}`)
+                  .join(' ') || '—'}
+              </td>
               <td className="font-mono text-[10px] text-gray-400">{cell.cost_profile ?? '—'}</td>
               <td className={cell.runnable ? 'text-emerald-400' : 'text-amber-400'}>
                 {cell.runnable ? 'буде запущено' : cell.blocked}

@@ -104,6 +104,10 @@ def request_to_dict(request: BatchRequest) -> dict[str, Any]:
         {"name": variant.name, "env": dict(variant.env), "cost_profile": variant.cost_profile}
         for variant in request.variants
     ]
+    # The sweep is stored as it was typed, not expanded: `variants` above are the explicit
+    # ones only, so re-planning a stored request rebuilds the same matrix instead of
+    # expanding an already-expanded one (see `BatchRequest.resolved_variants`).
+    payload["sweep"] = {key: list(values) for key, values in request.sweep.items()}
     return payload
 
 
@@ -133,6 +137,10 @@ def request_from_dict(payload: dict[str, Any]) -> BatchRequest:
             )
             for item in (payload.get("variants") or [])
         ),
+        sweep={
+            str(key): tuple(str(value) for value in values)
+            for key, values in (payload.get("sweep") or {}).items()
+        },
         models_dir=str(payload.get("models_dir", "models/clean")),
     )
 

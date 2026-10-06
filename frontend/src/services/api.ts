@@ -1324,6 +1324,12 @@ export interface BatchLaunchParams {
   days?: number;
   cost_profile?: string;
   env?: Record<string, string>;
+  /**
+   * One key with several values: every cell runs once per combination (`batch_plan.py`),
+   * so `{DONCHIAN_PERIOD: ['20', '40']}` is two runs, not one. A swept key must not also
+   * appear in `env` — one transport per key, or the mistake hides.
+   */
+  sweep?: Record<string, string[]>;
   /** Named override sets; each cell runs once per variant (see `lib/batch.ts`). */
   variants?: BatchVariant[];
   dry_run?: boolean;

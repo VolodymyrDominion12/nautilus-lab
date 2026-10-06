@@ -43,6 +43,11 @@ export interface StatusResponse {
   hawkes_robots: string[];
   stress_slices: StressSliceInfo[];
   cost_profiles: CostProfileInfo[];
+  /**
+   * How many variants a batch may hold. Served so the batch form cannot offer more than
+   * the planner accepts (`application/batch_plan.py::MAX_VARIANTS`).
+   */
+  max_variants: number;
   catalog_exists: boolean;
   catalog_instruments: number;
   catalog_path: string;
@@ -197,6 +202,17 @@ export interface StrategyParam {
   type: string | null;
   default: unknown;
   description: string | null;
+  /**
+   * Values the in-sample search considers for this key, from the spec.
+   *
+   * Served because the batch form warns with it: a value typed for a key the walk-forward
+   * re-selects never reaches the run (`application/param_grid.py::gridded_env_names`), and an
+   * empty `grid` here is the spec saying "the search does not move this key" —
+   * `specs/_validator.py` checks both directions against the code grid.
+   */
+  grid: Record<string, unknown>[] | null;
+  /** `false` = deliberately outside the search, with the reason in `description`. */
+  tuned: boolean | null;
 }
 
 export interface StrategySpec {

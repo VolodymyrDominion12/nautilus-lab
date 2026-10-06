@@ -13,6 +13,7 @@ from nautilus_lab.api.context import Lab
 from nautilus_lab.api.health import render_metrics
 from nautilus_lab.api.paper_streamer import LIVE_PAPER_ROBOTS
 from nautilus_lab.api.responses import HealthResponse, StatusResponse
+from nautilus_lab.application.batch_plan import MAX_VARIANTS
 from nautilus_lab.application.run_paper import PAPER_SUPPORTED_ROBOTS
 from nautilus_lab.domain.fees import COST_PROFILES, DEFAULT_COST_PROFILE
 from nautilus_lab.domain.regime import (
@@ -95,6 +96,10 @@ def get_status(ctx: Lab, catalog_path: str | None = None) -> dict[str, Any]:
             }
             for profile in COST_PROFILES.values()
         ],
+        # The batch form mirrors this cap in its own warning, so the number lives here for
+        # the same reason the cost profiles do: a copy in the UI drifts, a served value does
+        # not (`application/batch_plan.py::MAX_VARIANTS`).
+        "max_variants": MAX_VARIANTS,
         "catalog_exists": bool(summary.get("exists", False)),
         "catalog_instruments": int(summary.get("total_instruments", 0) or 0),
         "catalog_path": resolved_catalog,

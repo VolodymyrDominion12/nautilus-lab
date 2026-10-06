@@ -609,3 +609,27 @@ IS були в мінусі. Тобто підбір обрав «найменш
 | **П. 19** (Персистенція `risk_breaches` та метрик `multi_window`) | Серіалізація `risk_breaches` у `serialize_fold`, `serialize_backtest` та агрегат по фолдах у `serialize_multi_window`. Збереження `median_oos_raw`, `worst_oos_raw`, `best_oos_raw`. У `batch_store.py::build_cell_summary` поля `risk_breaches`, `median_oos`, `best_oos`, `spread`, `vol_matched_buy_and_hold_mean`, `cost_headroom` додано до `numbers`; бамп `SUMMARY_VERSION = 3`. На `RunPage.tsx` виведено плашку circuit breakers. | `test_multi_window_payload_carries_spread_costs_and_fold_count` у `test_api_dashboard_results.py`, `test_cell_summary_includes_risk_breaches_and_extended_metrics` у `test_batch.py`. |
 | **П. 23** (Деталізація вкладки «Угоди») | У `RunTradesTab.tsx` виведено: `fee` (з індикатором `fee_known`), джерело PnL через бейдж `pnl_source` (`fills` vs `delta`), діапазон `MFE / MAE`, причину виходу `exit_reason` поруч із `exit_outcome`, а також тривалість `duration_seconds` (у форматі часу) поруч із `duration_bars`. Розмір компонента залишився в межах ліміту (~6.5 КБ). | `RunTradesTab.tsx` перевірено `vitest` і `componentSize.test.ts`. |
 
+
+---
+
+## 15. Свіп параметрів у пакеті та чесність env (05.10.2026)
+
+Запит дослідника: на сторінці пакетного запуску вибрати стратегію, задати свої значення
+параметрів і отримати **окремий прогін на кожне значення**, а не один прогін із останнім
+(«якщо аргумент зустрічається двічі — треба два прогони»). Розбір показав, що механізм
+варіантів уже був (`BatchVariant`, пункт 14), але на шляху стояли три тихі дефекти.
+
+| Що зроблено | Файли | Підтвердження |
+|---|---|---|
+| **`sweep: {KEY: [v1, v2]}`** у запиті пакета: комбінації розгортаються у варіанти (крос-добуток), тож свіп несе вартість одного виміру матриці. `resolved_variants()` — єдине джерело і для `plan_cells`, і для перезапуску; `batch.json` зберігає `sweep` як задано, тому `restart`/`retry` не розгортають його вдруге. | `application/batch_plan.py`, `api/routes/batches.py`, `api/batch_store.py` | `test_a_swept_key_runs_the_matrix_once_per_value`, `test_two_swept_keys_form_a_grid_not_a_zip`, `test_a_sweep_survives_a_restart_without_expanding_twice` |
+| **Ключі перевіряються, доки пакет — план.** `env`, `sweep` і `env` варіантів мусять бути полями `Settings` (плюс `BACKTEST_DAYS`); ключі, які пакет перекриває сам (`CATALOG_PATH`, `BAR_INTERVAL`, `INSTRUMENT_ID`, `EMBARGO_BARS`, `COST_PROFILE`, `DECISION_LOG_*`, `TRIALS_LEDGER_PATH`, `JOURNAL_ENABLED`), відмовляються з причиною. Раніше друкарська помилка (`DONCHIAN_PERIODD=40`) планувалась без помилки й не робила нічого: `Settings` має `extra="ignore"`, а `apply_setting_overrides` пропускає невідомі імена. | `application/batch_plan.py`, `tests/unit/test_batch.py` | `test_an_unknown_or_job_owned_env_key_is_refused_instead_of_ignored`, `test_a_sweep_is_validated_where_it_is_still_cheap` |
+| **Хто перепідбирає параметр на IS — з коду, не з документа.** `param_grid.py::gridded_env_names()` (читає власне сітку через `iter_grid`), форма малює за ним бейдж «підбирається на IS»: значення для `DONCHIAN_PERIOD`/`BB_K` у `regime` чи `FAST_EMA` у `ema` перебивається вибраним і до OOS-прогону не доходить. | `application/param_grid.py`, `api/responses.py` (`StrategyParam.grid`), `frontend/.../BatchParamPanel.tsx` | `test_the_search_varies_exactly_the_keys_its_spec_declares`, `test_a_key_the_search_varies_is_replaced_and_a_free_key_is_kept` |
+| **Спеки не можуть брехати про сітку.** Валідатор звіряє `params[].grid` зі сіткою коду в обидва боки (ключ рухається, а спека мовчить → помилка; `grid` для нерухомого ключа → помилка). Для роботів без власної гілки (`ml_obi`, `glft`, `tri_scan`) — попередження про чужу сітку `regime`. | `specs/_validator.py`, `specs/_schema.yaml` | `test_the_spec_validator_reads_the_same_grid_out_of_the_source` (AST-читання валідатора == рантайм-функція для всіх 11 роботів) |
+| **UI: панель параметрів зі спеки.** `BatchParamPanel.tsx`: параметри вибраних роботів із їхніх специфікацій (ім'я, `default`, опис у тултіпі), кілька значень через `;` — свіп; повторення ключа в текстовому полі — те саме; `lib/batchSweep.ts` відмовляє при конфлікті джерел (панель vs поле) замість вгадування. Прев'ю плану показує `env` кожної клітинки, сторінка прогону — «Параметри прогону». | `frontend/src/components/batch/{BatchParamPanel,BatchPlanPreview,RunOverrides}.tsx`, `frontend/src/lib/batchSweep.ts` | `frontend/src/lib/batchSweep.test.ts` (18), `componentSize.test.ts` |
+| **Ліміт варіантів як дане.** `GET /api/status` віддає `max_variants` (`MAX_VARIANTS`), тож форма попереджає до відправки, а не отримує 422 після. | `api/routes/status.py`, `api/responses.py` | `tests/unit/test_api_types.py` (згенеровані типи), `frontend/src/lib/batchSweep.test.ts` |
+
+**Межа, яку варто пам'ятати:** свіп — це тріаж. Клітинка пакета не рахує `pbo`/`dsr`, а леджер
+спроб окремий на клітинку, тож найкраща клітинка свіпу — це вибір на OOS (AGENTS.md, п. 3);
+переможця треба прогнати окремо як кандидата. `pin` (змусити сітку не рухати заданий ключ)
+свідомо не робився: це зміна семантики підбору й потребує ADR — сьогодні форма про такі ключі
+попереджає.

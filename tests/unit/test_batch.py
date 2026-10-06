@@ -222,17 +222,23 @@ def test_variants_are_validated_and_survive_a_restart() -> None:
     assert [cell.cell_id for cell in plan_cells(restored, exists=_all_exist)] == ["regime_BTC__H0"]
 
     with pytest.raises(ValueError, match="unique"):
-        BatchRequest(variants=(BatchVariant("H0", {"A": "1"}), BatchVariant("H0", {"B": "2"})))
+        BatchRequest(
+            variants=(
+                BatchVariant("H0", {"REGIME_LEGS": "range"}),
+                BatchVariant("H0", {"STOP_PCT": "0.01"}),
+            )
+        )
     with pytest.raises(ValueError, match="overrides nothing"):
         BatchVariant("H0", {})
     with pytest.raises(ValueError, match="variant name"):
-        BatchVariant("H 0", {"A": "1"})
+        BatchVariant("H 0", {"REGIME_LEGS": "range"})
     with pytest.raises(ValueError, match="SETTINGS_NAME"):
         BatchVariant("H0", {"lower": "1"})
     with pytest.raises(ValueError, match="too many"):
         BatchRequest(
             variants=tuple(
-                BatchVariant(f"H{index}", {"A": "1"}) for index in range(MAX_VARIANTS + 1)
+                BatchVariant(f"H{index}", {"REGIME_LEGS": "range"})
+                for index in range(MAX_VARIANTS + 1)
             )
         )
 
@@ -248,6 +254,166 @@ def test_batch_request_rejects_bad_input() -> None:
         BatchRequest(days=-5)
     with pytest.raises(ValueError, match="SETTINGS_NAME"):
         BatchRequest(env={"lower": "x"})
+
+
+# ---- sweeping a parameter (one key, several values) --------------------------------------
+
+
+def test_a_swept_key_runs_the_matrix_once_per_value() -> None:
+    """The documented shape: `DONCHIAN_PERIOD=20,40` means two runs, not one with 40.
+
+    Cell ids carry the combination, so the two runs sit side by side in one table.
+    """
+    request = BatchRequest(
+        robots=("regime",),
+        symbols=("BTCUSDT",),
+        sweep={"ENTER_TREND_ER": ("0.30", "0.42")},
+    )
+    cells = plan_cells(request, exists=_all_exist)
+
+    assert [cell.cell_id for cell in cells] == [
+        "regime_BTC__ENTER_TREND_ER_0_30_01",
+        "regime_BTC__ENTER_TREND_ER_0_42_02",
+    ]
+    assert [cell.env for cell in cells] == [
+        {"ENTER_TREND_ER": "0.30"},
+        {"ENTER_TREND_ER": "0.42"},
+    ]
+
+
+def test_two_swept_keys_form_a_grid_not_a_zip() -> None:
+    """Four combinations from two keys of two values: a grid, so every pair is measured."""
+    request = BatchRequest(
+        robots=("regime",),
+        symbols=("BTCUSDT",),
+        sweep={"ENTER_TREND_ER": ("0.30", "0.42"), "EXIT_TREND_ER": ("0.10", "0.20")},
+    )
+
+    assert [variant.env for variant in request.resolved_variants()] == [
+        {"ENTER_TREND_ER": "0.30", "EXIT_TREND_ER": "0.10"},
+        {"ENTER_TREND_ER": "0.30", "EXIT_TREND_ER": "0.20"},
+        {"ENTER_TREND_ER": "0.42", "EXIT_TREND_ER": "0.10"},
+        {"ENTER_TREND_ER": "0.42", "EXIT_TREND_ER": "0.20"},
+    ]
+    assert len(plan_cells(request, exists=_all_exist)) == 4
+
+
+def test_sweep_names_fit_a_cell_id_and_stay_unique() -> None:
+    """A variant name becomes part of a cell id, so it must be short, safe and unique."""
+    request = BatchRequest(
+        robots=("regime",),
+        symbols=("BTCUSDT",),
+        sweep={"ENTER_TREND_ER": ("0.30", "0.42"), "DONCHIAN_PERIOD": ("20", "40")},
+    )
+    names = [variant.name for variant in request.resolved_variants()]
+
+    assert len(set(names)) == len(names) == 4
+    assert all(len(name) <= 24 for name in names)
+    assert all(name.isascii() for name in names)
+    # A dot is not allowed in a cell id, so `0.30` is carried as `0_30`.
+    assert names[0].startswith("ENTER_TREND_ER_0_30")
+
+
+def test_a_sweep_is_validated_where_it_is_still_cheap() -> None:
+    """Every refusal here is a batch that would otherwise run for hours doing nothing."""
+    with pytest.raises(ValueError, match="not a setting"):
+        BatchRequest(sweep={"DONCHIAN_PERIODD": ("40",)})
+    with pytest.raises(ValueError, match="cannot be set here"):
+        BatchRequest(sweep={"CATALOG_PATH": ("catalog",)})
+    with pytest.raises(ValueError, match="at least one"):
+        BatchRequest(sweep={"ENTER_TREND_ER": ()})
+    with pytest.raises(ValueError, match="at least one"):
+        BatchRequest(sweep={"ENTER_TREND_ER": ("0.3", " ")})
+    with pytest.raises(ValueError, match="one transport per key"):
+        BatchRequest(env={"ENTER_TREND_ER": "0.3"}, sweep={"ENTER_TREND_ER": ("0.4",)})
+    with pytest.raises(ValueError, match="SETTINGS_NAME"):
+        BatchRequest(sweep={"lower": ("1",)})
+    # The cap counts the whole matrix, sweep included: 3x3 is nine variants, not one.
+    with pytest.raises(ValueError, match="too many"):
+        BatchRequest(
+            sweep={
+                "ENTER_TREND_ER": ("1", "2", "3"),
+                "EXIT_TREND_ER": ("1", "2", "3"),
+                "ER_PERIOD": ("1",),
+            }
+        )
+
+
+def test_an_unknown_or_job_owned_env_key_is_refused_instead_of_ignored() -> None:
+    """`Settings` is `extra="ignore"`, so a typo used to plan fine and change nothing."""
+    with pytest.raises(ValueError, match="not a setting"):
+        BatchRequest(env={"DONCHIAN_PERIODD": "40"})
+    with pytest.raises(ValueError, match="cannot be set here"):
+        BatchRequest(env={"CATALOG_PATH": "catalog"})
+    with pytest.raises(ValueError, match="cannot be set here"):
+        BatchRequest(env={"EMBARGO_BARS": "5"})
+    with pytest.raises(ValueError, match="not a setting"):
+        BatchVariant("H0", {"REGIME_LEGSS": "range"})
+    # `BACKTEST_DAYS` is not a Settings field: the batch reads it itself (`routes/batches.py`).
+    assert BatchRequest(env={"BACKTEST_DAYS": "30"}).env == {"BACKTEST_DAYS": "30"}
+
+
+def test_a_sweep_survives_a_restart_without_expanding_twice() -> None:
+    """`batch.json` keeps the sweep as typed; `variants` stays the explicit ones."""
+    request = BatchRequest(
+        robots=("regime",),
+        symbols=("BTCUSDT",),
+        variants=(BatchVariant("H0", {"REGIME_LEGS": "range"}),),
+        sweep={"ENTER_TREND_ER": ("0.30", "0.42")},
+    )
+    payload = request_to_dict(request)
+    restored = request_from_dict(payload)
+
+    assert payload["sweep"] == {"ENTER_TREND_ER": ["0.30", "0.42"]}
+    assert [variant.name for variant in restored.variants] == ["H0"]
+    assert [variant.name for variant in restored.resolved_variants()] == [
+        "H0",
+        "ENTER_TREND_ER_0_30_01",
+        "ENTER_TREND_ER_0_42_02",
+    ]
+    # Re-planning a restored request gives the same matrix, not a doubled one.
+    assert [cell.cell_id for cell in plan_cells(restored, exists=_all_exist)] == [
+        "regime_BTC__H0",
+        "regime_BTC__ENTER_TREND_ER_0_30_01",
+        "regime_BTC__ENTER_TREND_ER_0_42_02",
+    ]
+
+
+def test_the_plan_preview_carries_the_overrides_of_each_cell(tmp_path: Path) -> None:
+    """The dry run must show which sweep value a cell takes, not only its id."""
+    app = create_app(Settings(), root=tmp_path)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/batches",
+            json={
+                "robots": ["regime"],
+                "symbols": ["BTCUSDT"],
+                "dry_run": True,
+                "sweep": {"ENTER_TREND_ER": ["0.30", "0.42"]},
+            },
+        )
+    assert response.status_code == 200
+    cells = response.json()["cells"]
+    assert [cell["env"] for cell in cells] == [
+        {"ENTER_TREND_ER": "0.30"},
+        {"ENTER_TREND_ER": "0.42"},
+    ]
+
+
+def test_the_batch_route_reports_a_bad_sweep_as_422(tmp_path: Path) -> None:
+    app = create_app(Settings(), root=tmp_path)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/batches",
+            json={
+                "robots": ["regime"],
+                "symbols": ["BTCUSDT"],
+                "dry_run": True,
+                "sweep": {"DONCHIAN_PERIODD": ["40"]},
+            },
+        )
+    assert response.status_code == 422
+    assert "not a setting" in response.json()["detail"]
 
 
 def test_job_config_is_the_research_tab_payload() -> None:

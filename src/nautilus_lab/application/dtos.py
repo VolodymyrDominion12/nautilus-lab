@@ -34,6 +34,7 @@ class BacktestRequest:
     robot: RobotName = RobotName.REGIME
     fast_ema: int = 10
     slow_ema: int = 20
+    ema_min_spread_pct: Decimal = Decimal("0")
     regime: RegimeParams = field(default_factory=RegimeParams)
     pairs: PairsParams = field(default_factory=PairsParams)
     seed: int = 42
@@ -229,6 +230,7 @@ _LABEL_EXTRAS_DEFAULTS: tuple[tuple[str, object], ...] = (
     ("vpin_ema_period", 50),
     ("vpin_atr_multiple", Decimal("2")),
     ("vpin_quantile", Decimal("0.90")),
+    ("ema_min_spread_pct", Decimal("0")),
 )
 
 
@@ -252,6 +254,7 @@ class SelectedParams:
     adaptive_selectivity: Decimal = Decimal("0.5")
     funding_min_net_apy: Decimal = Decimal("0")
     funding_holding_periods: int = 60
+    ema_min_spread_pct: Decimal = Decimal("0")
 
     def label(self) -> str:
         """Trial identity: every field a grid can vary must change it (audit B5).
@@ -809,6 +812,7 @@ def selected_from_request(request: BacktestRequest) -> SelectedParams:
         adaptive_selectivity=request.adaptive_params.selectivity,
         funding_min_net_apy=request.funding.min_net_apy,
         funding_holding_periods=request.funding.holding_periods,
+        ema_min_spread_pct=request.ema_min_spread_pct,
     )
 
 
@@ -817,6 +821,7 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
         request,
         fast_ema=params.fast_ema,
         slow_ema=params.slow_ema,
+        ema_min_spread_pct=params.ema_min_spread_pct,
         regime=replace(
             request.regime,
             donchian_period=params.donchian_period,

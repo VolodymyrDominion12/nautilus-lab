@@ -365,6 +365,7 @@ def research_request(
         robot=resolved_robot,
         fast_ema=cfg.fast_ema,
         slow_ema=cfg.slow_ema,
+        ema_min_spread_pct=cfg.ema_min_spread_pct,
         regime=cfg.regime_params(),
         pairs=pairs,
         funding=funding,

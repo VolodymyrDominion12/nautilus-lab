@@ -606,6 +606,7 @@ def _single_run(
             robot=request.robot.value,
             fast_period=request.fast_ema,
             slow_period=request.slow_ema,
+            ema_min_spread_pct=request.ema_min_spread_pct,
             er_period=request.regime.er_period,
             trend_ema_period=request.regime.trend_ema_period,
             slope_lookback=request.regime.slope_lookback,

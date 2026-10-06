@@ -3,7 +3,7 @@
 # =============================================================================
 kind: strategy
 name: ema
-version: "1.0"
+version: "1.1"
 status: rejected
 rejection_reason: >
   Failed PBO audit (Probability of Backtest Overfitting) in Gate v2 on 1d timeframe (e.g. SOLUSDT, MATICUSDT).
@@ -44,6 +44,12 @@ edge_conditions:
       `baseline buy&hold mean` за ті самі вікна — інакше утримання інструменту
       дало б більше за меншу складність.
 
+  - name: deadband_filters_ranging_noise
+    description: >
+      Зона нечутливості (|fast - slow| / slow >= min_spread_pct) відсікає
+      хибні перетини у флеті, утримуючи попередній напрямок без зайвих розворотів,
+      та скорочує витрати на taker-комісії.
+
 implementation:
   domain_module: src/nautilus_lab/domain/ema_crossover.py
   strategy_class: EmaCrossover
@@ -73,6 +79,13 @@ params:
       Довший період — довший прогрів: для пари (10,40) потрібно 40 закритих
       барів, доки обидві EMA не ініціалізуються (сідується простим середнім
       перших `period` цін).
+  - env: EMA_MIN_SPREAD_PCT
+    default: 0.0
+    tuned: false
+    note: >
+      Зона нечутливості (deadband): мінімальна відносна розбіжність (|fast - slow| / slow)
+      для підтвердження сигналу. При 0.0 вимкнено (стандартний режим always-in-market).
+      Значення > 0 блокує хибні розвороти у флеті та зменшує turnover.
   - env: RISK_PER_TRADE
     default: 0.005
     tuned: false

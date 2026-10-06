@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     robot: RobotName = RobotName.REGIME
     fast_ema: int = 10
     slow_ema: int = 20
+    ema_min_spread_pct: Decimal = Decimal("0")
     er_period: int = 20
     trend_ema_period: int = 40
     slope_lookback: int = 10

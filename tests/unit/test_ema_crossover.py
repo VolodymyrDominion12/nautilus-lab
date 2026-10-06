@@ -75,3 +75,41 @@ def test_ema_does_not_look_ahead() -> None:
     with_future = replay(5)[:-1]
 
     assert prefix == with_future
+
+
+def test_ema_rejects_negative_min_spread_pct() -> None:
+    with pytest.raises(ValueError, match="min_spread_pct"):
+        EmaCrossover(
+            instrument_id="ETH/USDT.SIM",
+            fast_period=2,
+            slow_period=3,
+            min_spread_pct=Decimal("-0.01"),
+        )
+
+
+def test_ema_deadband_suppresses_whipsaw_and_holds_position() -> None:
+    # min_spread_pct = 5% (0.05).
+    robot = EmaCrossover(
+        instrument_id="ETH/USDT.SIM",
+        fast_period=2,
+        slow_period=3,
+        min_spread_pct=Decimal("0.05"),
+    )
+    ts = datetime(2024, 1, 1, tzinfo=UTC)
+    robot.on_close(close=Decimal("10"), bar_ts_utc=ts)
+    robot.on_close(close=Decimal("10"), bar_ts_utc=ts + timedelta(minutes=1))
+    # Big up move -> fast clearly exceeds slow by > 5% -> BUY
+    s1 = robot.on_close(close=Decimal("20"), bar_ts_utc=ts + timedelta(minutes=2))
+    assert s1 is not None
+    assert s1.side is SignalSide.BUY
+
+    # Small dip down where fast dips slightly below slow, but diff < 5% of slow
+    # Should HOLD BUY rather than flipping to SELL
+    s2 = robot.on_close(close=Decimal("15"), bar_ts_utc=ts + timedelta(minutes=3))
+    assert s2 is not None
+    assert s2.side is SignalSide.BUY  # Remains BUY because within deadband!
+
+    # Huge drop where slow exceeds fast by > 5% -> flips to SELL
+    s3 = robot.on_close(close=Decimal("5"), bar_ts_utc=ts + timedelta(minutes=4))
+    assert s3 is not None
+    assert s3.side is SignalSide.SELL

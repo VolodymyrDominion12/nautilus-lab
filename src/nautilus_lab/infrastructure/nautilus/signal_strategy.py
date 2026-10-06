@@ -107,6 +107,7 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     robot: str = "regime"
     fast_period: int = 10
     slow_period: int = 20
+    ema_min_spread_pct: Decimal = Decimal("0")
     er_period: int = 20
     trend_ema_period: int = 40
     slope_lookback: int = 10
@@ -1326,6 +1327,7 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             instrument_id=instrument_id,
             fast_period=config.fast_period,
             slow_period=config.slow_period,
+            min_spread_pct=config.ema_min_spread_pct,
         )
     if robot is RobotName.VPIN_MOMENTUM:
         vpin: VpinModel | None = None

@@ -121,6 +121,7 @@ def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
                 bb_k=base.bb_k,
                 enter_trend_er=base.enter_trend_er,
                 exit_trend_er=base.exit_trend_er,
+                ema_min_spread_pct=base.ema_min_spread_pct,
             )
         return
     if request.robot is RobotName.FUNDING:

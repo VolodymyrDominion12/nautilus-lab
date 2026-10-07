@@ -11,6 +11,7 @@ from nautilus_lab.domain.decision_log import DecisionRecord
 from nautilus_lab.infrastructure.decision_log_writer import (
     JsonlDecisionLogWriter,
     NullDecisionLogWriter,
+    prune_decision_logs,
 )
 from nautilus_lab.infrastructure.settings import Settings
 
@@ -297,3 +298,81 @@ def test_null_decision_log_writer() -> None:
     record = _sample_record()
     writer.log(record)
     writer.append(record)
+    assert writer.prune() == (0, 0)
+
+
+def test_decision_log_writer_size_quota_pruning(tmp_path: Path) -> None:
+    """When directory exceeds max_mb quota, oldest files are pruned (LRU)."""
+    log_dir = tmp_path / "data/paper/decisions"
+    log_dir.mkdir(parents=True)
+
+    # Create 3 files of 1 MB each with different write timestamps
+    data_1mb = "x" * (1024 * 1024)
+    file_old = log_dir / "session_2026-10-01.jsonl"
+    file_mid = log_dir / "session_2026-10-02.jsonl"
+    file_new = log_dir / "session_2026-10-03.jsonl"
+
+    file_old.write_text(data_1mb, encoding="utf-8")
+    file_mid.write_text(data_1mb, encoding="utf-8")
+    file_new.write_text(data_1mb, encoding="utf-8")
+
+    now = datetime.now(UTC).timestamp()
+    os.utime(file_old, (now - 300, now - 300))
+    os.utime(file_mid, (now - 200, now - 200))
+    os.utime(file_new, (now - 100, now - 100))
+
+    # Quota is 2 MB: total is 3 MB, so the oldest file must be pruned
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        decision_log_enabled=True,
+        decision_log_dir="data/paper/decisions",
+        decision_log_retention_days=30,  # all files within retention days
+        decision_log_max_mb=2,
+    )
+    _ = JsonlDecisionLogWriter(settings, root=tmp_path)
+
+    assert not file_old.exists(), "Oldest file should be pruned to satisfy 2 MB quota"
+    assert file_mid.exists(), "Newer files should be retained"
+    assert file_new.exists(), "Newer files should be retained"
+
+
+def test_decision_log_writer_periodic_prune_in_log(tmp_path: Path) -> None:
+    """log() triggers retention sweep if prune_interval_seconds has elapsed."""
+    log_dir = tmp_path / "data/paper/decisions"
+    log_dir.mkdir(parents=True)
+
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        decision_log_enabled=True,
+        decision_log_dir="data/paper/decisions",
+        decision_log_retention_days=7,
+        decision_log_prune_interval_seconds=10,
+    )
+    writer = JsonlDecisionLogWriter(settings, root=tmp_path)
+
+    # Plant an old file after startup
+    old_file = _write_log(log_dir / "old_session_2024-01-01.jsonl", age_days=10)
+    assert old_file.exists()
+
+    record = _sample_record(robot="ema")
+    # Calling log() before interval should not prune yet
+    writer.log(record)
+    assert old_file.exists()
+
+    # Advance time past prune_interval_seconds
+    writer._last_prune_time -= 20
+    writer.log(record)
+    assert not old_file.exists(), "log() should have triggered periodic pruning"
+
+
+def test_prune_decision_logs_dry_run(tmp_path: Path) -> None:
+    """dry_run=True computes pruned count and bytes without deleting files."""
+    log_dir = tmp_path / "decisions"
+    log_dir.mkdir(parents=True)
+
+    old_file = _write_log(log_dir / "old_2024-01-01.jsonl", age_days=10)
+    pruned_files, pruned_bytes = prune_decision_logs(log_dir, retention_days=7, dry_run=True)
+
+    assert pruned_files == 1
+    assert pruned_bytes > 0
+    assert old_file.exists(), "dry_run must not delete the file"

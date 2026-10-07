@@ -22,7 +22,7 @@ REMOTE_DIR="${REMOTE_DIR:-nautilus-lab}"
 DEST="${DEST:-data/vps}"
 
 mkdir -p "$DEST/paper" "$DEST/catalog" "$DEST/reports"
-rsync -az --info=stats1 "$VPS:$REMOTE_DIR/data/paper/" "$DEST/paper/" || true
+rsync -az --delete --info=stats1 "$VPS:$REMOTE_DIR/data/paper/" "$DEST/paper/" || true
 rsync -az --info=stats1 "$VPS:$REMOTE_DIR/catalog/" "$DEST/catalog/" || true
 rsync -az --info=stats1 "$VPS:$REMOTE_DIR/reports/" "$DEST/reports/" || true
 ssh "$VPS" "cat $REMOTE_DIR/DEPLOYED_REVISION 2>/dev/null" > "$DEST/DEPLOYED_REVISION" || true

@@ -425,6 +425,7 @@ def decision_reader(cell_path: Path, cfg: Settings) -> JsonlDecisionLogWriter:
             "decision_log_enabled": True,
             "decision_log_dir": str(decisions_dir(cell_path)),
             "decision_log_retention_days": 0,
+            "decision_log_max_mb": 0,
         }
     )
     return JsonlDecisionLogWriter(scoped)

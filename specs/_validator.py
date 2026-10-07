@@ -311,9 +311,13 @@ def _field_env_map(tree: ast.Module) -> dict[str, str]:
             return {}
         mapping: dict[str, str] = {}
         for key, value in zip(node.value.keys, node.value.values, strict=True):
-            if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                    mapping[key.value] = value.value
+            if (
+                isinstance(key, ast.Constant)
+                and isinstance(key.value, str)
+                and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+            ):
+                mapping[key.value] = value.value
         return mapping
     return {}
 

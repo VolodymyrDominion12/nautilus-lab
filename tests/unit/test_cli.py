@@ -182,3 +182,17 @@ def test_cli_research_accepts_instrument_interval_and_market(
     assert rc == 0
     assert len(captured) == 3
     assert captured[2].instrument_id == "ETH/USDT.SIM"
+
+
+def test_cli_prune(tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]) -> None:
+    from pathlib import Path
+
+    log_dir = Path(str(tmp_path)) / "decisions"
+    log_dir.mkdir(parents=True)
+    f1 = log_dir / "old_2024-01-01.jsonl"
+    f1.write_text("{}", encoding="utf-8")
+
+    rc = main(["prune", "--dir", str(log_dir), "--days", "0", "--max-mb", "0", "--dry-run"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "would prune 0 files" in out

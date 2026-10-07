@@ -523,6 +523,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     xsmom.add_argument("--pbo-blocks", type=int, default=8, help="Blocks for the audit")
 
+    prune = sub.add_parser("prune", help="Clean up old decision logs")
+    prune.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="Retention days cutoff (default: settings decision_log_retention_days)",
+    )
+    prune.add_argument(
+        "--max-mb",
+        type=int,
+        default=None,
+        help="Max size in MB for decision logs (default: settings decision_log_max_mb)",
+    )
+    prune.add_argument(
+        "--dir",
+        default=None,
+        help="Directory to prune (default: settings decision_log_dir)",
+    )
+    prune.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be pruned without deleting files",
+    )
+
     sub.add_parser("live", help="Live trading (always fail closed)")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -583,6 +607,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_ml_train(cfg, args)
         if args.command == "xsmom":
             return _run_xsmom(cfg, args)
+        if args.command == "prune":
+            return _run_prune(cfg, args)
         if args.command == "live":
             require_simulated_mode(TradingMode.LIVE)
     except (
@@ -1435,6 +1461,30 @@ def _run_paper(cfg: Settings, args: argparse.Namespace) -> int:
     if args.journal:
         path = append_session(report, created_at=datetime.now(UTC).isoformat())
         print(f"paper_session_appended={path}")
+    return 0
+
+
+def _run_prune(cfg: Settings, args: argparse.Namespace) -> int:
+    from nautilus_lab.infrastructure.decision_log_writer import prune_decision_logs
+
+    target_dir = Path(args.dir or cfg.decision_log_dir)
+    retention_days = args.days if args.days is not None else cfg.decision_log_retention_days
+    max_mb = args.max_mb if args.max_mb is not None else cfg.decision_log_max_mb
+    dry_run = bool(args.dry_run)
+
+    if not target_dir.is_dir():
+        print(f"directory not found: {target_dir}")
+        return 0
+
+    count, bytes_freed = prune_decision_logs(
+        target_dir,
+        retention_days=retention_days,
+        max_mb=max_mb,
+        dry_run=dry_run,
+    )
+    mb_freed = bytes_freed / (1024 * 1024)
+    action = "would prune" if dry_run else "pruned"
+    print(f"{action} {count} files ({mb_freed:.2f} MB freed) in {target_dir}")
     return 0
 
 

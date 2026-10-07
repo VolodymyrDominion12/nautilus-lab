@@ -104,6 +104,7 @@ def test_promote_also_measures_the_overfitting_half(
     """
     clear_singleton_instances(ParquetDataCatalog)
     monkeypatch.setenv("TRIALS_LEDGER_PATH", str(tmp_path / "trials.jsonl"))
+    monkeypatch.setenv("ENTRY_FILTER_HTF_TREND", "false")
     bars = _bars_across_days(600, step=timedelta(hours=4), seed=17)
     NautilusParquetCatalog(tmp_path / "catalog").write(bars, bar_type=BAR_TYPE_4H)
 

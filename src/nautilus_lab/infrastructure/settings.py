@@ -228,6 +228,11 @@ class Settings(BaseSettings):
     decision_log_enabled: bool = False
     decision_log_dir: str = "data/paper/decisions"
     decision_log_retention_days: int = 7
+    # Max size in MB for decision logs directory (0 = unlimited).
+    # Oldest logs are pruned when exceeded.
+    decision_log_max_mb: int = 500
+    # Interval in seconds to check for pruning during long-running sessions (0 = startup only).
+    decision_log_prune_interval_seconds: int = 3600
     # Which walk-forward runs write decisions: "all" (every grid candidate on in-sample
     # too — ~100k records per regime run) or "oos" (only the selected configuration's
     # out-of-sample run of each fold, one session `<id>-f<fold>` per fold). Batch

@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import threading
+import time
 from collections.abc import Collection, Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -50,6 +51,82 @@ class DecimalEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+def prune_decision_logs(
+    log_dir: Path,
+    *,
+    retention_days: int = 7,
+    max_mb: int = 500,
+    dry_run: bool = False,
+) -> tuple[int, int]:
+    """Prune decision logs by age and total size quota.
+
+    Args:
+        log_dir: Directory containing *.jsonl decision files.
+        retention_days: Files older than this (by mtime / write time) are deleted. 0 = keep forever.
+        max_mb: Maximum total directory size in megabytes. 0 = unlimited.
+        dry_run: If True, do not unlink files, only calculate what would be deleted.
+
+    Returns:
+        tuple[pruned_files_count, pruned_bytes]
+    """
+    if not log_dir.is_dir():
+        return 0, 0
+
+    pruned_files = 0
+    pruned_bytes = 0
+
+    remaining: list[tuple[float, int, Path]] = []
+    cutoff = datetime.now(UTC).timestamp() - retention_days * 86400 if retention_days > 0 else None
+
+    # Phase 1: Prune by age (based on physical write time / st_mtime)
+    for log_file in log_dir.glob("*.jsonl"):
+        if not log_file.is_file():
+            continue
+        try:
+            stat = log_file.stat()
+            if cutoff is not None and stat.st_mtime <= cutoff:
+                pruned_files += 1
+                pruned_bytes += stat.st_size
+                if not dry_run:
+                    log_file.unlink()
+                logger.info(
+                    "Pruned old decision log (age > %dd): %s (%d bytes)",
+                    retention_days,
+                    log_file.name,
+                    stat.st_size,
+                )
+            else:
+                remaining.append((stat.st_mtime, stat.st_size, log_file))
+        except OSError as e:
+            logger.warning("Failed to check/prune log file %s: %s", log_file.name, e)
+
+    # Phase 2: Prune by size quota (LRU: oldest files deleted first)
+    if max_mb > 0:
+        max_bytes = max_mb * 1024 * 1024
+        total_bytes = sum(size for _, size, _ in remaining)
+        if total_bytes > max_bytes:
+            remaining.sort(key=lambda item: item[0])
+            for _, size, log_file in remaining:
+                if total_bytes <= max_bytes:
+                    break
+                try:
+                    if not dry_run:
+                        log_file.unlink()
+                    total_bytes -= size
+                    pruned_files += 1
+                    pruned_bytes += size
+                    logger.info(
+                        "Pruned decision log to free space (quota %d MB): %s (%d bytes)",
+                        max_mb,
+                        log_file.name,
+                        size,
+                    )
+                except OSError as e:
+                    logger.warning("Failed to prune log file %s: %s", log_file.name, e)
+
+    return pruned_files, pruned_bytes
+
+
 class JsonlDecisionLogWriter(DecisionLogPort):
     """
     Writes DecisionRecords to JSONL files.
@@ -60,8 +137,9 @@ class JsonlDecisionLogWriter(DecisionLogPort):
     without a session id (backtests, the CLI, tests) fall back to the robot name as the key,
     which is how files written before the session keying keep being readable.
 
-    Implements a basic retention policy: a file older than
-    `DECISION_LOG_RETENTION_DAYS` **of write time** is deleted at start.
+    Implements a dual-threshold retention policy: files older than `DECISION_LOG_RETENTION_DAYS`
+    are deleted, and if directory exceeds `DECISION_LOG_MAX_MB`, oldest files are pruned (LRU).
+    Pruning runs on initialization and periodically in runtime during long-running sessions.
     """
 
     def __init__(self, settings: Settings, root: Path | None = None) -> None:
@@ -74,6 +152,9 @@ class JsonlDecisionLogWriter(DecisionLogPort):
             self._dir = base_dir
 
         self._retention_days = settings.decision_log_retention_days
+        self._max_mb = settings.decision_log_max_mb
+        self._prune_interval_seconds = settings.decision_log_prune_interval_seconds
+        self._last_prune_time = time.monotonic()
         self._lock = threading.Lock()
 
         if self._enabled:
@@ -120,30 +201,22 @@ class JsonlDecisionLogWriter(DecisionLogPort):
         date_str = ts_utc.strftime("%Y-%m-%d")
         return self._dir / f"{_safe_key(key)}_{date_str}.jsonl"
 
-    def _prune_old_logs(self) -> None:
-        """Delete logs nobody may want any more, aged by when they were **written**.
+    def prune(self) -> tuple[int, int]:
+        """Trigger retention sweep manually. Returns (pruned_files_count, pruned_bytes)."""
+        with self._lock:
+            return self._prune_old_logs()
 
-        Not by the date inside the name: that date is the *bar's*, and a research backtest
-        writes bars from history, so a run over 2024 data files `2024-01-01` today and was
-        deleted by the next API restart (2026-09-28: the sweep wiped ~62 MB of one backtest's
-        decisions, leaving three days of it). A live paper session writes bars at wall clock,
-        so for it both rules agree.
+    def _prune_old_logs(self) -> tuple[int, int]:
+        """Delete logs nobody may want any more, aged by when they were **written**,
+
+        and prune oldest files if total directory size exceeds max_mb quota.
         """
-        if self._retention_days <= 0:
-            return
-
-        cutoff = datetime.now(UTC).timestamp() - self._retention_days * 86400
-        for log_file in self._dir.glob("*.jsonl"):
-            if not log_file.is_file():
-                continue
-
-            try:
-                if log_file.stat().st_mtime > cutoff:
-                    continue
-                log_file.unlink()
-                logger.info(f"Pruned old decision log: {log_file.name}")
-            except OSError as e:
-                logger.warning(f"Failed to check/prune log file {log_file.name}: {e}")
+        return prune_decision_logs(
+            self._dir,
+            retention_days=self._retention_days,
+            max_mb=self._max_mb,
+            dry_run=False,
+        )
 
     @staticmethod
     def _record_key(record: DecisionRecord) -> str:
@@ -153,6 +226,16 @@ class JsonlDecisionLogWriter(DecisionLogPort):
     def log(self, record: DecisionRecord) -> None:
         if not self._enabled:
             return
+
+        now = time.monotonic()
+        if (
+            self._prune_interval_seconds > 0
+            and (now - self._last_prune_time) >= self._prune_interval_seconds
+        ):
+            with self._lock:
+                if (now - self._last_prune_time) >= self._prune_interval_seconds:
+                    self._last_prune_time = now
+                    self._prune_old_logs()
 
         path = self._get_log_file_path(self._record_key(record), record.bar_end_utc)
         data = record_to_dict(record)
@@ -253,3 +336,6 @@ class NullDecisionLogWriter(DecisionLogPort):
 
     def append(self, record: DecisionRecord) -> None:
         pass
+
+    def prune(self) -> tuple[int, int]:
+        return 0, 0

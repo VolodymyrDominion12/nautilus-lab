@@ -14,6 +14,7 @@ import {
   type SortKey,
 } from '../../lib/batch';
 import { TONE_TEXT, formatDateTime, formatPct, toneOf } from '../../lib/format';
+import { BatchResumeButton, LostBatchBanner } from './BatchResume';
 import { GateBadge } from './GateBadge';
 
 interface BatchTablePageProps {
@@ -144,6 +145,7 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
           </span>
         )}
         <div className="ml-auto flex gap-2">
+          <BatchResumeButton batchId={batchId} batch={batch} onDone={load} onError={setError} />
           {running && (
             <button
               type="button"
@@ -177,6 +179,7 @@ export const BatchTablePage: React.FC<BatchTablePageProps> = ({ batchId }) => {
           {batch.note}
         </div>
       )}
+      <LostBatchBanner batch={batch} />
       {error && <div className="text-xs text-red-400">{error}</div>}
 
       <div className="overflow-x-auto">

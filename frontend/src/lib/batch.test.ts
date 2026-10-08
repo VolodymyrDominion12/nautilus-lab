@@ -9,6 +9,9 @@ import {
   variantOfCell,
   restartBlockedReason,
   restartHint,
+  resumeBlockedReason,
+  resumeHint,
+  unfinishedCells,
   rowWarnings,
   sortRows,
   topCounts,
@@ -238,5 +241,47 @@ describe('formatDuration', () => {
     expect(formatDuration(125)).toBe('2 хв 05 с');
     expect(formatDuration(7500)).toBe('2 год 05 хв');
     expect(formatDuration(null)).toBe('—');
+  });
+});
+
+describe('resumeBlockedReason', () => {
+  const row = (over: Partial<BatchListRow>): BatchListRow => ({
+    id: '20261008_080000_batch',
+    label: 'sweep',
+    created_at: '2026-10-08T05:00:00+00:00',
+    status: 'lost',
+    cells: 20,
+    counts: { ok: 12, running: 2, queued: 6 },
+    robots: ['regime'],
+    symbols: ['BTCUSDT'],
+    ...over,
+  });
+
+  test('a batch whose process died can continue from where it stopped', () => {
+    expect(resumeBlockedReason(row({}))).toBeNull();
+    expect(unfinishedCells(row({}).counts)).toBe(8);
+  });
+
+  test('a cancelled batch can continue: cancel then continue is a pause', () => {
+    expect(
+      resumeBlockedReason(row({ status: 'cancelled', counts: { ok: 5, cancelled: 3 } })),
+    ).toBeNull();
+  });
+
+  test('a running, finished or imported batch cannot', () => {
+    expect(resumeBlockedReason(row({ status: 'running' }))).toContain('виконується');
+    expect(resumeBlockedReason(row({ status: 'ok', counts: { ok: 18, failed: 2 } }))).toContain(
+      'завершені',
+    );
+    expect(resumeBlockedReason(row({ imported_from: 'reports/decision-sweep' }))).toContain(
+      'імпортований',
+    );
+  });
+
+  test('the list says when a batch was continued', () => {
+    expect(resumeHint(row({}))).toBeNull();
+    expect(resumeHint(row({ resumed_at: '2026-10-08T06:00:00+00:00', resume_count: 2 }))).toContain(
+      '2×',
+    );
   });
 });

@@ -1,17 +1,21 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Download, Hammer, Layers, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import { Download, Hammer, Layers, Play, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import {
   deleteBatch,
   fetchBatches,
   importDecisionSweep,
   restartBatch,
+  resumeBatch,
   retryBatch,
 } from '../../services/api';
 import {
   buildBatchHash,
   restartBlockedReason,
+  resumeBlockedReason,
+  resumeHint,
   retryBlockedReason,
   restartHint,
+  unfinishedCells,
   STATUS_CLASS,
   type BatchListRow,
 } from '../../lib/batch';
@@ -27,6 +31,9 @@ import { BatchLaunchForm } from './BatchLaunchForm';
  * A row can be deleted or re-run. "Перезапустити" is not "запустити ще раз": the batch's
  * artifacts are deleted first (`POST /api/batches/{id}/restart`, `batch_store.reset_batch`),
  * so the numbers the table shows afterwards are the new run's and not a mix of the two.
+ * "Продовжити" is the opposite: a batch that stopped half-way (the machine rebooted, the
+ * process was killed, or it was cancelled) keeps every finished cell and runs only the rest
+ * (`POST /api/batches/{id}/resume`).
  */
 export const BatchListPage: React.FC = () => {
   const [batches, setBatches] = useState<BatchListRow[]>([]);
@@ -34,6 +41,7 @@ export const BatchListPage: React.FC = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [restartingId, setRestartingId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [resumingId, setResumingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -110,6 +118,24 @@ export const BatchListPage: React.FC = () => {
     }
   };
 
+  const handleResume = async (batch: BatchListRow) => {
+    setResumingId(batch.id);
+    setError(null);
+    try {
+      const result = await resumeBatch(batch.id);
+      if (result.status === 'nothing_to_resume') {
+        setError(result.message ?? 'Усі клітинки завершені.');
+      } else {
+        window.location.hash = buildBatchHash({ page: 'batch', batchId: batch.id });
+      }
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResumingId(null);
+    }
+  };
+
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => void load(), 10000);
@@ -183,9 +209,14 @@ export const BatchListPage: React.FC = () => {
               {batches.map((batch) => {
                 const restartReason = restartBlockedReason(batch);
                 const retryReason = retryBlockedReason(batch);
+                const resumeReason = resumeBlockedReason(batch);
                 const hint = restartHint(batch);
+                const resumed = resumeHint(batch);
                 const busyHere =
-                  deletingId === batch.id || restartingId === batch.id || retryingId === batch.id;
+                  deletingId === batch.id ||
+                  restartingId === batch.id ||
+                  retryingId === batch.id ||
+                  resumingId === batch.id;
                 return (
                   <tr key={batch.id} className="border-t border-gray-800 hover:bg-gray-800/30">
                     <td className="py-1.5">
@@ -202,6 +233,7 @@ export const BatchListPage: React.FC = () => {
                     <td className="text-gray-400">
                       {formatDateTime(batch.created_at)}
                       {hint && <div className="text-[10px] text-gray-500">{hint}</div>}
+                      {resumed && <div className="text-[10px] text-gray-500">{resumed}</div>}
                     </td>
                     <td className={STATUS_CLASS[batch.status] ?? 'text-gray-400'}>
                       {batch.status}
@@ -219,6 +251,20 @@ export const BatchListPage: React.FC = () => {
                     <td className="text-gray-400 font-mono">{batch.robots.join(', ')}</td>
                     <td className="text-right py-1.5 pr-2">
                       <div className="inline-flex items-center gap-1">
+                        {resumeReason === null && (
+                          <button
+                            type="button"
+                            disabled={busyHere}
+                            onClick={() => void handleResume(batch)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 border border-amber-800/60 rounded transition-colors disabled:opacity-40"
+                            title={`Продовжити з місця зупинки: ${unfinishedCells(batch.counts)} незавершених клітинок, готові лишаються як є`}
+                          >
+                            <Play
+                              className={`w-3.5 h-3.5 ${resumingId === batch.id ? 'animate-pulse' : ''}`}
+                            />
+                            <span>Продовжити</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={busyHere || retryReason !== null}

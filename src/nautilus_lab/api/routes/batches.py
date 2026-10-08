@@ -29,6 +29,7 @@ from nautilus_lab.api.batch_store import (
     RUNNING,
     batch_dir,
     batch_payload,
+    batch_process_alive,
     cell_dir,
     create_batch,
     decision_reader,
@@ -38,10 +39,10 @@ from nautilus_lab.api.batch_store import (
     import_sweep,
     list_batches,
     load_batch,
-    pid_alive,
     read_json,
     request_from_dict,
     reset_batch,
+    resume_batch,
     retry_batch,
     run_payload,
 )
@@ -148,7 +149,7 @@ def _running_batch(ctx: LabContext) -> str | None:
     for row in list_batches(ctx.reports_dir, limit=20):
         if row["status"] in (RUNNING, "queued") and row.get("imported_from") is None:
             batch = load_batch(ctx.reports_dir, str(row["id"])) or {}
-            if pid_alive(batch.get("pid")) or str(row["id"]) in _PROCESSES:
+            if batch_process_alive(batch) or str(row["id"]) in _PROCESSES:
                 return str(row["id"])
     return None
 
@@ -277,7 +278,9 @@ def cancel_batch(ctx: Lab, batch_id: str) -> dict[str, Any]:
     if batch is None:
         raise HTTPException(status_code=404, detail=f"batch {batch_id!r} not found")
     pid = batch.get("pid")
-    if not isinstance(pid, int) or effective_status(batch) != RUNNING or not pid_alive(pid):
+    # `batch_process_alive`, not a bare pid check: after a reboot the stored pid may be some
+    # other program's, and SIGTERM must never reach it.
+    if not isinstance(pid, int) or effective_status(batch) != RUNNING:
         return {"status": "idle", "message": "batch is not running"}
     os.kill(pid, signal.SIGTERM)
     return {"status": "cancelling", "message": f"sent SIGTERM to batch {batch_id}"}
@@ -377,6 +380,48 @@ def retry_failed_cells(ctx: Lab, batch_id: str) -> dict[str, Any]:
         )
     _launch(ctx, batch_id, path)
     return {"status": "retrying", "batch_id": batch_id, "cells": sorted(requeued)}
+
+
+@router.post("/api/batches/{batch_id}/resume")
+def resume_interrupted_batch(ctx: Lab, batch_id: str) -> dict[str, Any]:
+    """Continue a batch that stopped half-way: run the cells it never finished.
+
+    A batch process can die without writing its last status — the machine rebooted or went
+    to sleep, the OOM killer took it, the terminal it ran from was closed. Its table then
+    shows `lost` with cells still `queued` or `running`, and before this the only way on
+    was `restart`, which throws away every cell that did finish. A resume keeps them and
+    runs the rest under the same id: `queued` cells, `running` cells cut off mid-run (their
+    partial decision log is wiped first) and `cancelled` ones, so Cancel then Continue is a
+    pause. `failed` cells stay failed — that is what `/retry` is for.
+
+    Refused for an imported sweep and while any batch is still running (409).
+    """
+    try:
+        batch = load_batch(ctx.reports_dir, batch_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"batch {batch_id!r} not found")
+    if batch.get("imported_from"):
+        raise HTTPException(
+            status_code=422,
+            detail="an imported batch keeps no runnable request: launch it as a new batch",
+        )
+    busy = _running_batch(ctx)
+    if busy is not None or batch_id in _PROCESSES:
+        raise HTTPException(status_code=409, detail=f"batch {busy or batch_id} is still running")
+    try:
+        path, requeued = resume_batch(ctx.reports_dir, batch_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not requeued:
+        return {
+            "status": "nothing_to_resume",
+            "batch_id": batch_id,
+            "message": "every cell has finished; use retry for the failed ones",
+        }
+    _launch(ctx, batch_id, path)
+    return {"status": "resumed", "batch_id": batch_id, "cells": sorted(requeued)}
 
 
 @router.delete("/api/batches/{batch_id}")

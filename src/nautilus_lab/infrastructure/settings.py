@@ -214,6 +214,10 @@ class Settings(BaseSettings):
     journal_enabled: bool = False
     journal_path: str = "research/journal.md"
     journal_jsonl_path: str = "research/journal.jsonl"
+    # Backtest Leaderboard (application/leaderboard.py). Off by default: `--leaderboard` forces it.
+    leaderboard_enabled: bool = False
+    leaderboard_path: str = "research/leaderboard.md"
+    leaderboard_jsonl_path: str = "research/leaderboard.jsonl"
     # Every configuration ever tried per dataset; DSR is deflated by that total (docs/27
     # R-3). Always written for catalog searches: it is evidence, like the journal, and a
     # switch to turn it off would be a switch to launder a search.

@@ -64,6 +64,9 @@ export interface BatchListRow {
   /** When this batch was last wiped and re-run in place; absent = never. */
   restarted_at?: string | null;
   restart_count?: number | null;
+  /** When an interrupted batch was last continued in place; absent = never. */
+  resumed_at?: string | null;
+  resume_count?: number | null;
   status: string;
   cells: number;
   counts: Record<string, number>;
@@ -355,6 +358,42 @@ export const retryBlockedReason = (batch: BatchListRow): string | null => {
     return 'немає клітинок без результату — «Перезапустити» проганяє всю матрицю';
   }
   return null;
+};
+
+/** Cells a continue would run: never started, cut off mid-run, or stopped by Cancel. */
+export const unfinishedCells = (counts: Record<string, number> | undefined): number =>
+  (counts?.queued ?? 0) + (counts?.running ?? 0) + (counts?.cancelled ?? 0);
+
+/**
+ * Why "Продовжити" is refused, or null when the batch can pick up where it stopped.
+ *
+ * Mirrors `POST /api/batches/{id}/resume`: a batch whose process died (status `lost`,
+ * e.g. the machine rebooted) or that was cancelled still has cells without a result, and
+ * those — and only those — run again. Finished cells keep their numbers.
+ */
+export const resumeBlockedReason = (batch: {
+  status: string;
+  counts?: Record<string, number>;
+  imported_from?: string | null;
+}): string | null => {
+  if (batch.imported_from) {
+    return 'імпортований пакет не має запиту для повторного прогону — запустіть новий';
+  }
+  if (batch.status === 'running' || batch.status === 'queued') {
+    return 'пакет ще виконується';
+  }
+  if (unfinishedCells(batch.counts) === 0) {
+    return 'усі клітинки завершені — продовжувати нічого';
+  }
+  return null;
+};
+
+/** The note under "Створено": that an interrupted batch was continued, and when. */
+export const resumeHint = (batch: BatchListRow): string | null => {
+  if (!batch.resumed_at) return null;
+  const count = batch.resume_count ?? 1;
+  const when = formatDateTime(batch.resumed_at);
+  return count > 1 ? `продовжено ${count}× · ${when}` : `продовжено ${when}`;
 };
 
 /** `2 год 05 хв` from seconds; the batch page shows time, not a float. */

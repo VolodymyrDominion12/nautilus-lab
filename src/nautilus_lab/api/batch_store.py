@@ -203,6 +203,8 @@ def list_batches(reports_dir: Path, *, limit: int = 50) -> list[dict[str, Any]]:
                 "finished_at": batch.get("finished_at"),
                 "restarted_at": batch.get("restarted_at"),
                 "restart_count": batch.get("restart_count"),
+                "resumed_at": batch.get("resumed_at"),
+                "resume_count": batch.get("resume_count"),
                 "status": effective_status(batch),
                 "cells": len(batch.get("cells", [])),
                 "counts": dict(counts),
@@ -228,12 +230,78 @@ def pid_alive(pid: object) -> bool:
     return True
 
 
+#: Status of a batch whose process died without writing a final status (reboot, OOM, kill).
+LOST = "lost"
+
+_PROC = Path("/proc")
+
+
+def _cmdline(pid: int) -> list[str] | None:
+    """The argv of `pid` from `/proc`, or None where `/proc` cannot say (macOS)."""
+    try:
+        raw = (_PROC / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return None
+    return [arg.decode("utf-8", errors="replace") for arg in raw.split(b"\0") if arg]
+
+
+def batch_process_alive(batch: dict[str, Any]) -> bool:
+    """Whether the process recorded in `batch.json` is still **this batch's** process.
+
+    `pid_alive` alone is not enough after a reboot: pids start over, and the number stored
+    for a batch that died with the machine can belong to any other program by now. The
+    batch then looked `running` forever — it could be neither cancelled nor continued, and
+    `cancel`/`delete` would have signalled a stranger. Where `/proc` exists the command line
+    must name `run_batch_job` and this batch's id; elsewhere a live pid is taken on trust.
+    """
+    pid = batch.get("pid")
+    if not isinstance(pid, int) or not pid_alive(pid):
+        return False
+    cmdline = _cmdline(pid)
+    if cmdline is None:
+        return not _PROC.is_dir()
+    batch_id = str(batch.get("id") or "")
+    if not any("run_batch_job" in arg for arg in cmdline):
+        return False
+    # By path component, not substring: `<id>` is a prefix of the next batch's `<id>_2`.
+    return not batch_id or any(Path(arg).name == batch_id for arg in cmdline)
+
+
 def effective_status(batch: dict[str, Any]) -> str:
     """The stored status, corrected when the batch process died without saying so."""
     status = str(batch.get("status", QUEUED))
-    if status in (RUNNING, QUEUED) and batch.get("pid") and not pid_alive(batch.get("pid")):
-        return "lost"
+    if status in (RUNNING, QUEUED) and batch.get("pid") and not batch_process_alive(batch):
+        return LOST
     return status
+
+
+def kill_orphan_cells(batch_path: Path) -> list[int]:
+    """SIGKILL `run_research_job` children left behind by a batch process that died.
+
+    When only the batch process is killed (OOM killer, `kill <pid>`), its cells keep running
+    and keep appending to their decision logs. Continuing the batch over them would run the
+    same cell twice into one directory. They are found by their command line, which carries
+    the cell directory inside this batch, so nothing else on the machine is touched. Returns
+    the pids it signalled; empty where `/proc` does not exist.
+    """
+    if not _PROC.is_dir():
+        return []
+    # The cell directory as `run_batch_job` passes it: `.../<batch_id>/cells/<cell_id>`.
+    marker = f"{os.sep}{batch_path.name}{os.sep}cells{os.sep}"
+    killed: list[int] = []
+    own = os.getpid()
+    for entry in _PROC.iterdir():
+        if not entry.name.isdigit() or int(entry.name) == own:
+            continue
+        cmdline = _cmdline(int(entry.name))
+        if cmdline is None or not any("run_research_job" in arg for arg in cmdline):
+            continue
+        if not any(marker in f"{os.sep}{arg}" for arg in cmdline):
+            continue
+        with contextlib.suppress(OSError):
+            os.kill(int(entry.name), signal.SIGKILL)
+            killed.append(int(entry.name))
+    return killed
 
 
 def kill_batch_process(batch: dict[str, Any]) -> None:
@@ -244,7 +312,7 @@ def kill_batch_process(batch: dict[str, Any]) -> None:
     into a directory that is about to be deleted or re-run.
     """
     pid = batch.get("pid")
-    if not isinstance(pid, int) or not pid_alive(pid):
+    if not isinstance(pid, int) or not batch_process_alive(batch):
         return
     with contextlib.suppress(OSError):
         os.killpg(pid, signal.SIGKILL)
@@ -338,9 +406,10 @@ def retry_batch(
     * `failed` and `cancelled` cells: they produced no result worth keeping;
     * `blocked` cells that are runnable now (the model was trained, the catalog arrived).
 
-    A re-queued cell's cached `summary.json` is dropped (only that file, not the directory:
-    the previous attempt's log is what diagnoses the next failure) — otherwise the cache
-    would answer with the old attempt's status and error.
+    A re-queued cell's partial artifacts are dropped (`clear_partial_cell`: the cached
+    `summary.json`, `last_run.*` and the decision log, which appends and would otherwise
+    double the folds). The previous attempt's stdout stays as `stdout.interrupted.log` —
+    it is what diagnoses the next failure.
 
     Returns the batch path and the ids put back in the queue; an empty list means there was
     nothing to retry, and the caller should say so instead of launching a process.
@@ -361,7 +430,9 @@ def retry_batch(
         runnable_now = planned_cell is not None and planned_cell.runnable
         if status in RETRYABLE_STATUSES or (status == BLOCKED and runnable_now):
             requeued.append(cell_id)
-            (cell_dir(path, cell_id) / "summary.json").unlink(missing_ok=True)
+            # Not just the cached row: the decision log appends, so a failed attempt's folds
+            # would be counted again beside the new run's (`clear_partial_cell`).
+            clear_partial_cell(cell_dir(path, cell_id))
             # A cell that stays blocked keeps a reason the fresh plan just re-checked, so a
             # retry never clears a block on the strength of an old look at disk.
             reason = (
@@ -413,6 +484,110 @@ def retry_batch(
     }
     write_json(path / "batch.json", payload)
     return path, requeued
+
+
+# --- continuing an interrupted batch ----------------------------------------------------
+
+#: Cells a batch never finished: still waiting, cut off mid-run, or stopped by Cancel.
+RESUMABLE_STATUSES: frozenset[str] = frozenset({QUEUED, RUNNING, CANCELLED})
+
+#: What a cell's run leaves behind that a second attempt must not build on.
+_PARTIAL_FILES = ("last_run.json", "last_run.log", "summary.json")
+
+
+def clear_partial_cell(cell_path: Path) -> None:
+    """Remove what an unfinished attempt of a cell wrote, so the next one starts clean.
+
+    The decision log is opened in append mode (`JsonlDecisionLogWriter`): a cell cut off in
+    its third fold and run again would otherwise carry the first attempt's folds twice, and
+    the trades rebuilt from that log would be doubled. The previous attempt's stdout is kept
+    as `stdout.interrupted.log` — it is what tells why the run stopped.
+    """
+    if not cell_path.exists():
+        return
+    shutil.rmtree(decisions_dir(cell_path), ignore_errors=True)
+    for name in _PARTIAL_FILES:
+        (cell_path / name).unlink(missing_ok=True)
+    log = cell_path / "stdout.log"
+    if log.is_file():
+        log.replace(cell_path / "stdout.interrupted.log")
+
+
+def resumable_cells(batch: dict[str, Any]) -> list[str]:
+    """Ids of the cells a continue would run: those with no finished result yet."""
+    return [
+        str(cell.get("cell_id"))
+        for cell in batch.get("cells") or []
+        if str(cell.get("status")) in RESUMABLE_STATUSES
+    ]
+
+
+def resume_batch_dir(path: Path, *, now: datetime | None = None) -> list[str]:
+    """Put a batch that stopped half-way back in the queue, keeping every finished cell.
+
+    The difference from `retry_batch`: a retry re-runs cells that *ended* without a result
+    (failed, cancelled). A batch whose process died — the machine rebooted or slept, the OOM
+    killer took it, the terminal was closed — leaves cells that never ended at all: `queued`
+    ones nobody started and `running` ones cut off mid-walk-forward. Those are what this
+    picks up, plus `cancelled`, so Cancel followed by Continue is a pause.
+
+    * `ok`, `failed` and `blocked` cells are left exactly as they are (failed ones are what
+      `retry_batch` is for: a cell that failed may fail again the same way);
+    * a cell cut off mid-run loses only its partial artifacts (`clear_partial_cell`);
+    * the request and the cell list are **not** re-planned: a continue finishes the matrix
+      that was started, it does not quietly become a different one.
+
+    Refuses (`RuntimeError`) while the batch's own process is alive. Returns the ids put
+    back in the queue; empty means there is nothing left to run, and `batch.json` is not
+    touched.
+    """
+    batch = read_json(path / "batch.json")
+    if batch is None:
+        raise FileNotFoundError(path / "batch.json")
+    if batch_process_alive(batch):
+        raise RuntimeError(f"batch {batch.get('id', path.name)} is still running")
+    requeued = resumable_cells(batch)
+    if not requeued:
+        return []
+    kill_orphan_cells(path)
+    todo = set(requeued)
+    cells: list[dict[str, Any]] = []
+    for cell in batch.get("cells") or []:
+        cell_id = str(cell.get("cell_id"))
+        if cell_id not in todo:
+            cells.append(cell)
+            continue
+        if str(cell.get("status")) != QUEUED:
+            clear_partial_cell(cell_dir(path, cell_id))
+        cells.append(
+            {
+                **cell,
+                "status": QUEUED,
+                "started_at": None,
+                "finished_at": None,
+                "returncode": None,
+                "error": None,
+            }
+        )
+    payload: dict[str, Any] = {
+        **batch,
+        "status": QUEUED,
+        "pid": None,
+        "finished_at": None,
+        "resumed_at": (now or datetime.now(UTC)).isoformat(),
+        "resume_count": int(batch.get("resume_count") or 0) + 1,
+        "cells": cells,
+    }
+    write_json(path / "batch.json", payload)
+    return requeued
+
+
+def resume_batch(
+    reports_dir: Path, batch_id: str, *, now: datetime | None = None
+) -> tuple[Path, list[str]]:
+    """`resume_batch_dir` by id, for the API."""
+    path = batch_dir(reports_dir, batch_id)
+    return path, resume_batch_dir(path, now=now)
 
 
 # --- decisions of one cell ------------------------------------------------------------

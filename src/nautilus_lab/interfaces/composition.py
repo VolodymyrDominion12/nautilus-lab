@@ -292,6 +292,11 @@ def journal_paths(cfg: Settings) -> tuple[Path, Path]:
     return Path(cfg.journal_path), Path(cfg.journal_jsonl_path)
 
 
+def leaderboard_paths(cfg: Settings) -> tuple[Path, Path]:
+    """Human markdown leaderboard and machine JSONL leaderboard, in that order."""
+    return Path(cfg.leaderboard_path), Path(cfg.leaderboard_jsonl_path)
+
+
 def overfit_audit_request(
     cfg: Settings,
     *,

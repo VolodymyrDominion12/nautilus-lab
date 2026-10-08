@@ -13,6 +13,10 @@ so one cell's settings can never leak into another's. What differs from the swee
   do not rewrite the tracked `research/` files (and do not make later runs `+dirty`).
 
 SIGTERM (the dashboard's Cancel) stops the children and marks what did not finish.
+
+`--resume` continues a batch that stopped half-way (its process died with the machine, or
+it was cancelled): finished cells are kept, the rest run again (`batch_store.resume_batch_dir`).
+The dashboard's Continue button does the same through `POST /api/batches/{id}/resume`.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ from nautilus_lab.api.batch_store import (
     decisions_dir,
     read_json,
     request_from_dict,
+    resume_batch_dir,
     write_json,
 )
 from nautilus_lab.application.batch_plan import BatchCell, research_job_config
@@ -182,8 +187,24 @@ def _now() -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(description="Run one nautilus-lab batch backtest.")
     parser.add_argument("--batch-dir", required=True)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue an interrupted batch: keep finished cells, re-run the rest",
+    )
     args = parser.parse_args(argv)
-    runner = BatchRun(Path(args.batch_dir))
+    path = Path(args.batch_dir)
+    if args.resume:
+        try:
+            requeued = resume_batch_dir(path)
+        except RuntimeError as exc:
+            print(f"cannot resume: {exc}", file=sys.stderr)
+            return 1
+        if not requeued:
+            print("nothing to resume: every cell has finished", file=sys.stderr)
+            return 0
+        print(f"resuming {len(requeued)} cell(s): {', '.join(requeued)}", file=sys.stderr)
+    runner = BatchRun(path)
 
     def on_signal(_signum: int, _frame: FrameType | None) -> None:
         runner.cancel()

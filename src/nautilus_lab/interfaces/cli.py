@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from nautilus_lab.application.catalog_queries import incremental_ingest_start
 from nautilus_lab.application.dtos import (
@@ -17,6 +19,16 @@ from nautilus_lab.application.dtos import (
     apply_selected,
 )
 from nautilus_lab.application.journal import JournalEntry, record_run
+from nautilus_lab.application.leaderboard import (
+    LeaderboardEntry,
+    build_reproduce_command,
+    format_leaderboard_pct,
+    load_leaderboard_entries,
+    rank_leaderboard_entries,
+    record_leaderboard_entry,
+    regenerate_markdown_file,
+    strategy_params_for_robot,
+)
 from nautilus_lab.application.preregistration import register, research_terms, verdict_for
 from nautilus_lab.application.promotion_gate import class_for_robot, evaluate_gate
 from nautilus_lab.application.risk import require_simulated_mode
@@ -54,6 +66,7 @@ from nautilus_lab.interfaces.composition import (
     ingest_request,
     ingest_use_case,
     journal_paths,
+    leaderboard_paths,
     live_paper_use_case,
     notifier,
     overfit_audit_request,
@@ -317,6 +330,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Append a row for this run to the research journal (table + journal.jsonl)",
     )
     research.add_argument(
+        "--leaderboard",
+        action="store_true",
+        help="Record this run to the backtest leaderboard (table + leaderboard.jsonl)",
+    )
+    research.add_argument(
         "--register",
         metavar="HYPOTHESIS",
         help=(
@@ -547,6 +565,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Report what would be pruned without deleting files",
     )
 
+    leaderboard = sub.add_parser("leaderboard", help="Display leaderboard of best backtests")
+    leaderboard.add_argument(
+        "--limit", "-n", type=int, default=15, help="Number of entries to show (default: 15)"
+    )
+    leaderboard.add_argument("--robot", help="Filter by strategy robot name")
+    leaderboard.add_argument("--instrument", help="Filter by instrument ID")
+    leaderboard.add_argument("--timeframe", help="Filter by timeframe / bar interval")
+    leaderboard.add_argument(
+        "--sort-by",
+        choices=["oos", "excess", "sharpe", "drawdown", "fills", "date"],
+        default="oos",
+        help="Metric to rank entries by (default: oos)",
+    )
+    leaderboard.add_argument(
+        "--reproduce",
+        type=int,
+        metavar="RANK",
+        help="Show full reproduction instructions and CLI command for entry at rank #",
+    )
+    leaderboard.add_argument(
+        "--sync", action="store_true", help="Sync / regenerate research/leaderboard.md"
+    )
+    leaderboard.add_argument("--json", action="store_true", help="Output leaderboard as JSON")
+
     sub.add_parser("live", help="Live trading (always fail closed)")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -609,6 +651,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_xsmom(cfg, args)
         if args.command == "prune":
             return _run_prune(cfg, args)
+        if args.command == "leaderboard":
+            return _run_leaderboard(cfg, args)
         if args.command == "live":
             require_simulated_mode(TradingMode.LIVE)
     except (
@@ -1082,6 +1126,7 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
         raise ValueError(f"--folds must be >= 1, got {folds}")
     subject = f"{(robot or cfg.robot).value} {cfg.instrument_id}"
     journal_enabled = _journal_enabled(cfg, args)
+    leaderboard_enabled = _leaderboard_enabled(cfg, args)
     started_at = datetime.now(UTC)
 
     if getattr(args, "vol_target", None) is not None:
@@ -1136,6 +1181,30 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                             artifact=tearsheet,
                         ),
                     )
+                if leaderboard_enabled:
+                    _record_leaderboard(
+                        cfg,
+                        args,
+                        manifest,
+                        robot=(robot or cfg.robot).value,
+                        instrument_id="SYNTHETIC",
+                        timeframe="1m",
+                        bar_count=args.bars,
+                        source="synthetic",
+                        run_type="multi_window",
+                        folds=folds,
+                        oos_return=multi.mean_oos_return,
+                        buy_and_hold=multi.mean_buy_and_hold_return,
+                        sharpe_ratio=None,
+                        max_drawdown=multi.worst_oos_return,
+                        fills=multi.total_oos_fills,
+                        profitable_folds=f"{multi.profitable_folds}/{len(multi.folds)}",
+                        ending_balance=(
+                            multi.folds[-1].out_of_sample.ending_balance if multi.folds else None
+                        ),
+                        selected=multi.folds[-1].selected if multi.folds else None,
+                        notes=f"synthetic multi-window folds={folds}",
+                    )
                 return 0
             wf = use_case.execute(request)
             _print_walk_forward(wf)
@@ -1156,6 +1225,34 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                         reason="auto: single split; buy&hold not measured",
                         artifact=tearsheet,
                     ),
+                )
+            if leaderboard_enabled:
+                _record_leaderboard(
+                    cfg,
+                    args,
+                    manifest,
+                    robot=(robot or cfg.robot).value,
+                    instrument_id="SYNTHETIC",
+                    timeframe="1m",
+                    bar_count=args.bars,
+                    source="synthetic",
+                    run_type="walk_forward",
+                    folds=1,
+                    oos_return=window_return(wf.out_of_sample, cfg.starting_equity),
+                    buy_and_hold=None,
+                    sharpe_ratio=(
+                        wf.out_of_sample.metrics.sharpe_like if wf.out_of_sample.metrics else None
+                    ),
+                    max_drawdown=(
+                        wf.out_of_sample.metrics.max_drawdown if wf.out_of_sample.metrics else None
+                    ),
+                    fills=wf.out_of_sample.fills,
+                    fees_paid=(
+                        wf.out_of_sample.metrics.fees_paid if wf.out_of_sample.metrics else None
+                    ),
+                    ending_balance=wf.out_of_sample.ending_balance,
+                    selected=wf.selected,
+                    notes="synthetic walk-forward single split",
                 )
             return 0
 
@@ -1189,6 +1286,27 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                     ),
                     artifact=tearsheet,
                 ),
+            )
+        if leaderboard_enabled:
+            _record_leaderboard(
+                cfg,
+                args,
+                manifest,
+                robot=(robot or cfg.robot).value,
+                instrument_id="SYNTHETIC",
+                timeframe="1m",
+                bar_count=args.bars,
+                source="synthetic",
+                run_type="full_sample",
+                folds=1,
+                oos_return=None,
+                buy_and_hold=None,
+                sharpe_ratio=report.metrics.sharpe_like if report.metrics else None,
+                max_drawdown=report.metrics.max_drawdown if report.metrics else None,
+                fills=report.fills,
+                fees_paid=report.metrics.fees_paid if report.metrics else None,
+                ending_balance=report.ending_balance,
+                notes="synthetic backtest full sample",
             )
         return 0
 
@@ -1244,6 +1362,30 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                         artifact=tearsheet,
                     ),
                 )
+            if leaderboard_enabled:
+                _record_leaderboard(
+                    cfg,
+                    args,
+                    manifest,
+                    robot=(robot or cfg.robot).value,
+                    instrument_id=cfg.instrument_id,
+                    timeframe=cfg.bar_interval,
+                    bar_count=sum(f.oos_bar_count for f in multi.folds),
+                    source="catalog",
+                    run_type="multi_window",
+                    folds=folds,
+                    oos_return=multi.mean_oos_return,
+                    buy_and_hold=multi.mean_buy_and_hold_return,
+                    sharpe_ratio=None,
+                    max_drawdown=None,
+                    fills=multi.total_oos_fills,
+                    profitable_folds=f"{multi.profitable_folds}/{len(multi.folds)}",
+                    ending_balance=(
+                        multi.folds[-1].out_of_sample.ending_balance if multi.folds else None
+                    ),
+                    selected=multi.folds[-1].selected if multi.folds else None,
+                    notes=f"catalog multi-window folds={folds}",
+                )
             return 0
         wf = use_case.execute(request)
         _print_walk_forward(wf)
@@ -1265,6 +1407,34 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                     reason="auto: single split; buy&hold not measured",
                     artifact=tearsheet,
                 ),
+            )
+        if leaderboard_enabled:
+            _record_leaderboard(
+                cfg,
+                args,
+                manifest,
+                robot=(robot or cfg.robot).value,
+                instrument_id=cfg.instrument_id,
+                timeframe=cfg.bar_interval,
+                bar_count=args.bars,
+                source="catalog",
+                run_type="walk_forward",
+                folds=1,
+                oos_return=window_return(wf.out_of_sample, cfg.starting_equity),
+                buy_and_hold=None,
+                sharpe_ratio=(
+                    wf.out_of_sample.metrics.sharpe_like if wf.out_of_sample.metrics else None
+                ),
+                max_drawdown=(
+                    wf.out_of_sample.metrics.max_drawdown if wf.out_of_sample.metrics else None
+                ),
+                fills=wf.out_of_sample.fills,
+                fees_paid=(
+                    wf.out_of_sample.metrics.fees_paid if wf.out_of_sample.metrics else None
+                ),
+                ending_balance=wf.out_of_sample.ending_balance,
+                selected=wf.selected,
+                notes="catalog walk-forward single split",
             )
         return 0
 
@@ -1300,6 +1470,27 @@ def _run_research(cfg: Settings, args: argparse.Namespace) -> int:
                 ),
                 artifact=tearsheet,
             ),
+        )
+    if leaderboard_enabled:
+        _record_leaderboard(
+            cfg,
+            args,
+            manifest,
+            robot=(robot or cfg.robot).value,
+            instrument_id=cfg.instrument_id,
+            timeframe=cfg.bar_interval,
+            bar_count=args.bars,
+            source="catalog",
+            run_type="full_sample",
+            folds=1,
+            oos_return=None,
+            buy_and_hold=None,
+            sharpe_ratio=report.metrics.sharpe_like if report.metrics else None,
+            max_drawdown=report.metrics.max_drawdown if report.metrics else None,
+            fills=report.fills,
+            fees_paid=report.metrics.fees_paid if report.metrics else None,
+            ending_balance=report.ending_balance,
+            notes="catalog full-sample in-sample only",
         )
     return 0
 
@@ -1625,6 +1816,227 @@ def _record_journal(cfg: Settings, manifest: RunManifest, entry: JournalEntry) -
     stamped = replace(entry, provenance=manifest)
     record_run(markdown_path=markdown_path, jsonl_path=jsonl_path, entry=stamped)
     print(f"journal_row_appended={markdown_path}")
+
+
+def _leaderboard_enabled(cfg: Settings, args: argparse.Namespace) -> bool:
+    """`--leaderboard` forces the record; LEADERBOARD_ENABLED makes it the default."""
+    return bool(getattr(args, "leaderboard", False)) or cfg.leaderboard_enabled
+
+
+def _record_leaderboard(
+    cfg: Settings,
+    args: argparse.Namespace,
+    manifest: RunManifest,
+    *,
+    robot: str,
+    instrument_id: str,
+    timeframe: str,
+    bar_count: int,
+    source: str,
+    run_type: str,
+    folds: int,
+    oos_return: Decimal | None = None,
+    buy_and_hold: Decimal | None = None,
+    sharpe_ratio: Decimal | None = None,
+    max_drawdown: Decimal | None = None,
+    fills: int | None = None,
+    fees_paid: Decimal | None = None,
+    profitable_folds: str | None = None,
+    ending_balance: Decimal | None = None,
+    selected: object | None = None,
+    notes: str = "",
+) -> None:
+    md_path, jsonl_path = leaderboard_paths(cfg)
+    cfg_params: dict[str, Any] = {
+        "fast_ema": cfg.fast_ema,
+        "slow_ema": cfg.slow_ema,
+        "donchian_period": cfg.donchian_period,
+        "bb_period": cfg.bb_period,
+        "bb_k": cfg.bb_k,
+        "enter_trend_er": cfg.enter_trend_er,
+        "exit_trend_er": cfg.exit_trend_er,
+    }
+    strategy_params = strategy_params_for_robot(robot, selected=selected, cfg_params=cfg_params)
+
+    run_args: dict[str, Any] = {
+        "starting_equity": str(cfg.starting_equity),
+        "risk_per_trade": str(cfg.risk_per_trade),
+        "stop_pct": str(cfg.stop_pct),
+        "cost_profile": cfg.cost_profile,
+        "is_fraction": str(getattr(args, "is_fraction", Decimal("0.7"))),
+        "embargo_bars": getattr(args, "embargo_bars", cfg.embargo_bars),
+        "use_optuna": bool(getattr(args, "optuna", False)),
+        "optuna_trials": getattr(args, "trials", 20),
+        "stress_slice": getattr(args, "slice", None),
+        "bar_vpin": bool(getattr(args, "bar_vpin", False)),
+        "tick_vpin": bool(getattr(args, "tick_vpin", False)),
+        "hawkes": bool(getattr(args, "hawkes", False)),
+    }
+
+    reproduce_cmd = build_reproduce_command(
+        robot=robot,
+        instrument_id=instrument_id,
+        timeframe=timeframe,
+        bar_count=bar_count,
+        folds=folds,
+        source=source,
+        catalog_path=getattr(args, "catalog", cfg.catalog_path),
+        strategy_params=strategy_params,
+        run_args=run_args,
+    )
+
+    excess = (
+        (oos_return - buy_and_hold)
+        if (oos_return is not None and buy_and_hold is not None)
+        else None
+    )
+
+    entry = LeaderboardEntry(
+        id=f"lb_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{robot}",
+        recorded_at=datetime.now(UTC),
+        robot=robot,
+        instrument_id=instrument_id,
+        timeframe=timeframe,
+        bar_count=bar_count,
+        source=source,
+        run_type=run_type,
+        folds=folds,
+        oos_return=oos_return,
+        buy_and_hold_return=buy_and_hold,
+        excess_return=excess,
+        sharpe_ratio=sharpe_ratio,
+        max_drawdown=max_drawdown,
+        fills=fills,
+        fees_paid=fees_paid,
+        profitable_folds=profitable_folds,
+        ending_balance=ending_balance,
+        strategy_params=strategy_params,
+        run_args=run_args,
+        reproduce_command=reproduce_cmd,
+        provenance=manifest,
+        notes=notes,
+    )
+    record_leaderboard_entry(markdown_path=md_path, jsonl_path=jsonl_path, entry=entry)
+    print(f"leaderboard_recorded={md_path}")
+
+
+def _run_leaderboard(cfg: Settings, args: argparse.Namespace) -> int:
+    md_path, jsonl_path = leaderboard_paths(cfg)
+    sort_metric = getattr(args, "sort_by", "oos")
+    if getattr(args, "sync", False):
+        regenerate_markdown_file(md_path, jsonl_path, sort_by=sort_metric)
+        print(f"Leaderboard markdown updated: {jsonl_path} -> {md_path}")
+        return 0
+
+    entries = list(load_leaderboard_entries(jsonl_path))
+    if not entries:
+        print(f"No leaderboard entries found in {jsonl_path}.")
+        print("Run research backtests with '--leaderboard' to record results.")
+        return 0
+
+    # Optional filters
+    if getattr(args, "robot", None):
+        entries = [e for e in entries if e.robot.lower() == args.robot.lower()]
+    if getattr(args, "instrument", None):
+        entries = [e for e in entries if args.instrument.lower() in e.instrument_id.lower()]
+    if getattr(args, "timeframe", None):
+        entries = [e for e in entries if e.timeframe.lower() == args.timeframe.lower()]
+
+    ranked = rank_leaderboard_entries(entries, sort_by=sort_metric)
+
+    if getattr(args, "reproduce", None) is not None:
+        rank_idx = int(args.reproduce)
+        if rank_idx < 1 or rank_idx > len(ranked):
+            print(f"Error: Rank #{rank_idx} is out of bounds (1..{len(ranked)})", file=sys.stderr)
+            return 1
+        item = ranked[rank_idx - 1]
+        print(
+            f"\n=== [Leaderboard Rank #{rank_idx}] "
+            f"{item.robot} on {item.instrument_id} ({item.timeframe}) ==="
+        )
+        rec_time = item.recorded_at.strftime("%Y-%m-%d %H:%M UTC")
+        print(
+            f"Recorded: {rec_time} | Source: {item.source} | "
+            f"Run Type: {item.run_type} (folds={item.folds})"
+        )
+        print(f"Candles (bars): {item.bar_count}")
+        print(
+            f"OOS Return: {format_leaderboard_pct(item.oos_return)} | "
+            f"Buy & Hold: {format_leaderboard_pct(item.buy_and_hold_return)} | "
+            f"Excess Alpha: {format_leaderboard_pct(item.excess_return)}"
+        )
+        print(
+            f"Max DD: {format_leaderboard_pct(item.max_drawdown)} | "
+            f"Sharpe-like: {item.sharpe_ratio or 'n/a'} | "
+            f"Fills: {item.fills or 0} | Fees: {item.fees_paid or '0'}"
+        )
+        if item.profitable_folds:
+            print(f"Profitable Folds: {item.profitable_folds}")
+        print("\nStrategy Arguments:")
+        for k, v in sorted(item.strategy_params.items()):
+            print(f"  {k} = {v}")
+        print("\nRun Arguments:")
+        for k, v in sorted(item.run_args.items()):
+            print(f"  {k} = {v}")
+        if item.provenance:
+            rev_str = item.provenance.code_revision or "unknown"
+            print(f"\nProvenance: rev={rev_str} nautilus={item.provenance.nautilus_version}")
+        print(f"\nExact Reproduce Command:\n  {item.reproduce_command}\n")
+        return 0
+
+    if getattr(args, "json", False):
+        limit = args.limit if args.limit > 0 else len(ranked)
+        print(json.dumps([e.as_dict() for e in ranked[:limit]], indent=2))
+        return 0
+
+    limit = args.limit if args.limit > 0 else len(ranked)
+    shown = ranked[:limit]
+
+    print(
+        f"\n=== Nautilus Lab Backtest Leaderboard (Top {len(shown)}, sorted by {sort_metric}) ==="
+    )
+    header_fmt = "{:<4} {:<14} {:<18} {:<6} {:<8} {:<12} {:<11} {:<11} {:<10} {:<6} {:<22}"
+    row_fmt = "{:<4} {:<14} {:<18} {:<6} {:<8} {:<12} {:<11} {:<11} {:<10} {:<6} {:<22}"
+    print(
+        header_fmt.format(
+            "#",
+            "Strategy",
+            "Instrument",
+            "TF",
+            "Candles",
+            "OOS Return",
+            "Buy&Hold",
+            "Excess",
+            "Max DD",
+            "Fills",
+            "Params",
+        )
+    )
+    print("-" * 125)
+    for rank, e in enumerate(shown, start=1):
+        params_short = e.format_params_summary()
+        if len(params_short) > 22:
+            params_short = params_short[:19] + "..."
+        print(
+            row_fmt.format(
+                str(rank),
+                e.robot,
+                e.instrument_id,
+                e.timeframe,
+                str(e.bar_count),
+                format_leaderboard_pct(e.oos_return),
+                format_leaderboard_pct(e.buy_and_hold_return),
+                format_leaderboard_pct(e.excess_return),
+                format_leaderboard_pct(e.max_drawdown),
+                str(e.fills or 0),
+                params_short,
+            )
+        )
+    print("-" * 125)
+    print("To view full reproduction instructions and CLI command for any rank, run:")
+    print("  uv run lab leaderboard --reproduce <RANK>")
+    print(f"Leaderboard file: {md_path}\n")
+    return 0
 
 
 def _int_list(raw: str) -> tuple[int, ...]:

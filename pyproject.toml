@@ -123,6 +123,7 @@ select = [
 "src/nautilus_lab/application/decision_narrative.py" = ["RUF001", "RUF002", "RUF003"]
 "src/nautilus_lab/application/decision_digest.py" = ["RUF001", "RUF002", "RUF003"]
 "src/nautilus_lab/application/decision_analysis.py" = ["RUF001", "RUF002", "RUF003"]
+"src/nautilus_lab/application/leaderboard.py" = ["RUF001", "RUF002", "RUF003"]
 # Cost profiles carry a one-line Ukrainian note each (`domain/fees.py`): the note is what a
 # reader sees in the settings file and in the run manifest, so it stays Ukrainian like the
 # rest of the user-facing text. Identifiers and code there stay English.

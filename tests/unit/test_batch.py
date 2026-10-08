@@ -16,30 +16,37 @@ from fastapi.testclient import TestClient
 from nautilus_lab.api.app import create_app
 from nautilus_lab.api.batch_store import (
     BLOCKED,
+    CANCELLED,
     FAILED,
+    LOST,
     OK,
     QUEUED,
     RUNNING,
     SUMMARY_VERSION,
     batch_payload,
+    batch_process_alive,
     build_cell_summary,
     cell_dir,
     cell_summary,
     create_batch,
     decisions_dir,
     delete_batch,
+    effective_status,
     find_session_cell,
     list_batches,
     load_batch,
     request_from_dict,
     request_to_dict,
     reset_batch,
+    resume_batch,
+    resume_batch_dir,
     retry_batch,
     run_payload,
     write_json,
 )
 from nautilus_lab.api.routes import batches as batches_routes
 from nautilus_lab.api.run_batch_job import BatchRun
+from nautilus_lab.api.run_batch_job import main as run_batch_main
 from nautilus_lab.application.batch_plan import (
     MAX_VARIANTS,
     BatchRequest,
@@ -704,6 +711,185 @@ def test_retry_says_nothing_to_do_instead_of_relaunching(tmp_path: Path) -> None
     batch = load_batch(reports, batch_id)
     assert batch is not None
     assert batch["status"] == OK, "a batch with nothing to retry keeps its status"
+
+
+# --- continuing an interrupted batch ----------------------------------------------------
+
+
+def _interrupt(reports: Path, batch_id: str, statuses: dict[str, str]) -> None:
+    """Make `batch.json` look like its process died mid-run: cells left as given, dead pid."""
+    batch = load_batch(reports, batch_id)
+    assert batch is not None
+    for cell in batch["cells"]:
+        if cell["cell_id"] in statuses:
+            cell["status"] = statuses[cell["cell_id"]]
+    # A pid that cannot be alive: the process went down with the machine.
+    batch.update({"status": RUNNING, "pid": 2**22 + 12345, "finished_at": None})
+    write_json(batch_dir_of(reports, batch_id) / "batch.json", batch)
+
+
+def batch_dir_of(reports: Path, batch_id: str) -> Path:
+    return reports / "batches" / batch_id
+
+
+def test_resume_runs_only_the_unfinished_cells_and_keeps_the_rest(tmp_path: Path) -> None:
+    """A reboot mid-batch must not cost the cells that already finished.
+
+    `restart` threw them all away; `retry` ignored cells left `queued`/`running` by a dead
+    process. A resume re-runs exactly those (and `cancelled`), keeps `ok` and `failed`.
+    """
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema", "regime"), symbols=("ETHUSDT", "BTCUSDT"), parallel=1)
+    cells = plan_cells(request, exists=_all_exist, wired=["ema", "regime"])
+    batch_id, path = create_batch(reports, request, cells)
+    assert BatchRun(path, python=_fake_python(tmp_path)).run() == 0
+    kept = cell_dir(path, "ema_ETH") / "last_run.json"
+    before = kept.read_text(encoding="utf-8")
+
+    # The machine went down: ema_BTC was mid-run, regime_BTC never started.
+    _interrupt(reports, batch_id, {"ema_BTC": RUNNING, "regime_BTC": QUEUED})
+    cut = cell_dir(path, "ema_BTC")
+    stale = decisions_dir(cut) / "s-f9_2026-06-01.jsonl"
+    stale.write_text('{"half": "a fold the dead run never finished"}\n', encoding="utf-8")
+    (cut / "stdout.log").write_text("killed here", encoding="utf-8")
+    interrupted = load_batch(reports, batch_id)
+    assert interrupted is not None
+    assert effective_status(interrupted) == LOST
+
+    _, requeued = resume_batch(reports, batch_id)
+    assert sorted(requeued) == ["ema_BTC", "regime_BTC"]
+    batch = load_batch(reports, batch_id)
+    assert batch is not None
+    statuses = {cell["cell_id"]: cell["status"] for cell in batch["cells"]}
+    assert statuses == {
+        "ema_ETH": OK,
+        "ema_BTC": QUEUED,
+        "regime_ETH": FAILED,
+        "regime_BTC": QUEUED,
+    }, "failed cells are retry's job, finished ones are kept"
+    assert batch["status"] == QUEUED
+    assert batch["resume_count"] == 1
+    assert not stale.exists(), "the half-written decision log must not be appended to"
+    assert (cut / "stdout.interrupted.log").read_text(encoding="utf-8") == "killed here"
+
+    assert BatchRun(path, python=_fake_python(tmp_path)).run() == 0
+    done = load_batch(reports, batch_id)
+    assert done is not None
+    assert {c["cell_id"]: c["status"] for c in done["cells"]}["ema_BTC"] == OK
+    assert kept.read_text(encoding="utf-8") == before, "a finished cell is not re-run"
+
+
+def test_resume_continues_a_cancelled_batch(tmp_path: Path) -> None:
+    """Cancel then Continue is a pause: the cancelled cells run, nothing else does."""
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT", "BTCUSDT"), parallel=1)
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, path = create_batch(reports, request, cells)
+    batch = load_batch(reports, batch_id)
+    assert batch is not None
+    batch["cells"][0]["status"] = OK
+    batch["cells"][1]["status"] = CANCELLED
+    batch.update({"status": CANCELLED, "pid": None})
+    write_json(path / "batch.json", batch)
+
+    assert resume_batch_dir(path) == [batch["cells"][1]["cell_id"]]
+
+
+def test_resume_with_nothing_left_leaves_the_batch_alone(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema", "regime"), symbols=("ETHUSDT",))
+    cells = plan_cells(request, exists=_all_exist, wired=["ema", "regime"])
+    _, path = create_batch(reports, request, cells)
+    assert BatchRun(path, python=_fake_python(tmp_path)).run() == 0
+    before = (path / "batch.json").read_text(encoding="utf-8")
+
+    assert resume_batch_dir(path) == []
+    assert (path / "batch.json").read_text(encoding="utf-8") == before
+
+
+def test_a_reused_pid_does_not_keep_a_dead_batch_running(tmp_path: Path) -> None:
+    """After a reboot the stored pid can be any program's: the batch is lost, not running.
+
+    Before, such a batch showed `running` forever: it could be neither cancelled nor
+    continued, and Cancel would have sent SIGTERM to a stranger.
+    """
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",))
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, path = create_batch(reports, request, cells)
+    stranger = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        batch = load_batch(reports, batch_id)
+        assert batch is not None
+        batch.update({"status": RUNNING, "pid": stranger.pid})
+        write_json(path / "batch.json", batch)
+        if Path("/proc").is_dir():
+            assert not batch_process_alive(batch)
+            assert effective_status(batch) == LOST
+            assert resume_batch_dir(path) == [batch["cells"][0]["cell_id"]]
+        assert stranger.poll() is None, "an unrelated process must never be signalled"
+    finally:
+        stranger.kill()
+        stranger.wait()
+
+
+def test_resume_refuses_while_the_batch_process_lives(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT",))
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, path = create_batch(reports, request, cells)
+    # Looks like the real thing to `/proc`: the module name and this batch's directory.
+    alive = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)", "run_batch_job", str(path)]
+    )
+    try:
+        batch = load_batch(reports, batch_id)
+        assert batch is not None
+        batch.update({"status": RUNNING, "pid": alive.pid})
+        write_json(path / "batch.json", batch)
+        with pytest.raises(RuntimeError, match="still running"):
+            resume_batch_dir(path)
+    finally:
+        alive.kill()
+        alive.wait()
+
+
+def test_the_resume_endpoint_and_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reports = tmp_path / "reports"
+    request = BatchRequest(robots=("ema",), symbols=("ETHUSDT", "BTCUSDT"), folds=2)
+    cells = plan_cells(request, exists=_all_exist, wired=["ema"])
+    batch_id, path = create_batch(reports, request, cells)
+    launched: list[str] = []
+    monkeypatch.setattr(batches_routes, "_launch", lambda _ctx, bid, _path: launched.append(bid))
+    client = TestClient(create_app(Settings(), root=tmp_path))
+
+    assert client.post("/api/batches/nonexistent_batch_123/resume").status_code == 404
+    assert client.post("/api/batches/bad..id!!/resume").status_code == 400
+
+    _interrupt(reports, batch_id, {"ema_ETH": OK, "ema_BTC": RUNNING})
+    resumed = client.post(f"/api/batches/{batch_id}/resume")
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["status"] == "resumed"
+    assert resumed.json()["cells"] == ["ema_BTC"]
+    assert launched == [batch_id]
+
+    # Everything finished: the endpoint says so and launches nothing.
+    done = load_batch(reports, batch_id)
+    assert done is not None
+    for cell in done["cells"]:
+        cell["status"] = OK
+    done.update({"status": OK, "pid": None})
+    write_json(path / "batch.json", done)
+    assert client.post(f"/api/batches/{batch_id}/resume").json()["status"] == "nothing_to_resume"
+    assert launched == [batch_id]
+    assert run_batch_main(["--batch-dir", str(path), "--resume"]) == 0
+    assert "nothing to resume" in capsys.readouterr().err
+
+    imported = {**done, "imported_from": "reports/decision-sweep"}
+    write_json(path / "batch.json", imported)
+    assert client.post(f"/api/batches/{batch_id}/resume").status_code == 422
 
 
 def test_progress_counts_cells_and_estimates_from_finished_ones(tmp_path: Path) -> None:

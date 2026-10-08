@@ -9,6 +9,7 @@ from nautilus_lab.api.routes import (
     batches,
     catalog,
     decision_analysis,
+    leaderboard,
     library,
     live,
     ml,
@@ -29,4 +30,5 @@ ROUTERS: tuple[APIRouter, ...] = (
     settings.router,
     decision_analysis.router,
     batches.router,
+    leaderboard.router,
 )

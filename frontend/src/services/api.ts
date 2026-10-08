@@ -1399,6 +1399,13 @@ export async function retryBatch(
   return parseJson(await fetch(batchPath(batchId, '/retry'), { method: 'POST' }));
 }
 
+/** Continue an interrupted batch: run the cells it never finished, keep the rest. */
+export async function resumeBatch(
+  batchId: string,
+): Promise<{ status: string; batch_id: string; cells?: string[]; message?: string }> {
+  return parseJson(await fetch(batchPath(batchId, '/resume'), { method: 'POST' }));
+}
+
 export async function importDecisionSweep(): Promise<{ batch_id: string }> {
   return parseJson(await fetch(apiUrl('/api/batches/import-sweep'), { method: 'POST' }));
 }

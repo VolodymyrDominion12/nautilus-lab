@@ -26,6 +26,7 @@ from nautilus_lab.application.param_grid import iter_param_grid
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.application.run_research_backtest import minimum_bars
 from nautilus_lab.application.score import in_sample_score
+from nautilus_lab.application.timing import TIMINGS
 from nautilus_lab.application.trial_ledger import TrialLedger, record_trials
 from nautilus_lab.domain.align import split_aligned_by_window
 from nautilus_lab.domain.bars import OhlcvBar
@@ -42,6 +43,11 @@ from nautilus_lab.domain.walk_forward import (
     split_by_window,
 )
 from nautilus_lab.domain.windowing import warmup_tail
+
+#: Runs several in-sample candidates at once and returns their reports in the same order.
+#: Offered by an engine with a `run_many` method (`ParallelResearchBacktest`); without one
+#: the grid runs candidate by candidate, exactly as before.
+RunMany = Callable[[Sequence[BacktestRequest]], list[BacktestReport]]
 
 
 class RunWalkForward:
@@ -78,7 +84,8 @@ class RunWalkForward:
         return self._execute_single(request, embargo)
 
     def _execute_single(self, request: WalkForwardRequest, embargo: int) -> WalkForwardReport:
-        bars = self._feed.load(request.backtest)
+        with TIMINGS.phase("load_bars"):
+            bars = self._feed.load(request.backtest)
         window = request.window or anchored_window(
             bars,
             in_sample_fraction=request.in_sample_fraction,
@@ -101,7 +108,24 @@ class RunWalkForward:
                 candidate, list(folds.in_sample), ticks, books
             ),
             run_oos=self._single_oos_runner(request, bars, folds.out_of_sample, ticks, books),
+            run_is_many=self._single_is_many(list(folds.in_sample), ticks, books),
         )
+
+    def _single_is_many(
+        self,
+        bars: list[OhlcvBar],
+        ticks: list[AggTrade] | None,
+        books: list[OrderBookSnapshot] | None,
+    ) -> RunMany | None:
+        """The grid's batch runner over these in-sample bars, when the engine has one."""
+        run_many = getattr(self._engine, "run_many", None)
+        if run_many is None:
+            return None
+
+        def run(candidates: Sequence[BacktestRequest]) -> list[BacktestReport]:
+            return list(run_many(candidates, bars, ticks, books))
+
+        return run
 
     def _single_oos_runner(
         self,
@@ -163,16 +187,19 @@ class RunWalkForward:
         if request.use_tick_vpin or request.use_hawkes:
             if self._tick_feed is None:
                 raise ValueError("Tick feed must be provided to use tick_vpin or hawkes")
-            ticks = self._tick_feed.load(request)
+            with TIMINGS.phase("load_ticks"):
+                ticks = self._tick_feed.load(request)
         books = None
         if request.robot is RobotName.ML_OBI:
             if self._book_feed is None:
                 raise ValueError("OrderBook feed must be provided to use ML_OBI")
-            books = self._book_feed.load(request)
+            with TIMINGS.phase("load_books"):
+                books = self._book_feed.load(request)
         return ticks, books
 
     def _execute_pairs(self, request: WalkForwardRequest, embargo: int) -> WalkForwardReport:
-        all_bars = self._feed.load_multi(request.backtest)
+        with TIMINGS.phase("load_bars"):
+            all_bars = self._feed.load_multi(request.backtest)
         ref = _ref_leg(request.backtest)
         reference = list(all_bars[ref])
         window = request.window or anchored_window(
@@ -191,9 +218,12 @@ class RunWalkForward:
             len(oos_bars[ref]),
             "out-of-sample",
         )
-        funding = (
-            self._funding_feed.load(request.backtest) if self._funding_feed is not None else None
-        )
+        with TIMINGS.phase("load_funding"):
+            funding = (
+                self._funding_feed.load(request.backtest)
+                if self._funding_feed is not None
+                else None
+            )
         return self._select_and_evaluate(
             request,
             window,
@@ -249,7 +279,8 @@ class RunWalkForward:
         request: WalkForwardRequest,
         embargo: int,
     ) -> MultiWindowReport:
-        bars = self._feed.load(request.backtest)
+        with TIMINGS.phase("load_bars"):
+            bars = self._feed.load(request.backtest)
         windows = rolling_windows(
             bars,
             folds=request.folds,
@@ -293,6 +324,7 @@ class RunWalkForward:
             ),
             run_oos=self._single_oos_runner(request, bars, split.out_of_sample, ticks, books),
             oos_reference=split.out_of_sample,
+            run_is_many=self._single_is_many(list(split.in_sample), ticks, books),
         )
 
     def _execute_pairs_multi(
@@ -300,7 +332,8 @@ class RunWalkForward:
         request: WalkForwardRequest,
         embargo: int,
     ) -> MultiWindowReport:
-        all_bars = self._feed.load_multi(request.backtest)
+        with TIMINGS.phase("load_bars"):
+            all_bars = self._feed.load_multi(request.backtest)
         ref = _ref_leg(request.backtest)
         windows = rolling_windows(
             list(all_bars[ref]),
@@ -308,9 +341,12 @@ class RunWalkForward:
             in_sample_fraction=request.in_sample_fraction,
             embargo_bars=embargo,
         )
-        funding = (
-            self._funding_feed.load(request.backtest) if self._funding_feed is not None else None
-        )
+        with TIMINGS.phase("load_funding"):
+            funding = (
+                self._funding_feed.load(request.backtest)
+                if self._funding_feed is not None
+                else None
+            )
         folds = [
             self._evaluate_pairs_fold(request, index, all_bars, window, funding=funding)
             for index, window in enumerate(windows)
@@ -347,9 +383,10 @@ class RunWalkForward:
         run_is: Callable[[BacktestRequest], BacktestReport],
         run_oos: Callable[[BacktestRequest], BacktestReport],
         oos_reference: Sequence[OhlcvBar],
+        run_is_many: RunMany | None = None,
     ) -> WalkForwardFold:
         best_params, best_is_report, tried, candidates = self._select(
-            request, _scoped_is(request, run_is)
+            request, _scoped_is(request, run_is), _scoped_is_many(request, run_is_many)
         )
         selected_request = _scoped_oos(
             request, apply_selected(request.backtest, best_params), index
@@ -358,7 +395,8 @@ class RunWalkForward:
         # overwrite the same file and the last one would look like the only result.
         if request.tearsheet_path and index == request.folds - 1:
             selected_request = replace(selected_request, tearsheet_path=request.tearsheet_path)
-        oos = run_oos(selected_request)
+        with TIMINGS.phase("oos_run"):
+            oos = run_oos(selected_request)
         return WalkForwardFold(
             index=index,
             selected=best_params,
@@ -384,16 +422,18 @@ class RunWalkForward:
         *,
         run_is: Callable[[BacktestRequest], BacktestReport],
         run_oos: Callable[[BacktestRequest], BacktestReport],
+        run_is_many: RunMany | None = None,
     ) -> WalkForwardReport:
         best_params, best_is_report, tried, candidates = self._select(
-            request, _scoped_is(request, run_is)
+            request, _scoped_is(request, run_is), _scoped_is_many(request, run_is_many)
         )
 
         selected_request = _scoped_oos(request, apply_selected(request.backtest, best_params), None)
         if request.tearsheet_path:
             selected_request = replace(selected_request, tearsheet_path=request.tearsheet_path)
 
-        oos = run_oos(selected_request)
+        with TIMINGS.phase("oos_run"):
+            oos = run_oos(selected_request)
         return WalkForwardReport(
             selected=best_params,
             candidates_tried=tried,
@@ -409,6 +449,16 @@ class RunWalkForward:
         self,
         request: WalkForwardRequest,
         run_is: Callable[[BacktestRequest], BacktestReport],
+        run_is_many: RunMany | None = None,
+    ) -> tuple[SelectedParams, BacktestReport, int, tuple[CandidateScore, ...]]:
+        with TIMINGS.phase("is_search"):
+            return self._select_timed(request, run_is, run_is_many)
+
+    def _select_timed(
+        self,
+        request: WalkForwardRequest,
+        run_is: Callable[[BacktestRequest], BacktestReport],
+        run_is_many: RunMany | None,
     ) -> tuple[SelectedParams, BacktestReport, int, tuple[CandidateScore, ...]]:
         if request.use_optuna:
             from nautilus_lab.application.optuna_optimizer import OptunaParamOptimizer
@@ -426,7 +476,9 @@ class RunWalkForward:
             record_trials(self._trial_ledger, request.backtest, labels)
             return best, best_report, tried, tuple(CandidateScore(label=label) for label in labels)
 
-        best, best_report, tried, candidates = self._grid_search_params(request, run_is)
+        best, best_report, tried, candidates = self._grid_search_params(
+            request, run_is, run_is_many
+        )
         labels = [params.label() for params in iter_param_grid(request.backtest)]
         record_trials(self._trial_ledger, request.backtest, labels)
         return best, best_report, tried, candidates
@@ -435,6 +487,7 @@ class RunWalkForward:
         self,
         request: WalkForwardRequest,
         run_is: Callable[[BacktestRequest], BacktestReport],
+        run_is_many: RunMany | None = None,
     ) -> tuple[SelectedParams, BacktestReport, int, tuple[CandidateScore, ...]]:
         """Pick the best-scoring grid point and keep every candidate's score (docs/35 L-2).
 
@@ -447,10 +500,17 @@ class RunWalkForward:
         best_is_report: BacktestReport | None = None
         tried = 0
         scored: list[CandidateScore] = []
-        for params in iter_param_grid(request.backtest):
+        grid = list(iter_param_grid(request.backtest))
+        requests = [apply_selected(request.backtest, params) for params in grid]
+        # The candidates are independent runs on the same bars, so an engine that can run
+        # them side by side (`run_many`, one process each) does; the reports come back in
+        # grid order, which keeps the ranking and its tie-break identical to the serial path.
+        if run_is_many is not None and len(requests) > 1:
+            reports = run_is_many(requests)
+        else:
+            reports = [run_is(candidate) for candidate in requests]
+        for params, report in zip(grid, reports, strict=True):
             tried += 1
-            candidate = apply_selected(request.backtest, params)
-            report = run_is(candidate)
             score = in_sample_score(
                 report,
                 metric=request.backtest.selection_metric,
@@ -574,6 +634,13 @@ def _scoped_is(
     if request.decision_log_scope != "oos":
         return run_is
     return lambda candidate: run_is(replace(candidate, session_id=None))
+
+
+def _scoped_is_many(request: WalkForwardRequest, run_many: RunMany | None) -> RunMany | None:
+    """`_scoped_is` for the batch path: the same rule, applied to every candidate."""
+    if run_many is None or request.decision_log_scope != "oos":
+        return run_many
+    return lambda candidates: run_many([replace(c, session_id=None) for c in candidates])
 
 
 def _scoped_oos(

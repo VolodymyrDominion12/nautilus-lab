@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from nautilus_lab.application.decision_trace_codec import record_to_dict, upgrade_row
+from nautilus_lab.application.timing import TIMINGS
 from nautilus_lab.domain.decision_log import DecisionRecord
 from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.infrastructure.settings import Settings
@@ -226,7 +227,10 @@ class JsonlDecisionLogWriter(DecisionLogPort):
     def log(self, record: DecisionRecord) -> None:
         if not self._enabled:
             return
+        with TIMINGS.phase("decision_log_write"):
+            self._log(record)
 
+    def _log(self, record: DecisionRecord) -> None:
         now = time.monotonic()
         if (
             self._prune_interval_seconds > 0

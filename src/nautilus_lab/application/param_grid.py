@@ -40,7 +40,15 @@ _PROBE = 999_001
 
 
 def iter_param_grid(request: BacktestRequest) -> Iterator[SelectedParams]:
-    """Small grid. Fit on in-sample only; never peek at out-of-sample."""
+    """Small grid. Fit on in-sample only; never peek at out-of-sample.
+
+    With `param_search` off the grid is the request's own configuration and nothing else:
+    one in-sample run per fold, one trial in the ledger, and the values set in a batch's
+    `env` reach the run instead of being re-selected.
+    """
+    if not request.param_search:
+        yield selected_from_request(request)
+        return
     yield from iter_grid(
         request.robot,
         selected_from_request(request),

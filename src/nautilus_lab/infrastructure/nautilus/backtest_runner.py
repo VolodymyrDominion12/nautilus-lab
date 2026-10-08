@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -22,6 +23,7 @@ from nautilus_lab.application.dtos import (
     PaperPosition,
     PaperSessionReport,
 )
+from nautilus_lab.application.timing import TIMINGS
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.marking import OpenLot, unrealized_pnl
@@ -172,6 +174,7 @@ class NautilusResearchBacktest:
         data = spec.data
         strategy = spec.strategy
         usdt = Currency.from_str("USDT")
+        build_started = TIMINGS.elapsed()
         engine = BacktestEngine(
             config=BacktestEngineConfig(
                 trader_id=TraderId("BACKTESTER-001"),
@@ -200,7 +203,10 @@ class NautilusResearchBacktest:
                 engine.add_instrument(instrument)
             engine.add_data(data)
             engine.add_strategy(strategy)
-            engine.run()
+            TIMINGS.add("engine_build", TIMINGS.elapsed() - build_started)
+            with TIMINGS.phase("engine_run"):
+                engine.run()
+            reports_started = TIMINGS.elapsed()
             fills_report = engine.trader.generate_order_fills_report()
             positions = engine.trader.generate_positions_report()
             account = engine.trader.generate_account_report(venue=Venue("SIM"))
@@ -227,9 +233,11 @@ class NautilusResearchBacktest:
                 ending_equity=ending,
                 periods_per_year=_periods_per_year(request),
             )
+            TIMINGS.add("engine_reports", TIMINGS.elapsed() - reports_started)
             saved_tearsheet: str | None = None
             if request.tearsheet_path:
-                saved_tearsheet = _try_tearsheet(engine, request)
+                with TIMINGS.phase("tearsheet"):
+                    saved_tearsheet = _try_tearsheet(engine, request)
 
             report = BacktestReport(
                 fills=len(fills_report),
@@ -258,7 +266,8 @@ class NautilusResearchBacktest:
             )
             return report, ledger
         finally:
-            engine.dispose()
+            with TIMINGS.phase("engine_dispose"):
+                engine.dispose()
 
 
 def _open_lots(positions_report: object) -> list[OpenLot]:
@@ -589,7 +598,7 @@ def _single_run(
         request.instrument_id, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees
     )
     bar_type = BarType.from_str(request.bar_type)
-    engine_bars = to_engine_bars(bars, bar_type=bar_type, instrument=instrument)
+    engine_bars = _cached_engine_bars(bars, bar_type=bar_type, instrument=instrument)
     # The taker split cannot ride inside a Nautilus `Bar`, so it is handed to the
     # strategy as a lookup keyed by the bar event timestamp. The key is built with
     # the same `datetime_to_nanos` that `to_engine_bars` uses, which makes the join
@@ -708,6 +717,52 @@ def _single_run(
         strategy=strategy,
         marks=_last_closes({str(instrument.id): bars}),
     )
+
+
+#: Converted bar series kept for reuse. A walk-forward fold runs every grid candidate on the
+#: same in-sample bars, and each run used to rebuild ~10k Nautilus `Bar` objects (five
+#: `Price`/`Quantity` constructions per bar) from identical input.
+_ENGINE_BARS_CACHE: OrderedDict[tuple[object, ...], list[Bar]] = OrderedDict()
+_ENGINE_BARS_CACHE_SIZE = 6
+
+
+def _cached_engine_bars(
+    bars: list[OhlcvBar], *, bar_type: BarType, instrument: Instrument
+) -> list[Bar]:
+    """`to_engine_bars`, memoised on what makes two series the same series.
+
+    The key is the bar type, the instrument's precisions, the span and the length, plus a
+    hash of every close: two lists cut from the same catalog over the same span are equal
+    bar by bar, and the closes guard against a series that matches on the ends but was
+    built differently (a stress slice, a synthetic run). Nautilus `Bar` objects are
+    immutable and each engine copies the data list it is given, so sharing them between
+    runs cannot carry state from one run into the next.
+    """
+    if not bars:
+        return []
+    key: tuple[object, ...] = (
+        str(bar_type),
+        str(instrument.id),
+        instrument.price_precision,
+        instrument.size_precision,
+        len(bars),
+        bars[0].ts_utc,
+        bars[-1].ts_utc,
+        hash(
+            tuple((bar.ts_utc, bar.open, bar.high, bar.low, bar.close, bar.volume) for bar in bars)
+        ),
+    )
+    cached = _ENGINE_BARS_CACHE.get(key)
+    if cached is not None:
+        _ENGINE_BARS_CACHE.move_to_end(key)
+        TIMINGS.add("convert_bars_cached", 0.0)
+        return cached
+    with TIMINGS.phase("convert_bars"):
+        converted = to_engine_bars(bars, bar_type=bar_type, instrument=instrument)
+    _ENGINE_BARS_CACHE[key] = converted
+    while len(_ENGINE_BARS_CACHE) > _ENGINE_BARS_CACHE_SIZE:
+        _ENGINE_BARS_CACHE.popitem(last=False)
+    return converted
 
 
 def _spread_run(

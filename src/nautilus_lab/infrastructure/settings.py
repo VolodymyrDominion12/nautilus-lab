@@ -242,6 +242,15 @@ class Settings(BaseSettings):
     # out-of-sample run of each fold, one session `<id>-f<fold>` per fold). Batch
     # backtests use "oos": the in-sample grid is search, not the result being explained.
     decision_log_scope: str = "all"
+    # Processes that run a walk-forward fold's in-sample grid side by side
+    # (infrastructure/nautilus/parallel_backtest.py). 1 = serial (the old behaviour),
+    # 0 = all cores but one. Results are identical either way; only the wall time changes.
+    # A batch sets it per cell from its CPU budget (`run_batch_job --cpu-budget`).
+    backtest_is_workers: int = 1
+    # False = no in-sample search: each fold runs the configured parameters as they are
+    # (one candidate instead of the robot's grid). Fewer trials for the DSR to deflate by,
+    # and a fraction of the runs. The preregistration's grid follows it.
+    param_search: bool = True
 
     @field_validator("regime_legs")
     @classmethod

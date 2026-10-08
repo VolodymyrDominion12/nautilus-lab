@@ -89,6 +89,8 @@ class BacktestRequest:
     #: lands after the next bar was matched, i.e. fills a whole bar late at its close —
     #: the pre-2026-10-02 behaviour (50ms), kept reachable for comparison.
     fill_latency_ms: int = 0
+    #: False = the walk-forward does not search: the grid is this request's own parameters.
+    param_search: bool = True
 
 
 @dataclass(frozen=True, slots=True)

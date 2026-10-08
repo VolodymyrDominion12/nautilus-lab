@@ -245,6 +245,38 @@ def _cmdline(pid: int) -> list[str] | None:
     return [arg.decode("utf-8", errors="replace") for arg in raw.split(b"\0") if arg]
 
 
+def descendant_pids(pid: int) -> list[int]:
+    """Every process below `pid` (children, their children, ...), from `/proc`.
+
+    A cell's in-sample workers (`BACKTEST_IS_WORKERS` > 1) are children of its
+    `run_research_job`, and their command line is the multiprocessing bootstrap — nothing
+    in it names the batch. They are found through the parent link instead, and must be
+    collected *before* the parent dies: an orphan is re-parented to init and the link is gone.
+    """
+    if not _PROC.is_dir():
+        return []
+    children: dict[int, list[int]] = {}
+    for entry in _PROC.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # `pid (comm) state ppid ...`: comm may contain spaces, so split after the last ')'.
+        fields = stat.rsplit(")", 1)[-1].split()
+        if len(fields) >= 2 and fields[1].isdigit():
+            children.setdefault(int(fields[1]), []).append(int(entry.name))
+    found: list[int] = []
+    stack = [pid]
+    while stack:
+        for child in children.get(stack.pop(), []):
+            if child not in found:
+                found.append(child)
+                stack.append(child)
+    return found
+
+
 def batch_process_alive(batch: dict[str, Any]) -> bool:
     """Whether the process recorded in `batch.json` is still **this batch's** process.
 
@@ -298,9 +330,11 @@ def kill_orphan_cells(batch_path: Path) -> list[int]:
             continue
         if not any(marker in f"{os.sep}{arg}" for arg in cmdline):
             continue
-        with contextlib.suppress(OSError):
-            os.kill(int(entry.name), signal.SIGKILL)
-            killed.append(int(entry.name))
+        # Its in-sample workers first, while they can still be found by their parent.
+        for pid in [*descendant_pids(int(entry.name)), int(entry.name)]:
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
+                killed.append(pid)
     return killed
 
 
@@ -492,7 +526,15 @@ def retry_batch(
 RESUMABLE_STATUSES: frozenset[str] = frozenset({QUEUED, RUNNING, CANCELLED})
 
 #: What a cell's run leaves behind that a second attempt must not build on.
-_PARTIAL_FILES = ("last_run.json", "last_run.log", "summary.json")
+_PARTIAL_FILES = (
+    "last_run.json",
+    "last_run.log",
+    "summary.json",
+    "timings.json",
+    "profile.pstats",
+    "profile.txt",
+    "profile_self.txt",
+)
 
 
 def clear_partial_cell(cell_path: Path) -> None:
@@ -754,6 +796,7 @@ def build_cell_summary(cell_path: Path, cell: dict[str, Any], cfg: Settings) -> 
             "bar_seq_gaps": digest.bar_seq_gaps if digest else 0,
         },
         "trades": _trade_stats(trades),
+        "timings": cell_timings(cell_path),
         "summary_version": SUMMARY_VERSION,
         "summarized_at": _now(),
     }
@@ -800,7 +843,27 @@ def _collect_breaches(multi: dict[str, Any], result: dict[str, Any] | None) -> d
 
 #: Bumped whenever the shape of `summary.json` changes, so a cache written by an older
 #: build is rebuilt instead of served half-empty (docs/35 §3, item 19).
-SUMMARY_VERSION = 3
+SUMMARY_VERSION = 4
+
+
+#: Phases kept in a cell's compact timing record (the slowest ones; the full list stays
+#: in the cell's `timings.json`).
+TIMING_PHASES_KEPT = 8
+
+
+def cell_timings(cell_path: Path) -> dict[str, Any] | None:
+    """The cell's `timings.json` cut to what a table row needs, or None before it exists."""
+    raw = read_json(cell_path / "timings.json")
+    if not raw:
+        return None
+    phases = raw.get("phases") or {}
+    return {
+        "total_seconds": raw.get("total_seconds"),
+        "run_seconds": raw.get("run_seconds"),
+        "import_seconds": raw.get("import_seconds"),
+        "is_workers": raw.get("is_workers"),
+        "phases": dict(list(phases.items())[:TIMING_PHASES_KEPT]),
+    }
 
 
 def cell_summary(batch_path: Path, cell: dict[str, Any], cfg: Settings) -> dict[str, Any]:

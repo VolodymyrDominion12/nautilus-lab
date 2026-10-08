@@ -53,6 +53,10 @@ from nautilus_lab.infrastructure.nautilus.instrument import (
     binance_symbol_for_instrument,
     binance_symbol_to_instrument_id,
 )
+from nautilus_lab.infrastructure.nautilus.parallel_backtest import (
+    ParallelResearchBacktest,
+    resolve_is_workers,
+)
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_funding_pair
 from nautilus_lab.infrastructure.orderbook_catalog import ParquetOrderBookCatalog
@@ -178,6 +182,15 @@ def research_use_case(cfg: Settings | None = None) -> RunResearchBacktest:
     )
 
 
+def research_engine(cfg: Settings) -> NautilusResearchBacktest | ParallelResearchBacktest:
+    """The engine adapter, with the in-sample grid spread over processes when configured."""
+    engine = NautilusResearchBacktest(decision_log_writer(cfg))
+    workers = resolve_is_workers(cfg.backtest_is_workers)
+    if workers <= 1:
+        return engine
+    return ParallelResearchBacktest(engine, workers=workers)
+
+
 def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
     resolved = cfg or settings()
     tick_catalog = ParquetAggTradesCatalog(Path(resolved.catalog_path))
@@ -187,7 +200,7 @@ def walk_forward_use_case(cfg: Settings | None = None) -> RunWalkForward:
     book_feed = _BookFeedAdapter(book_catalog)
     funding_feed = _FundingFeedAdapter(funding_cat)
     return RunWalkForward(
-        NautilusResearchBacktest(decision_log_writer(resolved)),
+        research_engine(resolved),
         research_feed(resolved),
         tick_feed,
         book_feed,
@@ -416,6 +429,7 @@ def research_request(
         session_id=str(uuid.uuid4()),
         entry_filters=cfg.entry_filter_params(),
         fill_latency_ms=cfg.backtest_fill_latency_ms,
+        param_search=cfg.param_search,
     )
 
 

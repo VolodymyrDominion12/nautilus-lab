@@ -633,6 +633,58 @@ def check_strategy(spec: dict, name: str, report: Report, schema: dict, facts: C
                         "або постав tuned: false з note (чому не підбираємо)"
                     )
 
+    # ── timeframe_support ──
+    tf_support = spec.get("timeframe_support") or {}
+    if tf_support:
+        allowed_statuses = set(schema["strategy"]["timeframe_support"]["allowed_statuses"])
+        for tf, tf_cfg in tf_support.items():
+            if not isinstance(tf_cfg, dict):
+                report.error(f"timeframe_support.{tf} мусить бути словником")
+                continue
+            tf_status = tf_cfg.get("status")
+            if tf_status and tf_status not in allowed_statuses:
+                report.error(
+                    f"timeframe_support.{tf}.status='{tf_status}' не з {sorted(allowed_statuses)}"
+                )
+
+    # ── parameter_constraints ──
+    constraints = spec.get("parameter_constraints") or []
+    if constraints:
+        for c_idx, c in enumerate(constraints):
+            if not isinstance(c, dict):
+                report.error(f"parameter_constraints[{c_idx}] мусить бути словником")
+                continue
+            c_env = c.get("env")
+            if not c_env:
+                report.error(f"parameter_constraints[{c_idx}] не містить обов'язкового поля env")
+                continue
+            if facts.setting_fields and c_env.lower() not in facts.setting_fields:
+                report.error(f"parameter_constraints[].env='{c_env}' немає серед полів Settings")
+            rules = c.get("rules") or []
+            if not rules:
+                report.error(f"parameter_constraints[{c_env}] не містить правил (rules)")
+            for r_idx, rule in enumerate(rules):
+                if not isinstance(rule, dict):
+                    report.error(f"parameter_constraints[{c_env}].rules[{r_idx}] не словник")
+                    continue
+                if not rule.get("condition"):
+                    report.error(f"parameter_constraints[{c_env}].rules[{r_idx}] не має condition")
+                if not rule.get("reason"):
+                    report.error(f"parameter_constraints[{c_env}].rules[{r_idx}] не має reason")
+
+    # ── known_failure_modes ──
+    failure_modes = spec.get("known_failure_modes") or []
+    if failure_modes:
+        for f_idx, fm in enumerate(failure_modes):
+            if not isinstance(fm, dict):
+                report.error(f"known_failure_modes[{f_idx}] мусить бути словником")
+                continue
+            for req_key in ("id", "symptom", "cause", "fix"):
+                if not fm.get(req_key):
+                    report.error(
+                        f"known_failure_modes[{f_idx}] не містить обов'язкового поля '{req_key}'"
+                    )
+
     _check_grid_matches_code(spec, name, report, facts)
 
 
@@ -825,12 +877,13 @@ def main(argv: list[str]) -> int:
             print(f"    ⚠ {name}: {warning}")
 
     # ── покриття: кожен RobotName мусить мати спеку ──
-    covered = {name for kind, name, _ in specs if kind == "strategy"}
-    missing = sorted(facts.robot_names - covered)
-    if missing:
-        total_errors += len(missing)
-        print(f"\n✗ Немає специфікацій для роботів: {', '.join(missing)}")
-        print("  Додав робота в RobotName — додай і спеку в specs/strategies/.")
+    if not only:
+        covered = {name for kind, name, _ in specs if kind == "strategy"}
+        missing = sorted(facts.robot_names - covered)
+        if missing:
+            total_errors += len(missing)
+            print(f"\n✗ Немає специфікацій для роботів: {', '.join(missing)}")
+            print("  Додав робота в RobotName — додай і спеку в specs/strategies/.")
 
     # ── перевірка узгодженості docs/05 з BACKTEST_WIRED_ROBOTS (Sprint S6) ──
     if not only:

@@ -80,6 +80,26 @@ strategy:
     - implementation
     - invariants
 
+  optional:
+    - timeframe_support
+    - parameter_constraints
+    - known_failure_modes
+
+  # Підтримувані інтервали барів, їхні статуси та обмеження
+  timeframe_support:
+    allowed_statuses: [active, constrained, rejected, unsupported]
+    item_optional: [status, minimum_bars, notes, warnings, rejection_reason]
+
+  # Емпіричні обмеження та правила для параметрів (наприклад, поріг угод oos_fills >= 30)
+  parameter_constraints:
+    item_required: [env, rules]
+    rule_required: [condition, reason]
+    rule_optional: [min_value, max_value, recommended_value, derived_from_batch]
+
+  # База негативного знання: відомі пастки та режими відмови стратегії
+  known_failure_modes:
+    item_required: [id, symptom, cause, fix]
+
   params:
     item_required: [env, description]
     item_optional: [default, grid, tuned, note]

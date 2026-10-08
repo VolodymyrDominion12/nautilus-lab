@@ -120,6 +120,85 @@ invariants:
   # Робот підключений до рушія, тож fail-closed-вимога до нього не діє.
   fail_closed_without_adapter: false
 
+timeframe_support:
+  1h:
+    status: active
+    minimum_bars: 150
+    notes: >
+      Основний робочий таймфрейм лабораторії. За 1000 днів дає 60-150 угод на монету,
+      усі 12 монет проходять ворота oos_fills >= 30 (батч 20261007_115350_batch).
+  4h:
+    status: constrained
+    minimum_bars: 150
+    warnings:
+      - >
+        За 1000 днів доступно лише ~6000 барів. При DONCHIAN_PERIOD >= 60 частота угод
+        падає до 10-15 за 3 роки, через що 50% монет провалюють ворота oos_fills >= 30
+        (батч 20261007_085132_batch).
+      - >
+        На 4h виходи за STOP_LOSS становлять 60% (90 SL проти 59 EXIT): розмах коливань
+        4-годинної свічки вибиває стопи до розвитку тренду.
+  15m:
+    status: unsupported
+    notes: >
+      Шум молодшого таймфрейму та фіксована спотова комісія (7.5 bps round-trip)
+      повністю нівелюють очікуваний edge від пробою.
+
+parameter_constraints:
+  - env: DONCHIAN_PERIOD
+    rules:
+      - condition: "interval == '4h'"
+        max_value: 40
+        reason: >
+          При DONCHIAN_PERIOD >= 60 на 4h частота угод падає нижче 15 за 1000 днів
+          (вимога воріт oos_fills >= 30 не виконується, дискваліфікація у воротах).
+        derived_from_batch: "20261007_085132_batch"
+      - condition: "interval == '1h'"
+        min_value: 20
+        max_value: 120
+        reason: >
+          При < 20 забагато хибних пробоїв на пилці; при > 120 вхід стається запізно,
+          коли імпульс вичерпано.
+
+  - env: BB_K
+    rules:
+      - condition: "interval == '4h'"
+        max_value: 2.5
+        reason: >
+          BB_K=3 на 4h робить смуги надто широкими, блокуючи mean-reversion сигнали
+          у флетовому режимі.
+        derived_from_batch: "20261007_085132_batch"
+
+  - env: REGIME_RANGE_ALLOW_SHORT
+    rules:
+      - condition: "spot == true"
+        recommended_value: false
+        reason: >
+          Range-шорти на спотовому ринку збиткові на BTC/ETH через довгостроковий
+          висхідний дрейф крипторинку.
+        derived_from_batch: "20261001"
+
+known_failure_modes:
+  - id: FM-REGIME-01-LOW-FREQUENCY-4H
+    symptom: "Дискваліфікація у воротах через oos_fills < 30 (сер. 14 угод за 1000 днів)."
+    cause: >
+      Завищений lookback (DONCHIAN_PERIOD >= 60) на 4h таймфреймі (60 барів = 10 діб),
+      де пробій 10-денного екстремуму стається рідко.
+    fix: "На 4h обмежувати DONCHIAN_PERIOD <= 40 або проводити дослідження на 1h барах."
+
+  - id: FM-REGIME-02-STOP-HUNT-ON-4H-BREAKOUT
+    symptom: "STOP_LOSS становить 60% усіх виходів (90 SL vs 59 EXIT на 4h батчі)."
+    cause: >
+      Вхід на пробої екстремуму 4h свічки купує локальний хай; відкат наступних свічок
+      зносить стоп до розвитку тренду.
+    fix: >
+      Вхід на ретесті пробитого рівня або адаптація захисного стопу під ATR(4h).
+
+  - id: FM-REGIME-03-RANGE-SHORT-BLEED
+    symptom: "Систематичний від'ємний PnL у range-шортах."
+    cause: "Шорт від верхньої межі Bollinger під час локальної консолідації бичачого тренду."
+    fix: "Встановлювати REGIME_RANGE_ALLOW_SHORT=false (лише лонги та фіксація прибутку)."
+
 evidence:
   measured: true
   beats_buy_hold: false

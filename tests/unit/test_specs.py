@@ -147,3 +147,50 @@ def test_docs_agree_with_backtest_wired_robots() -> None:
     """docs/05-roboty.md table must agree with BACKTEST_WIRED_ROBOTS and RobotName (Sprint S6)."""
     errors = validator.check_docs_alignment(FACTS)
     assert not errors, "\n".join(f"  • {e}" for e in errors)
+
+
+def test_constraints_and_failure_modes_validation() -> None:
+    """Validator catches invalid env in constraints and bad timeframe statuses."""
+    bad_spec = {
+        "kind": "strategy",
+        "name": "regime",
+        "version": "1.0",
+        "status": "candidate",
+        "hypothesis": "test hypothesis with enough text to be valid",
+        "edge_conditions": [
+            {"name": "c1", "description": "desc 1"},
+            {"name": "c2", "description": "desc 2"},
+        ],
+        "implementation": {
+            "domain_module": "src/nautilus_lab/domain/regime_router.py",
+            "strategy_class": "RegimeRouter",
+            "backtest_adapter": "signal_strategy",
+            "wired_in_backtest": True,
+            "minimum_bars": 150,
+            "grid_source": "default_branch",
+            "signal_kind": "direction",
+        },
+        "invariants": {
+            "no_lookahead": True,
+            "closed_bars_only": True,
+        },
+        "params": [
+            {"env": "DONCHIAN_PERIOD", "description": "d", "grid": [20]},
+            {"env": "BB_PERIOD", "description": "b", "grid": [20]},
+        ],
+        "parameter_constraints": [
+            {
+                "env": "NON_EXISTENT_SETTING_ENV",
+                "rules": [{"condition": "always", "reason": "test"}],
+            }
+        ],
+        "timeframe_support": {"1h": {"status": "invalid_status_name"}},
+        "known_failure_modes": [
+            {"id": "FM-01", "symptom": "s"}  # missing cause, fix
+        ],
+    }
+    report = validator.Report()
+    validator.check_strategy(bad_spec, "regime", report, SCHEMA, FACTS)
+    assert any("NON_EXISTENT_SETTING_ENV" in err for err in report.errors)
+    assert any("invalid_status_name" in err for err in report.errors)
+    assert any("known_failure_modes" in err for err in report.errors)

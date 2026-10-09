@@ -667,6 +667,9 @@ def _single_run(
             use_ratchet=request.risk_overlay.use_ratchet,
             ratchet_arm_pct=request.risk_overlay.ratchet_arm_pct,
             use_protective_stop=request.risk_overlay.use_protective_stop,
+            use_chandelier_stop=request.risk_overlay.use_chandelier_stop,
+            chandelier_atr_multiple=request.risk_overlay.chandelier_atr_multiple,
+            chandelier_lookback=request.risk_overlay.chandelier_lookback,
             # Tick-level filters: before these three lines existed `--tick-vpin` and
             # `--hawkes` loaded the tick series and then built the robot without them.
             use_tick_vpin=request.use_tick_vpin,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
@@ -91,6 +91,17 @@ class Settings(BaseSettings):
     use_ratchet: bool = False
     ratchet_arm_pct: Decimal = Decimal("0.0125")
     use_protective_stop: bool = True
+    use_chandelier_stop: bool = False
+    chandelier_atr_multiple: Decimal = Field(
+        default=Decimal("3.0"),
+        validation_alias=AliasChoices(
+            "chandelier_atr_multiple",
+            "chandelier_atr_multiplier",
+            "CHANDELIER_ATR_MULTIPLE",
+            "CHANDELIER_ATR_MULTIPLIER",
+        ),
+    )
+    chandelier_lookback: int = 22
     selection_metric: SelectionMetric = SelectionMetric.PNL
     drawdown_cooldown_days: int = 0
     research_drawdown_cooldown_days: int = 7
@@ -370,6 +381,9 @@ class Settings(BaseSettings):
             ratchet_arm_pct=self.ratchet_arm_pct,
             use_protective_stop=self.use_protective_stop,
             drawdown_cooldown_days=cooldown,
+            use_chandelier_stop=self.use_chandelier_stop,
+            chandelier_atr_multiple=self.chandelier_atr_multiple,
+            chandelier_lookback=self.chandelier_lookback,
         )
 
     def pairs_params(self) -> PairsParams:

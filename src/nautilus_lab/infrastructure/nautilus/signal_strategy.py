@@ -32,6 +32,11 @@ from nautilus_lab.application.risk import (
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams, AdaptiveEmaRouter
 from nautilus_lab.domain.atr import AverageTrueRange
 from nautilus_lab.domain.bars import OhlcvBar, validate_bar
+from nautilus_lab.domain.chandelier_stop import (
+    ChandelierState,
+    initial_chandelier,
+    step_chandelier,
+)
 from nautilus_lab.domain.decision_log import DecisionRecord
 from nautilus_lab.domain.decision_trace import (
     Outcome,
@@ -69,6 +74,7 @@ from nautilus_lab.domain.signals import Signal, SignalSide
 from nautilus_lab.domain.volatility import VolModel
 from nautilus_lab.domain.vpin import BarVpin, VpinModel
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
+from nautilus_lab.domain.windows import RollingWindow
 from nautilus_lab.infrastructure.lightgbm_classifier import (
     LightGBMDirectionClassifier,
     LightGBMSuccessClassifier,
@@ -168,6 +174,9 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     max_cvar_99: Decimal = Decimal("0.05")
     use_ratchet: bool = False
     ratchet_arm_pct: Decimal = Decimal("0.0125")
+    use_chandelier_stop: bool = False
+    chandelier_atr_multiple: Decimal = Decimal("3.0")
+    chandelier_lookback: int = 22
     use_protective_stop: bool = True
     # Bars that close before this timestamp (ns) only warm indicators; see
     # BacktestRequest.trade_start.
@@ -220,6 +229,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             max_cvar_99=config.max_cvar_99,
             use_ratchet=config.use_ratchet,
             ratchet_arm_pct=config.ratchet_arm_pct,
+            use_chandelier_stop=config.use_chandelier_stop,
+            chandelier_atr_multiple=config.chandelier_atr_multiple,
+            chandelier_lookback=config.chandelier_lookback,
             use_protective_stop=config.use_protective_stop,
         )
         self._entry_filter = EntryFilter(
@@ -267,6 +279,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
         self._previous_close: Decimal | None = None
         self._ratchet: RatchetState | None = None
+        self._chandelier: ChandelierState | None = None
+        self._chandelier_highs = RollingWindow(config.chandelier_lookback)
+        self._chandelier_lows = RollingWindow(config.chandelier_lookback)
         # Trade-lifecycle state for the decision log (docs/28). An intrabar stop-out is
         # logged against the account and regime the last bar decided on, not the flat
         # book it leaves behind; the stop level travels in `states.stop_loss` so the
@@ -335,6 +350,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         validate_bar(domain_bar, previous_ts=self._previous_ts, now=domain_bar.ts_utc)
         self._previous_ts = domain_bar.ts_utc
         self._atr.update(domain_bar)
+        self._chandelier_highs.push(domain_bar.high)
+        self._chandelier_lows.push(domain_bar.low)
         # Fed on every closed bar, warm-up included, so its windows are full by the time
         # the first signal is acted on (same rule as the robot's own legs, B2).
         self._entry_filter.update(domain_bar)
@@ -355,6 +372,12 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._track_equity(domain_bar.ts_utc)
 
         if self._apply_ratchet(domain_bar):
+            self._record_decision_log(
+                domain_bar, signal, Outcome.RATCHET_EXIT, steps, None, self._overlay_steps
+            )
+            return
+
+        if self._apply_chandelier(domain_bar):
             self._record_decision_log(
                 domain_bar, signal, Outcome.RATCHET_EXIT, steps, None, self._overlay_steps
             )
@@ -738,7 +761,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         entry: tuple[Decimal, Decimal] | None = None
         refusal: _EntryRefusal | None = None
         if plan.wants_entry:
-            result = self._entry_allowed(current_price, reversing=plan.exit_position, steps=steps)
+            result = self._entry_allowed(
+                current_price, reversing=plan.exit_position, steps=steps, side=signal.side
+            )
             if isinstance(result, _EntryRefusal):
                 refusal = result
             else:
@@ -812,6 +837,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self.submit_order(order)
         self._turnover += current_price * qty
         self._arm_ratchet(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
+        self._arm_chandelier(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
         steps.append(
             step(
                 Stage.EXECUTION,
@@ -865,7 +891,12 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         )
 
     def _entry_allowed(
-        self, current_price: Decimal, *, reversing: bool, steps: list[TraceStep]
+        self,
+        current_price: Decimal,
+        *,
+        reversing: bool,
+        steps: list[TraceStep],
+        side: SignalSide | None = None,
     ) -> tuple[Decimal, Decimal] | _EntryRefusal:
         """(qty, stop distance) for a new entry, or a structured `_EntryRefusal`.
 
@@ -910,7 +941,34 @@ class SignalRobot(Strategy):  # type: ignore[misc]
                 order_side=None if side is None else ("BUY" if side == OrderSide.BUY else "SELL"),
             )
 
-        distance = stop_distance(current_price, self._limits, atr=self._atr.value)
+        if (
+            self._overlay.use_chandelier_stop
+            and self._atr.value is not None
+            and self._atr.value > Decimal("0")
+            and side is not None
+        ):
+            c_params = self._overlay.chandelier_params()
+            lookback_extreme = (
+                (
+                    max(self._chandelier_highs.values())
+                    if side is SignalSide.BUY
+                    else min(self._chandelier_lows.values())
+                )
+                if len(self._chandelier_highs) > 0
+                else None
+            )
+            c_init = initial_chandelier(
+                entry_price=current_price,
+                side=side,
+                atr=self._atr.value,
+                params=c_params,
+                lookback_extreme=lookback_extreme,
+            )
+            distance = abs(current_price - c_init.stop_price)
+            if distance <= Decimal("0"):
+                distance = stop_distance(current_price, self._limits, atr=self._atr.value)
+        else:
+            distance = stop_distance(current_price, self._limits, atr=self._atr.value)
         risk_fraction = resolve_risk_fraction(
             self._limits,
             self._overlay,
@@ -1104,6 +1162,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             for level in (
                 self._protective_level,
                 self._ratchet.stop_price if self._ratchet is not None else None,
+                self._chandelier.stop_price if self._chandelier is not None else None,
             )
             if level is not None
         ]
@@ -1134,6 +1193,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
     def _flatten(self) -> None:
         """Cancel resting orders (the protective stop among them), then close."""
         self._ratchet = None
+        self._chandelier = None
         self._pending_stop_distance = None
         self._entry_order_id = None
         self._cancel_protective_stop()
@@ -1209,6 +1269,129 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             params=self._overlay.ratchet_params(stop_pct=self._limits.stop_pct),
             atr_distance=self._atr.value,
         )
+
+    def _arm_chandelier(self, entry_price: Decimal, side: SignalSide) -> None:
+        if not self._overlay.use_chandelier_stop:
+            return
+        if self._atr.value is None or self._atr.value <= Decimal("0"):
+            return
+        params = self._overlay.chandelier_params()
+        lookback_extreme = (
+            (
+                max(self._chandelier_highs.values())
+                if side is SignalSide.BUY
+                else min(self._chandelier_lows.values())
+            )
+            if len(self._chandelier_highs) > 0
+            else None
+        )
+        self._chandelier = initial_chandelier(
+            entry_price=entry_price,
+            side=side,
+            atr=self._atr.value,
+            params=params,
+            lookback_extreme=lookback_extreme,
+        )
+
+    def _apply_chandelier(self, bar: OhlcvBar) -> bool:
+        """Run the Chandelier trailing stop overlay. True = flattened this bar."""
+        if not self._overlay.use_chandelier_stop:
+            return False
+        if self._is_flat() or self._chandelier is None:
+            self._chandelier = None
+            return False
+        if self._atr.value is None or self._atr.value <= Decimal("0"):
+            return False
+        params = self._overlay.chandelier_params()
+        previous = self._chandelier
+        lookback_high = (
+            max(self._chandelier_highs.values()) if len(self._chandelier_highs) > 0 else None
+        )
+        lookback_low = (
+            min(self._chandelier_lows.values()) if len(self._chandelier_lows) > 0 else None
+        )
+        self._chandelier, hit = step_chandelier(
+            self._chandelier,
+            bar,
+            self._atr.value,
+            params,
+            lookback_high=lookback_high,
+            lookback_low=lookback_low,
+        )
+        level = previous.stop_price if self._chandelier is None else self._chandelier.stop_price
+        moved = self._chandelier is not None and self._chandelier.stop_price != previous.stop_price
+        self._overlay_steps.append(
+            step(
+                Stage.PLAN,
+                "chandelier",
+                Verdict.EMIT if hit else Verdict.INFO,
+                result="exit" if hit else ("tightened" if moved else "hold"),
+                values={
+                    "stop": level,
+                    "prior_stop": previous.stop_price,
+                    "extreme": (
+                        previous.extreme if self._chandelier is None else self._chandelier.extreme
+                    ),
+                    "close": bar.close,
+                    "adverse": bar.low if previous.side is SignalSide.BUY else bar.high,
+                    "dist_to_stop_pct": pct_distance(bar.close, level),
+                },
+                thresholds={"entry_price": previous.entry_price},
+                note=("stop touched: flatten at this close" if hit else None),
+            )
+        )
+        if moved and not hit and self._chandelier is not None:
+            self._update_protective_stop(self._chandelier.stop_price)
+
+        if not hit:
+            return False
+        held = self._holding()
+        exit_qty = sum((abs(lot.signed_qty) for lot in self._open_lots()), Decimal("0"))
+        self._flatten()
+        self._overlay_steps.append(
+            step(
+                Stage.EXECUTION,
+                "paper_broker",
+                Verdict.EMIT,
+                result="exit",
+                values={"side": held.value.upper(), "qty": exit_qty, "price": bar.close},
+            )
+        )
+        return True
+
+    def _update_protective_stop(self, new_level: Decimal) -> None:
+        """Update resting venue protective stop to tighter level."""
+        if not self._overlay.use_protective_stop:
+            return
+        if self._is_flat() or new_level <= Decimal("0"):
+            return
+        instrument = self.cache.instrument(self.config.instrument_id)
+        if instrument is None:
+            return
+        open_lots = self._open_lots()
+        if not open_lots:
+            return
+        qty = sum((abs(lot.signed_qty) for lot in open_lots), Decimal("0"))
+        if qty <= Decimal("0"):
+            return
+        is_long = self._holding() is Holding.LONG
+        if self._protective_level is not None:
+            if is_long and new_level <= self._protective_level:
+                return
+            if not is_long and new_level >= self._protective_level:
+                return
+        trigger = instrument.make_price(new_level)
+        self._cancel_protective_stop()
+        stop = self.order_factory.stop_market(
+            instrument_id=self.config.instrument_id,
+            order_side=OrderSide.SELL if is_long else OrderSide.BUY,
+            quantity=instrument.make_qty(qty),
+            trigger_price=trigger,
+            reduce_only=True,
+        )
+        self.submit_order(stop)
+        self._stop_order_id = stop.client_order_id
+        self._protective_level = _as_decimal(trigger)
 
     def _is_flat(self) -> bool:
         return bool(self.portfolio.is_flat(self.config.instrument_id))

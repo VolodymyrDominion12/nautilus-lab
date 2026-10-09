@@ -141,6 +141,17 @@ invariants_enforced:
       (tests/unit/test_factor_research.py::test_step_ratchet_checks_the_stop_known_at_bar_open).
 
   - statement: >
+      Адаптивний волатильнісний стоп (Chandelier Exit) ніколи не послаблюється:
+      рівень підтягується за екстремумами й ATR у сприятливому напрямку і ніколи не
+      відступає назад навіть при стрибках волатильності чи несприятливих барах.
+    enforced_by: src/nautilus_lab/domain/chandelier_stop.py
+    verified_by: tests/unit/test_chandelier_stop.py::test_chandelier_never_loosens_on_adverse_moves
+    note: >
+      Формула Chuck LeBeau (1992): highest high / lowest low за N барів ∓ k×ATR.
+      При включенні USE_CHANDELIER_STOP=true розраховує початкову дистанцію стопу
+      для сайзингу позиції та динамічно оновлює resting захисний стоп на біржі.
+
+  - statement: >
       Спрацювання circuit breaker не губиться: причина відмови, яку повертає
       `evaluate_entry` (напр. «max drawdown circuit breaker»), потрапляє в звіт
       прогону з кількістю, а не лишається рядком у логі.

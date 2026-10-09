@@ -51,8 +51,10 @@ from nautilus_lab.application.batch_plan import (
     MAX_VARIANTS,
     BatchRequest,
     BatchVariant,
+    default_setting_env_value,
     plan_cells,
     research_job_config,
+    variant_baseline_env,
 )
 from nautilus_lab.infrastructure.settings import Settings
 
@@ -1163,7 +1165,9 @@ def test_restart_refuses_an_import_a_running_batch_and_unknown_ids(
     assert "imported" in refused.json()["detail"]
 
     # A batch that is still moving is cancelled first, not wiped under its own process.
-    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)", "run_batch_job", str(path)]
+    )
     try:
         running = {
             key: value
@@ -1239,3 +1243,49 @@ def test_plan_cells_sets_safeguards_for_vpin_and_formulaic() -> None:
     by_id = {c.cell_id: c for c in cells}
     assert by_id["vpin_momentum_BTC"].env.get("USE_QUANTILE_VPIN") == "true"
     assert by_id["formulaic_lgbm_BTC"].env.get("FORMULAIC_MIN_HOLD_BARS") == "4"
+
+
+def test_variant_baseline_env_isolates_varied_keys() -> None:
+    # 1. default_setting_env_value tests
+    assert default_setting_env_value("ENTRY_FILTER_HTF_TREND") == "false"
+    assert default_setting_env_value("ENTRY_FILTER_VOL_EXPANSION") == "false"
+    assert default_setting_env_value("NONEXISTENT_SETTING_KEY_XYZ") is None
+
+    # 2. No variants in request -> returns empty dict
+    no_var_req = BatchRequest(robots=("ema",), symbols=("BTCUSDT",))
+    assert variant_baseline_env(no_var_req, {}) == {}
+
+    # 3. Variants with overrides
+    request = BatchRequest(
+        robots=("ema",),
+        symbols=("BTCUSDT",),
+        variants=(
+            BatchVariant(name="htf", env={"ENTRY_FILTER_HTF_TREND": "true"}),
+            BatchVariant(name="vol", env={"ENTRY_FILTER_VOL_EXPANSION": "true"}),
+        ),
+    )
+    # Cell with no overrides in cell_env: gets defaults for both varied keys
+    base_env = variant_baseline_env(request, {})
+    assert base_env == {
+        "ENTRY_FILTER_HTF_TREND": "false",
+        "ENTRY_FILTER_VOL_EXPANSION": "false",
+    }
+
+    # Cell 1 (htf variant): cell_env has HTF, so baseline only provides VOL default
+    htf_base = variant_baseline_env(request, {"ENTRY_FILTER_HTF_TREND": "true"})
+    assert htf_base == {"ENTRY_FILTER_VOL_EXPANSION": "false"}
+
+    # Cell with request-level env override: takes request.env instead of Settings default
+    req_with_env = BatchRequest(
+        robots=("ema",),
+        symbols=("BTCUSDT",),
+        env={"ENTRY_FILTER_HTF_TREND": "custom_val"},
+        variants=(
+            BatchVariant(name="htf", env={"ENTRY_FILTER_HTF_TREND": "override_val"}),
+            BatchVariant(name="vol", env={"ENTRY_FILTER_VOL_EXPANSION": "true"}),
+        ),
+    )
+    assert variant_baseline_env(req_with_env, {}) == {
+        "ENTRY_FILTER_HTF_TREND": "custom_val",
+        "ENTRY_FILTER_VOL_EXPANSION": "false",
+    }

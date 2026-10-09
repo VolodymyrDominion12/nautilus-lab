@@ -502,3 +502,38 @@ def research_job_config(request: BatchRequest, cell: BatchCell) -> dict[str, obj
     if request.embargo_bars is not None:
         payload["embargo_bars"] = request.embargo_bars
     return payload
+
+
+def default_setting_env_value(key: str) -> str | None:
+    """Default environment variable value for a Settings field, or None if unknown."""
+    field_name = key.lower()
+    field_info = Settings.model_fields.get(field_name)
+    if field_info is None:
+        return None
+    default = field_info.default
+    if default is None:
+        return ""
+    if isinstance(default, bool):
+        return "true" if default else "false"
+    return str(default)
+
+
+def variant_baseline_env(request: BatchRequest, cell_env: dict[str, str]) -> dict[str, str]:
+    """Ensure that for keys varied across variants in a batch, cells that do not explicitly
+    override a key receive its baseline value (request.env or Settings default), preventing
+    accidental inheritance of ambient .env values from the host process.
+    """
+    variants = request.resolved_variants()
+    if not variants:
+        return {}
+    varied_keys = set().union(*(v.env.keys() for v in variants))
+    baseline: dict[str, str] = {}
+    for key in sorted(varied_keys):
+        if key not in cell_env:
+            if key in request.env:
+                baseline[key] = request.env[key]
+            else:
+                default = default_setting_env_value(key)
+                if default is not None:
+                    baseline[key] = default
+    return baseline

@@ -61,7 +61,11 @@ from nautilus_lab.api.batch_store import (
     resume_batch_dir,
     write_json,
 )
-from nautilus_lab.application.batch_plan import BatchCell, research_job_config
+from nautilus_lab.application.batch_plan import (
+    BatchCell,
+    research_job_config,
+    variant_baseline_env,
+)
 from nautilus_lab.application.timing import format_phase_table, merge_phase_totals
 
 #: A cell that runs longer than this is stopped (a 1h regime walk-forward takes ~15 min).
@@ -187,6 +191,7 @@ class BatchRun:
         write_json(config_path, research_job_config(request, cell))
         env = {
             **os.environ,
+            **variant_baseline_env(request, cell.env),
             **cell.env,
             "DECISION_LOG_ENABLED": "true",
             "DECISION_LOG_DIR": str(decisions_dir(path).resolve()),

@@ -1514,6 +1514,7 @@ def _run_register(
         robot=robot,
         window=None,
         in_sample_fraction=args.is_fraction,
+        days=getattr(args, "days", None),
         stress_slice=args.slice,
         use_optuna=getattr(args, "optuna", False),
         optuna_trials=getattr(args, "trials", 20),

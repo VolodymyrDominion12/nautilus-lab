@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -306,9 +307,9 @@ def _run_timed_batch(tmp_path: Path, **kwargs: object) -> tuple[Path, dict[str, 
 def test_batch_gives_each_cell_its_share_and_sums_the_timings(tmp_path: Path) -> None:
     path, batch = _run_timed_batch(tmp_path, cpu_budget=7)
     assert batch["is_workers"] == 3
-    cells = batch["cells"]
-    assert all(cell["status"] == OK for cell in cells)  # type: ignore[index]
-    for cell in cells:  # type: ignore[attr-defined]
+    cells: list[dict[str, Any]] = batch["cells"]  # type: ignore[assignment]
+    assert all(cell["status"] == OK for cell in cells)
+    for cell in cells:
         result = json.loads((cell_dir(path, cell["cell_id"]) / "last_run.json").read_text())
         assert result["env_workers"] == "3"
         assert result["env_profile"] is None

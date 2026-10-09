@@ -55,12 +55,23 @@ _JOB_OWNED_KEYS: dict[str, str] = {
     "COST_PROFILE": "the cost scenario has its own field («Сценарій витрат»)",
 }
 
+
 #: Every key `env` and `sweep` may carry. A typo used to pass the plan and do nothing at all
 #: (`Settings` is `extra="ignore"`, and `apply_setting_overrides` skips unknown names), so an
-#: unknown key is refused here, while the batch is still only a plan.
-_ALLOWED_ENV_KEYS: frozenset[str] = (
-    frozenset(name.upper() for name in Settings.model_fields) | _EXTRA_ENV_KEYS
-)
+def _collect_allowed_env_keys() -> frozenset[str]:
+    keys: set[str] = set(_EXTRA_ENV_KEYS)
+    for name, f in Settings.model_fields.items():
+        keys.add(name.upper())
+        if f.validation_alias is not None:
+            choices = getattr(f.validation_alias, "choices", None)
+            if choices:
+                for c in choices:
+                    if isinstance(c, str):
+                        keys.add(c.upper())
+    return frozenset(keys)
+
+
+_ALLOWED_ENV_KEYS: frozenset[str] = _collect_allowed_env_keys()
 
 #: Robots whose booster must exist (`models/clean/<kind>_<BASE>_preoos.txt` by default).
 _MODEL_ENV: dict[str, tuple[str, str]] = {

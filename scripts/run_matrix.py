@@ -108,6 +108,58 @@ def _tier_c() -> tuple[MatrixRun, ...]:
     return tuple(runs)
 
 
+# ── Тір G (2026-10-09): глобальний тренд — не входити проти денної SMA200 ─────────
+# G0 = regime як є (усі ноги, без фільтрів) — контроль; G1 = те саме + ворота
+# ENTRY_FILTER_GLOBAL_TREND (SMA200 денних закриттів, смуга ±2%, warmup=allow).
+# Змінено лише вхід: виходи, стопи, перемикання режимів — без змін.
+# 4h `catalog_2019_4h` без --days = уся історія з 2019 (бичі й ведмежі фази, розвороти
+# 2021/2022/2023) — головна перевірка. 1h --days 1000 — додаткова, коротша.
+# Монети тіру C: аналіз, з якого виросла ідея, бачив лише BTC/ETH.
+_G_COINS = _C_COINS
+_G_GLOBAL_TREND = (
+    ("ENTRY_FILTER_GLOBAL_TREND", "true"),
+    ("ENTRY_FILTER_GLOBAL_TREND_TIMEFRAME", "1d"),
+    ("ENTRY_FILTER_GLOBAL_TREND_PERIOD", "200"),
+    ("ENTRY_FILTER_GLOBAL_TREND_MA", "sma"),
+    ("ENTRY_FILTER_GLOBAL_TREND_BAND_PCT", "0.02"),
+    ("ENTRY_FILTER_GLOBAL_TREND_WARMUP", "allow"),
+)
+_G_HYPOTHESIS = {
+    "G0": "G0 regime baseline (all legs, no gates) — control for G1",
+    "G1": (
+        "G1 regime + global-trend gate (no entry against daily SMA200, band 2%) beats G0 "
+        "on OOS net return and max drawdown, and beats vol-matched buy&hold"
+    ),
+}
+
+
+def _tier_g() -> tuple[MatrixRun, ...]:
+    runs: list[MatrixRun] = []
+    for interval, extra in (
+        ("4h", ("--folds", "6", "--catalog", "catalog_2019_4h")),
+        ("1h", ("--folds", "6", "--days", "1000", "--catalog", "catalog")),
+    ):
+        for coin in _G_COINS:
+            # G0 вимикає ворота явно: змінна середовища б'є значення з .env.
+            for variant, env in (
+                ("G0", (("ENTRY_FILTER_GLOBAL_TREND", "false"),)),
+                ("G1", _G_GLOBAL_TREND),
+            ):
+                runs.append(
+                    MatrixRun(
+                        "G",
+                        "regime",
+                        coin,
+                        interval,
+                        extra,
+                        env,
+                        variant=variant,
+                        hypothesis=f"{_G_HYPOTHESIS[variant]} [{coin} {interval}]",
+                    )
+                )
+    return tuple(runs)
+
+
 MATRIX: tuple[MatrixRun, ...] = (
     # Phase 4.1 - EMA with vol_scaling on 10 coins, 1d (6 folds)
     MatrixRun(
@@ -265,6 +317,7 @@ MATRIX: tuple[MatrixRun, ...] = (
         ),
     ),
     *_tier_c(),
+    *_tier_g(),
 )
 # ─────────────────────────────────────────────────────────────────────────────
 

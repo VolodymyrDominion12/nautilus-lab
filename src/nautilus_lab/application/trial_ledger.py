@@ -68,6 +68,8 @@ def _variant(request: BacktestRequest) -> str:
         )
     if gates.no_instant_reverse:
         parts.append("no_instant_reverse")
+    if request.global_trend.enabled:
+        parts.append(f"global_trend={request.global_trend.label()}")
     if not request.regime.range_allow_short:
         parts.append("range_long_only")
     if request.regime.min_hold_bars:

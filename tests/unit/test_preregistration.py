@@ -123,6 +123,16 @@ def test_changing_any_term_changes_the_hash(changed: WalkForwardRequest) -> None
     assert _terms(changed).sha256() != _terms().sha256()
 
 
+def test_the_global_trend_gate_is_a_term_only_when_on() -> None:
+    from nautilus_lab.domain.global_trend import GlobalTrendParams
+
+    off = _request(global_trend=GlobalTrendParams())
+    assert _terms(off).sha256() == _terms().sha256()
+    on = _request(global_trend=GlobalTrendParams(enabled=True))
+    assert _terms(on).sha256() != _terms().sha256()
+    assert ("global_trend", "1d/sma200/band0.02/allow") in _terms(on).options
+
+
 def test_listing_every_leg_keeps_the_default_hash() -> None:
     assert _terms(_request(regime_legs="range,downtrend,uptrend")).sha256() == _terms().sha256()
 

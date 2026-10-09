@@ -12,6 +12,7 @@ from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
 from nautilus_lab.domain.entry_filters import EntryFilterParams
 from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.funding import FundingParams, FundingSnapshot
+from nautilus_lab.domain.global_trend import GlobalTrendParams
 from nautilus_lab.domain.metrics import BacktestMetrics, SelectionMetric
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.pairs.params import PairsParams
@@ -83,6 +84,10 @@ class BacktestRequest:
     session_id: str | None = None
     #: Entry gates and the no-reversal rule (domain/entry_filters.py); all off by default.
     entry_filters: EntryFilterParams = field(default_factory=EntryFilterParams)
+    #: Global-trend gate (domain/global_trend.py): no entry against the higher-timeframe
+    #: MA. Kept apart from `entry_filters` so their repr (and the registrations hashed on
+    #: it) is unchanged while this gate is off.
+    global_trend: GlobalTrendParams = field(default_factory=GlobalTrendParams)
     #: Venue latency for orders, in ms. 0 = an order sent on a closed bar fills against
     #: that bar's close (plus the fill model's slippage), which is what a live robot
     #: acting on the close gets. Any positive value is shorter than a bar but still

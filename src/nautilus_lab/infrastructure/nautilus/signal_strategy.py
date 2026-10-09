@@ -54,6 +54,12 @@ from nautilus_lab.domain.drawdown_cooldown import PeakState, advance, on_refusal
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.entry_filters import EntryFilter, EntryFilterParams
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
+from nautilus_lab.domain.global_trend import (
+    GlobalTrendGate,
+    GlobalTrendParams,
+    MaKind,
+    WarmupPolicy,
+)
 from nautilus_lab.domain.marking import OpenLot, marked_equity
 from nautilus_lab.domain.meta_label_strategy import MetaLabelStrategy
 from nautilus_lab.domain.ml_obi_strategy import MlObiStrategy
@@ -193,6 +199,13 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     filter_vol_slow_period: int = 300
     filter_min_vol_ratio: Decimal = Decimal("1")
     no_instant_reverse: bool = False
+    # Global-trend gate (domain/global_trend.py). Off = the behaviour before it existed.
+    global_trend: bool = False
+    global_trend_timeframe: str = "1d"
+    global_trend_period: int = 200
+    global_trend_ma: str = "sma"
+    global_trend_band_pct: Decimal = Decimal("0.02")
+    global_trend_warmup: str = "allow"
 
 
 class SignalRobot(Strategy):  # type: ignore[misc]
@@ -244,6 +257,16 @@ class SignalRobot(Strategy):  # type: ignore[misc]
                 vol_slow_period=config.filter_vol_slow_period,
                 min_vol_ratio=config.filter_min_vol_ratio,
                 no_instant_reverse=config.no_instant_reverse,
+            )
+        )
+        self._global_trend = GlobalTrendGate(
+            GlobalTrendParams(
+                enabled=config.global_trend,
+                timeframe=config.global_trend_timeframe,
+                period=config.global_trend_period,
+                ma=MaKind(config.global_trend_ma),
+                band_pct=config.global_trend_band_pct,
+                warmup=WarmupPolicy(config.global_trend_warmup),
             )
         )
         self._previous_ts: datetime | None = None
@@ -355,6 +378,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         # Fed on every closed bar, warm-up included, so its windows are full by the time
         # the first signal is acted on (same rule as the robot's own legs, B2).
         self._entry_filter.update(domain_bar)
+        self._global_trend.update(domain_bar)
         self._last_vol_forecast = self._vol.update(domain_bar, self._previous_close)
         self._previous_close = domain_bar.close
 
@@ -883,6 +907,10 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             return plan, None
         verdict = self._entry_filter.evaluate(side)
         steps.extend(verdict.steps)
+        if verdict.allowed:
+            # Asked only when the local gates agree, so a blocked entry names one cause.
+            verdict = self._global_trend.evaluate(side)
+            steps.extend(verdict.steps)
         if verdict.allowed:
             return plan, None
         return (

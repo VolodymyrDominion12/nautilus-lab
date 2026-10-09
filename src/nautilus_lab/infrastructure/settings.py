@@ -9,6 +9,7 @@ from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.entry_filters import EntryFilterParams
 from nautilus_lab.domain.fees import FeeSchedule, cost_profile
 from nautilus_lab.domain.funding import FundingParams
+from nautilus_lab.domain.global_trend import GlobalTrendParams, MaKind, WarmupPolicy
 from nautilus_lab.domain.metrics import SelectionMetric
 from nautilus_lab.domain.pairs.params import PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
@@ -149,6 +150,15 @@ class Settings(BaseSettings):
     entry_filter_vol_fast_period: int = 24
     entry_filter_vol_slow_period: int = 300
     entry_filter_min_vol_ratio: Decimal = Decimal("1")
+    # Global-trend gate (domain/global_trend.py): no new entry against the MA of completed
+    # higher-timeframe closes (default SMA200 of daily closes, +/-2% hysteresis band).
+    entry_filter_global_trend: bool = False
+    entry_filter_global_trend_timeframe: str = "1d"
+    entry_filter_global_trend_period: int = 200
+    entry_filter_global_trend_ma: str = "sma"
+    entry_filter_global_trend_band_pct: Decimal = Decimal("0.02")
+    # allow = entries pass while the MA warms up; block = no entry until it is ready.
+    entry_filter_global_trend_warmup: str = "allow"
     # An opposite signal only closes the position; the reverse entry is not sent.
     no_instant_reverse: bool = False
     # Backtest venue latency (ms). 0 = fill at the decision bar's close; >0 = the old
@@ -341,6 +351,16 @@ class Settings(BaseSettings):
             vol_slow_period=self.entry_filter_vol_slow_period,
             min_vol_ratio=self.entry_filter_min_vol_ratio,
             no_instant_reverse=self.no_instant_reverse,
+        )
+
+    def global_trend_params(self) -> GlobalTrendParams:
+        return GlobalTrendParams(
+            enabled=self.entry_filter_global_trend,
+            timeframe=self.entry_filter_global_trend_timeframe,
+            period=self.entry_filter_global_trend_period,
+            ma=MaKind(self.entry_filter_global_trend_ma.strip().lower()),
+            band_pct=self.entry_filter_global_trend_band_pct,
+            warmup=WarmupPolicy(self.entry_filter_global_trend_warmup.strip().lower()),
         )
 
     def adaptive_ema_params(self) -> AdaptiveEmaParams:

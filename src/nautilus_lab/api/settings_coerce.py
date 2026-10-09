@@ -8,9 +8,13 @@ from nautilus_lab.infrastructure.settings import Settings
 
 def _field_name(env_key: str) -> str | None:
     upper = env_key.upper()
-    for name in Settings.model_fields:
+    for name, field in Settings.model_fields.items():
         if name.upper() == upper:
             return name
+        if field.validation_alias is not None:
+            choices = getattr(field.validation_alias, "choices", None)
+            if choices and any(isinstance(c, str) and c.upper() == upper for c in choices):
+                return name
     return None
 
 

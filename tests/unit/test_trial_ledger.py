@@ -158,6 +158,15 @@ def test_an_entry_gate_makes_a_new_trial() -> None:
     assert trial_id(gated, "fast=5") != trial_id(single, "fast=5")
 
 
+def test_the_global_trend_gate_makes_a_new_trial() -> None:
+    from nautilus_lab.domain.global_trend import GlobalTrendParams
+
+    single = _request()
+    assert trial_id(replace(single, global_trend=GlobalTrendParams()), "fast=5") == "ema|fast=5"
+    gated = replace(single, global_trend=GlobalTrendParams(enabled=True))
+    assert trial_id(gated, "fast=5") == "ema|fast=5 global_trend=1d/sma200/band0.02/allow"
+
+
 def test_a_disabled_regime_leg_makes_a_new_trial() -> None:
     single = _request()
     trend_only = replace(single, regime_legs="uptrend,downtrend")

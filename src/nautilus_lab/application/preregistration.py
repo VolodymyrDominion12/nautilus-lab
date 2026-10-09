@@ -76,6 +76,8 @@ def research_terms(
         options += (("vpin_quantile", str(backtest.vpin_quantile)),)
     if backtest.regime.min_hold_bars:
         options += (("regime_min_hold_bars", str(backtest.regime.min_hold_bars)),)
+    if backtest.global_trend.enabled:
+        options += (("global_trend", backtest.global_trend.label()),)
     return ResearchTerms(
         robot=backtest.robot.value,
         dataset=dataset_key(backtest),

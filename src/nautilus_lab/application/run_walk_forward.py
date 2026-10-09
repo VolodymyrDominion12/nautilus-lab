@@ -136,7 +136,7 @@ class RunWalkForward:
         books: list[OrderBookSnapshot] | None,
     ) -> Callable[[BacktestRequest], BacktestReport]:
         """OOS run over warm-up + window bars, trading only from the window's first bar."""
-        warm = warmup_tail(history, oos, _oos_warmup_count(request))
+        warm = warmup_tail(history, oos, _single_warmup_count(request, oos))
         bars = [*warm, *oos]
         trade_start = oos[0].ts_utc if warm else None
 
@@ -575,6 +575,22 @@ def _oos_warmup_count(request: WalkForwardRequest) -> int:
         return 0
     # The same rule `_require_warmup` enforces (the spec validator keeps the two equal).
     return minimum_bars(request.backtest.robot)
+
+
+def _single_warmup_count(request: WalkForwardRequest, oos: Sequence[OhlcvBar]) -> int:
+    """`_oos_warmup_count`, raised to what the global-trend gate needs.
+
+    SMA200 of daily closes needs ~200 days of bars: on 1h that is ~4 800 bars, far past
+    the robot's own minimum. Without this the gate would start every OOS window cold and
+    sit out (warmup=allow) or block (warmup=block) the first months of the fold. An
+    explicit `oos_warmup_bars` still wins. The tail is capped by the history available
+    before the window, so a short history simply warms what it can.
+    """
+    base = _oos_warmup_count(request)
+    if request.oos_warmup_bars is not None or len(oos) < 2:
+        return base
+    step = oos[1].ts_utc - oos[0].ts_utc
+    return max(base, request.backtest.global_trend.warmup_bars(step))
 
 
 def _ref_leg(request: BacktestRequest) -> str:

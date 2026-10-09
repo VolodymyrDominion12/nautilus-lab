@@ -428,6 +428,7 @@ def research_request(
         selection_metric=cfg.selection_metric,
         session_id=str(uuid.uuid4()),
         entry_filters=cfg.entry_filter_params(),
+        global_trend=cfg.global_trend_params(),
         fill_latency_ms=cfg.backtest_fill_latency_ms,
         param_search=cfg.param_search,
     )

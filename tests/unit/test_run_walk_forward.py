@@ -447,3 +447,26 @@ def test_oos_warmup_can_be_switched_off() -> None:
     )
     oos_request, _ = calls[-1]
     assert oos_request.trade_start is None
+
+
+def test_oos_warmup_covers_the_global_trend_gate() -> None:
+    """The HTF MA needs far more bars than the robot: OOS must not start it cold."""
+    from dataclasses import replace
+
+    from nautilus_lab.domain.global_trend import GlobalTrendParams
+
+    bars = synthetic_ohlcv(instrument_id="ETH/USDT.SIM", count=400, seed=11)
+    gated = replace(
+        _ema_request(),
+        global_trend=GlobalTrendParams(enabled=True, timeframe="1h", period=2),
+    )
+    calls: list[tuple[BacktestRequest, list[OhlcvBar]]] = []
+    RunWalkForward(_recording_run(calls), _Feed(bars)).execute(WalkForwardRequest(backtest=gated))
+    oos_request, oos_bars = calls[-1]
+    assert oos_request.trade_start is not None
+    warm = [bar for bar in oos_bars if bar.ts_utc < oos_request.trade_start]
+    step = bars[1].ts_utc - bars[0].ts_utc
+    assert len(warm) == GlobalTrendParams(
+        enabled=True, timeframe="1h", period=2
+    ).warmup_bars(step)
+    assert len(warm) > 50

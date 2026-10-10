@@ -152,6 +152,23 @@ invariants_enforced:
       для сайзингу позиції та динамічно оновлює resting захисний стоп на біржі.
 
   - statement: >
+      Cooldown після стоп-аута (`STOP_COOLDOWN_BARS`, типово 0 = вимкнено) блокує лише
+      НОВІ входи на N закритих барів після спрацювання ratchet/Chandelier; вихід і
+      реверсний вихід ніколи не блокуються, а при 0 поведінка й `repr(RiskOverlay)`
+      (вхід у preregistration-хеш) ідентичні тим, що були до появи параметра.
+    enforced_by: src/nautilus_lab/domain/stop_cooldown.py
+    verified_by: tests/unit/test_stop_cooldown.py::test_cooldown_blocks_entries_for_exactly_n_bars
+    note: >
+      Мотив — батч 20261009_183335: зі стопом угод у `ema` було ×4–7 більше
+      (541 → 2246–3998 fills), а mean OOS падав з −0.81% до −13…−26%. Припущення
+      «перевхід одразу після стопа з'їдає комісії» цим параметром ПЕРЕВІРЯЄТЬСЯ, а не
+      доведене: числа з cooldown ще не виміряно (`measured: false`). Окремо від churn:
+      Chandelier задає дистанцію для сайзингу, тож щільний стоп збільшує розмір
+      позиції при тому самому `risk_per_trade` — це другий можливий механізм, цим
+      параметром не закритий. Стоп-аут на біржі (resting reduce-only) cooldown не
+      запускає — лише overlay-стопи, які рішення бару бачить сам.
+
+  - statement: >
       Спрацювання circuit breaker не губиться: причина відмови, яку повертає
       `evaluate_entry` (напр. «max drawdown circuit breaker»), потрапляє в звіт
       прогону з кількістю, а не лишається рядком у логі.

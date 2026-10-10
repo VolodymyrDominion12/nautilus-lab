@@ -1,0 +1,19 @@
+{
+  "robots": ["ema", "adaptive_ema"],
+  "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT", "MATICUSDT", "LTCUSDT"],
+  "interval": "1h",
+  "catalog": "catalog_spot_1h",
+  "folds": 6,
+  "is_fraction": "0.7",
+  "parallel": 4,
+  "days": 1200,
+  "embargo_bars": 10,
+  "label": "stop_cooldown_h1",
+  "env": {"BACKTEST_DAYS": "1200"},
+  "variants": [
+    {"name": "C0_Chand_cd0", "env": {"USE_CHANDELIER_STOP": "true", "CHANDELIER_ATR_MULTIPLIER": "3.0", "CHANDELIER_LOOKBACK": "22", "STOP_COOLDOWN_BARS": "0"}},
+    {"name": "C1_Chand_cd6", "env": {"USE_CHANDELIER_STOP": "true", "CHANDELIER_ATR_MULTIPLIER": "3.0", "CHANDELIER_LOOKBACK": "22", "STOP_COOLDOWN_BARS": "6"}},
+    {"name": "C2_Chand_cd24", "env": {"USE_CHANDELIER_STOP": "true", "CHANDELIER_ATR_MULTIPLIER": "3.0", "CHANDELIER_LOOKBACK": "22", "STOP_COOLDOWN_BARS": "24"}},
+    {"name": "C3_Chand_cd72", "env": {"USE_CHANDELIER_STOP": "true", "CHANDELIER_ATR_MULTIPLIER": "3.0", "CHANDELIER_LOOKBACK": "22", "STOP_COOLDOWN_BARS": "72"}}
+  ]
+}

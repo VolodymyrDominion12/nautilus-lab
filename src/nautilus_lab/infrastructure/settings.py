@@ -103,6 +103,7 @@ class Settings(BaseSettings):
         ),
     )
     chandelier_lookback: int = 22
+    stop_cooldown_bars: int = 0
     selection_metric: SelectionMetric = SelectionMetric.PNL
     drawdown_cooldown_days: int = 0
     research_drawdown_cooldown_days: int = 7
@@ -404,6 +405,7 @@ class Settings(BaseSettings):
             use_chandelier_stop=self.use_chandelier_stop,
             chandelier_atr_multiple=self.chandelier_atr_multiple,
             chandelier_lookback=self.chandelier_lookback,
+            stop_cooldown_bars=self.stop_cooldown_bars,
         )
 
     def pairs_params(self) -> PairsParams:

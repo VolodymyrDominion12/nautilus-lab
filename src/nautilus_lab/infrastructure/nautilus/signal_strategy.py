@@ -77,6 +77,7 @@ from nautilus_lab.domain.regime_router import RegimeRouter, parse_legs
 from nautilus_lab.domain.risk import AccountSnapshot, RiskLimits
 from nautilus_lab.domain.risk_overlay import RiskOverlay
 from nautilus_lab.domain.signals import Signal, SignalSide
+from nautilus_lab.domain.stop_cooldown import StopCooldown
 from nautilus_lab.domain.volatility import VolModel
 from nautilus_lab.domain.vpin import BarVpin, VpinModel
 from nautilus_lab.domain.vpin_momentum import VpinMomentum
@@ -183,6 +184,7 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     use_chandelier_stop: bool = False
     chandelier_atr_multiple: Decimal = Decimal("3.0")
     chandelier_lookback: int = 22
+    stop_cooldown_bars: int = 0
     use_protective_stop: bool = True
     # Bars that close before this timestamp (ns) only warm indicators; see
     # BacktestRequest.trade_start.
@@ -245,6 +247,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             use_chandelier_stop=config.use_chandelier_stop,
             chandelier_atr_multiple=config.chandelier_atr_multiple,
             chandelier_lookback=config.chandelier_lookback,
+            stop_cooldown_bars=config.stop_cooldown_bars,
             use_protective_stop=config.use_protective_stop,
         )
         self._entry_filter = EntryFilter(
@@ -303,6 +306,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._previous_close: Decimal | None = None
         self._ratchet: RatchetState | None = None
         self._chandelier: ChandelierState | None = None
+        self._stop_cooldown = StopCooldown(config.stop_cooldown_bars)
         self._chandelier_highs = RollingWindow(config.chandelier_lookback)
         self._chandelier_lows = RollingWindow(config.chandelier_lookback)
         # Trade-lifecycle state for the decision log (docs/28). An intrabar stop-out is
@@ -396,18 +400,21 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._track_equity(domain_bar.ts_utc)
 
         if self._apply_ratchet(domain_bar):
+            self._stop_cooldown.trip()
             self._record_decision_log(
                 domain_bar, signal, Outcome.RATCHET_EXIT, steps, None, self._overlay_steps
             )
             return
 
         if self._apply_chandelier(domain_bar):
+            self._stop_cooldown.trip()
             self._record_decision_log(
                 domain_bar, signal, Outcome.RATCHET_EXIT, steps, None, self._overlay_steps
             )
             return
 
         outcome, blocked_by, execution_steps = self._process_signal(signal, domain_bar.close)
+        self._stop_cooldown.tick()
         if outcome is Outcome.NO_SIGNAL and signal is None:
             veto = veto_reason(steps)
             if veto is not None:
@@ -905,6 +912,21 @@ class SignalRobot(Strategy):  # type: ignore[misc]
                 plan = reduced
         if not plan.wants_entry:
             return plan, None
+        if self._stop_cooldown.active:
+            steps.append(
+                step(
+                    Stage.GATE,
+                    "stop_cooldown",
+                    Verdict.BLOCK,
+                    result="no new entry after a stop-out",
+                    values={"bars_left": self._stop_cooldown.remaining},
+                    thresholds={"cooldown_bars": self._stop_cooldown.bars},
+                )
+            )
+            return (
+                PositionPlan(exit_position=plan.exit_position, wants_entry=False),
+                "stop_cooldown",
+            )
         verdict = self._entry_filter.evaluate(side)
         steps.extend(verdict.steps)
         if verdict.allowed:

@@ -33,6 +33,8 @@ class RiskOverlay:
     use_chandelier_stop: bool = False
     chandelier_atr_multiple: Decimal = Decimal("3.0")
     chandelier_lookback: int = 22
+    # Closed bars after a ratchet/Chandelier exit during which no new position opens (0 = off).
+    stop_cooldown_bars: int = 0
 
     def __post_init__(self) -> None:
         if self.vol_scaling_target <= 0 or self.vol_scaling_target > 1:
@@ -51,6 +53,8 @@ class RiskOverlay:
             raise InvalidRiskError("chandelier_atr_multiple must be > 0")
         if self.chandelier_lookback < 1:
             raise InvalidRiskError("chandelier_lookback must be >= 1")
+        if self.stop_cooldown_bars < 0:
+            raise InvalidRiskError("stop_cooldown_bars must be >= 0")
 
     def ratchet_params(self, *, stop_pct: Decimal) -> RatchetParams:
         """Protective percent comes from `RiskLimits.stop_pct`, not from the strategy."""
@@ -64,6 +68,14 @@ class RiskOverlay:
         )
 
     def __repr__(self) -> str:
+        text = self._legacy_repr()
+        if self.stop_cooldown_bars == 0:
+            return text
+        # Appended only when set, so the repr (a preregistration-hash input) of every
+        # existing configuration is byte-identical.
+        return f"{text[:-1]}, stop_cooldown_bars={self.stop_cooldown_bars})"
+
+    def _legacy_repr(self) -> str:
         base = (
             f"RiskOverlay(use_vol_scaling={self.use_vol_scaling}, "
             f"vol_scaling_target={self.vol_scaling_target!r}, "

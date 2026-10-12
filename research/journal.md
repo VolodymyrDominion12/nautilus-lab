@@ -23,6 +23,7 @@
 | 2026-09-28 07:36 | lab api research | regime ETH/USDT.SIM | walk-forward catalog folds=4 | 0.00% | 2.33% | ⏳ pending | auto: profitable 2/4 folds |
 | 2026-09-28 07:41 | lab api research | regime ETH/USDT.SIM | walk-forward catalog single split | 1.17% | n/a | ⏳ pending | auto: single split; buy&hold not measured |
 | 2026-09-29 09:15 | lab api research | regime ETH/USDT.SIM | walk-forward catalog single split | 1.27% | n/a | ⏳ pending | auto: single split; buy&hold not measured |
+| 2026-10-12 06:05 | lab propose | proposal deepseek-v4-pro | not run yet (proposal only) | n/a | n/a | ⏳ pending | awaiting review: research/hypotheses/2026-10-12-deepseek-v4-pro-9db1291e.json |
 <!-- journal:rows:end -->
 
 **Як це працює.** Рядки між маркерами `journal:rows:start` і `journal:rows:end`

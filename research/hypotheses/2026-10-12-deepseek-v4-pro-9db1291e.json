@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "created_at": "2026-10-12T06:05:35.994477+00:00",
+  "model": "deepseek-v4-pro",
+  "endpoint_host": "api.deepseek.com",
+  "as_of": "2026-10-12",
+  "prompt_file": "research/prompts/01-generate-alphas.md",
+  "prompt_sha256": "9db1291e33c9e3e0169c82a47fa65f8af6b1598c9a86c8a7443b7e45840d91e6",
+  "feature_contract": [
+    "ret",
+    "ret_5",
+    "vol_10",
+    "volume_ratio",
+    "close_loc",
+    "momentum_10",
+    "reversal_3",
+    "vol_of_vol",
+    "trend_er",
+    "range_pct",
+    "high_low_spread",
+    "vol_20"
+  ],
+  "count_requested": 5,
+  "count_parsed": 5,
+  "count_flagged": 0,
+  "hypotheses": [
+    {
+      "name": "trend_eff_momentum_cont",
+      "formula": "sign(momentum_10) * zscore(trend_er, 30)",
+      "mechanism": "Висока ефективність тренду в напрямку 10-барного моментуму означає стійкий напрямлений рух. Пізні контртрендові ліквідні постачальники систематично платять за передчасний розворот.",
+      "horizon_bars": 12,
+      "expected_sign": 1,
+      "kill_condition": "IC між формулою і forward-доходністю на 12 барів на OOS < 0 у двох послідовних вікнах",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "close_loc_fade",
+      "formula": "zscore(close_loc, 30)",
+      "mechanism": "Екстремальне закриття біля максимуму/мінімуму бару відображає пізню імпульсну агресію роздрібних учасників. Маркет-мейкери і короткострокові mean-reversion трейдери забирають інвентар і заробляють на відкаті.",
+      "horizon_bars": 3,
+      "expected_sign": -1,
+      "kill_condition": "IC між формулою і forward-доходністю на 3 бари на OOS ≥ 0 у двох послідовних вікнах",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "vol_confirmed_ret5",
+      "formula": "sign(ret_5) * zscore(volume_ratio, 30)",
+      "mechanism": "Підвищений обсяг у напрямку останнього 5-барного руху свідчить про поглинання інформованим потоком. Пасивні контртрендові контрагенти систематично недооцінюють імпульс і платять за свій інвентар.",
+      "horizon_bars": 6,
+      "expected_sign": 1,
+      "kill_condition": "IC між формулою і forward-доходністю на 6 барів на OOS < 0 у двох послідовних вікнах",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "calm_trend_continuation",
+      "formula": "zscore(momentum_10, 30) - zscore(vol_of_vol, 30)",
+      "mechanism": "Поєднання позитивного моментуму та низької волатильності волатильності вказує на спокійний трендовий потік без різких розвантажень. Трейдери, що ставлять на діапазон або ранній розворот, платять, коли тренд продовжується.",
+      "horizon_bars": 10,
+      "expected_sign": 1,
+      "kill_condition": "IC між формулою і forward-доходністю на 10 барів на OOS < 0 у двох послідовних вікнах",
+      "unknown_identifiers": []
+    },
+    {
+      "name": "vol_spike_upbar_fade",
+      "formula": "zscore(vol_10, 30) * max(0, sign(ret))",
+      "mechanism": "Стрибок волатильності на позитивному барі часто є емоційним переслідуванням ціни. Короткострокові маркет-мейкери fade перегрітий рух, а пізні покупці платять за нормалізацію.",
+      "horizon_bars": 2,
+      "expected_sign": -1,
+      "kill_condition": "IC між формулою і forward-доходністю на 2 бари на OOS ≥ 0 у двох послідовних вікнах",
+      "unknown_identifiers": []
+    }
+  ],
+  "raw_response": "[\n  {\n    \"name\": \"trend_eff_momentum_cont\",\n    \"formula\": \"sign(momentum_10) * zscore(trend_er, 30)\",\n    \"mechanism\": \"Висока ефективність тренду в напрямку 10-барного моментуму означає стійкий напрямлений рух. Пізні контртрендові ліквідні постачальники систематично платять за передчасний розворот.\",\n    \"horizon_bars\": 12,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"IC між формулою і forward-доходністю на 12 барів на OOS < 0 у двох послідовних вікнах\"\n  },\n  {\n    \"name\": \"close_loc_fade\",\n    \"formula\": \"zscore(close_loc, 30)\",\n    \"mechanism\": \"Екстремальне закриття біля максимуму/мінімуму бару відображає пізню імпульсну агресію роздрібних учасників. Маркет-мейкери і короткострокові mean-reversion трейдери забирають інвентар і заробляють на відкаті.\",\n    \"horizon_bars\": 3,\n    \"expected_sign\": -1,\n    \"kill_condition\": \"IC між формулою і forward-доходністю на 3 бари на OOS ≥ 0 у двох послідовних вікнах\"\n  },\n  {\n    \"name\": \"vol_confirmed_ret5\",\n    \"formula\": \"sign(ret_5) * zscore(volume_ratio, 30)\",\n    \"mechanism\": \"Підвищений обсяг у напрямку останнього 5-барного руху свідчить про поглинання інформованим потоком. Пасивні контртрендові контрагенти систематично недооцінюють імпульс і платять за свій інвентар.\",\n    \"horizon_bars\": 6,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"IC між формулою і forward-доходністю на 6 барів на OOS < 0 у двох послідовних вікнах\"\n  },\n  {\n    \"name\": \"calm_trend_continuation\",\n    \"formula\": \"zscore(momentum_10, 30) - zscore(vol_of_vol, 30)\",\n    \"mechanism\": \"Поєднання позитивного моментуму та низької волатильності волатильності вказує на спокійний трендовий потік без різких розвантажень. Трейдери, що ставлять на діапазон або ранній розворот, платять, коли тренд продовжується.\",\n    \"horizon_bars\": 10,\n    \"expected_sign\": 1,\n    \"kill_condition\": \"IC між формулою і forward-доходністю на 10 барів на OOS < 0 у двох послідовних вікнах\"\n  },\n  {\n    \"name\": \"vol_spike_upbar_fade\",\n    \"formula\": \"zscore(vol_10, 30) * max(0, sign(ret))\",\n    \"mechanism\": \"Стрибок волатильності на позитивному барі часто є емоційним переслідуванням ціни. Короткострокові маркет-мейкери fade перегрітий рух, а пізні покупці платять за нормалізацію.\",\n    \"horizon_bars\": 2,\n    \"expected_sign\": -1,\n    \"kill_condition\": \"IC між формулою і forward-доходністю на 2 бари на OOS ≥ 0 у двох послідовних вікнах\"\n  }\n]",
+  "review": {
+    "status": "pending",
+    "note": "",
+    "gates": {
+      "purged_cv": null,
+      "walk_forward_oos": null,
+      "buy_and_hold_oos": null
+    }
+  }
+}

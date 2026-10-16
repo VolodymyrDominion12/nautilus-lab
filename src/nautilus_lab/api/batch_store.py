@@ -34,6 +34,7 @@ from typing import Any, cast
 
 from nautilus_lab.application.batch_plan import BatchCell, BatchRequest, BatchVariant, safe_id
 from nautilus_lab.application.decision_digest import build_digest
+from nautilus_lab.application.trade_breakdown import cell_breakdown, reconstruct_trades, trade_row
 from nautilus_lab.application.trade_history import reconstruct_trades_from_decisions
 from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
 from nautilus_lab.infrastructure.settings import Settings
@@ -738,10 +739,14 @@ def build_cell_summary(cell_path: Path, cell: dict[str, Any], cfg: Settings) -> 
     folds = fold_sessions(result, cell_path)
     all_rows: list[dict[str, Any]] = []
     trades: list[dict[str, Any]] = []
-    for fold in folds:
+    fold_records: list[tuple[int, dict[str, Any]]] = []
+    for position, fold in enumerate(folds):
         rows = reader.get_recent_logs(str(fold["session_id"]), lines=FOLD_READ_LIMIT)
         all_rows.extend(rows)
         trades.extend(reconstruct_trades_from_decisions(rows))
+        index = fold.get("index")
+        fold_records.extend((index if isinstance(index, int) else position, r) for r in rows)
+    breakdown = _breakdown(cell_path, fold_records, cfg)
     digest = build_digest(all_rows, max_narratives=0, no_signal_samples=0) if all_rows else None
     bars = [r for r in all_rows if r.get("kind", "bar_decision") == "bar_decision"]
     untraced = sum(
@@ -796,10 +801,39 @@ def build_cell_summary(cell_path: Path, cell: dict[str, Any], cfg: Settings) -> 
             "bar_seq_gaps": digest.bar_seq_gaps if digest else 0,
         },
         "trades": _trade_stats(trades),
+        # Per-trade money split (side, leg, exit, holding, concentration); the rows
+        # themselves are in `trades.jsonl` beside this file (batch analysis P0.2).
+        "breakdown": breakdown,
         "timings": cell_timings(cell_path),
         "summary_version": SUMMARY_VERSION,
         "summarized_at": _now(),
     }
+
+
+#: Per-trade rows of a cell, written beside `summary.json` when the summary is built.
+TRADES_FILE = "trades.jsonl"
+
+
+def _breakdown(
+    cell_path: Path, fold_records: list[tuple[int, dict[str, Any]]], cfg: Settings
+) -> dict[str, Any] | None:
+    """Rebuild round trips from the trace, write them as `trades.jsonl`, return the totals.
+
+    None when the trace has no records (a blocked or failed cell). A cell whose trace cannot
+    be paired (an older log format) is reported, never allowed to break the batch table.
+    """
+    if not fold_records:
+        return None
+    try:
+        rec = reconstruct_trades(fold_records, taker_fee=float(cfg.spot_taker_fee))
+    except (ValueError, TypeError) as exc:
+        return {"error": f"trade reconstruction failed: {exc}"}
+    lines = [json.dumps(trade_row(trade), ensure_ascii=False) for trade in rec.trades]
+    with contextlib.suppress(OSError):
+        (cell_path / TRADES_FILE).write_text(
+            "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
+        )
+    return cell_breakdown(rec)
 
 
 def _worst(multi: dict[str, Any]) -> float | None:
@@ -843,7 +877,7 @@ def _collect_breaches(multi: dict[str, Any], result: dict[str, Any] | None) -> d
 
 #: Bumped whenever the shape of `summary.json` changes, so a cache written by an older
 #: build is rebuilt instead of served half-empty (docs/35 §3, item 19).
-SUMMARY_VERSION = 4
+SUMMARY_VERSION = 5
 
 
 #: Phases kept in a cell's compact timing record (the slowest ones; the full list stays

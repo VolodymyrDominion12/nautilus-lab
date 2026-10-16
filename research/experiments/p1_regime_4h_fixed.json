@@ -1,0 +1,19 @@
+{
+  "robots": ["regime"],
+  "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT", "LTCUSDT"],
+  "interval": "4h",
+  "catalog": "catalog_spot_4h",
+  "folds": 12,
+  "is_fraction": "0.5",
+  "parallel": 4,
+  "days": 2200,
+  "embargo_bars": 10,
+  "label": "p1_regime_4h_fixed",
+  "env": {"BACKTEST_DAYS": "2200"},
+  "variants": [
+    {"name": "R0_grid", "env": {"PARAM_SEARCH": "true"}},
+    {"name": "R1_fixed40", "env": {"PARAM_SEARCH": "false", "DONCHIAN_PERIOD": "40", "REGIME_LEGS": "uptrend,downtrend"}},
+    {"name": "R3_fixed40_gt", "env": {"PARAM_SEARCH": "false", "DONCHIAN_PERIOD": "40", "REGIME_LEGS": "uptrend,downtrend", "ENTRY_FILTER_GLOBAL_TREND": "true"}},
+    {"name": "R4_fixed40_long", "env": {"PARAM_SEARCH": "false", "DONCHIAN_PERIOD": "40", "REGIME_LEGS": "uptrend"}}
+  ]
+}

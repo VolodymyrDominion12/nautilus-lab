@@ -82,6 +82,8 @@ class CheckStatus(StrEnum):
     PASS = "pass"  # noqa: S105 — a check outcome, not a password
     FAIL = "fail"
     NOT_MEASURED = "not measured"
+    #: Reported for the reader, never holds the verdict back (see `_raw_buy_hold_check`).
+    INFO = "info"
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +121,7 @@ class GateVerdict:
 
     @property
     def promoted(self) -> bool:
-        return all(check.status is CheckStatus.PASS for check in self.checks)
+        return all(check.status in (CheckStatus.PASS, CheckStatus.INFO) for check in self.checks)
 
     @property
     def label(self) -> str:
@@ -233,11 +235,7 @@ def _walk_forward_checks(
             f"{multi.profitable_folds}/{measured} profitable "
             f"(need >= {rules.min_profitable_share * 100:.0f}%)",
         ),
-        _check(
-            "beats_buy_hold",
-            multi.beats_buy_and_hold(),
-            "mean out-of-sample return vs mean buy&hold over the same folds",
-        ),
+        _raw_buy_hold_check(multi, strategy_class),
     ]
 
     if strategy_class is StrategyClass.TREND_FOLLOWING:
@@ -251,6 +249,32 @@ def _walk_forward_checks(
         )
     )
     return tuple(checks)
+
+
+def _raw_buy_hold_check(
+    multi: WalkForwardEvidence, strategy_class: StrategyClass | None
+) -> GateCheck:
+    """Raw buy & hold: a requirement for most classes, a report for trend following.
+
+    A trend follower is in the market a fraction of the time (regime 4h: ~30%), so it can
+    only beat full buy & hold in a bull fold by levering up — the very thing the
+    volatility-matched check exists to catch. Requiring both rejected every trend cell of
+    the 2026-10-12/13 batches, including the ones that beat vol-matched buy & hold in 8 of
+    12 coins, so for that class the raw comparison is shown as INFO and the decision rests
+    on `beats_vol_matched` (docs: batch-20261012-13 analysis, P0.4). Other classes keep the
+    raw check as a requirement.
+    """
+    detail = "mean out-of-sample return vs mean buy&hold over the same folds"
+    beats = multi.beats_buy_and_hold()
+    if strategy_class is StrategyClass.TREND_FOLLOWING and beats is not None:
+        outcome = "beats" if beats else "does not beat"
+        return GateCheck(
+            "beats_buy_hold",
+            CheckStatus.INFO,
+            f"{detail}: {outcome} it (reported, not required for trend following; "
+            "beats_vol_matched decides)",
+        )
+    return _check("beats_buy_hold", beats, detail)
 
 
 def _vol_matched_check(multi: WalkForwardEvidence) -> tuple[GateCheck, ...]:

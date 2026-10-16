@@ -632,7 +632,7 @@ def test_cell_summary_includes_risk_breaches_and_extended_metrics(tmp_path: Path
         },
     )
     summary = cell_summary(path, {"cell_id": "regime_BTC", "status": OK}, Settings())
-    assert summary["summary_version"] == 4
+    assert summary["summary_version"] == SUMMARY_VERSION
     numbers = summary["numbers"]
     assert numbers["mean_oos"] == pytest.approx(0.015)
     assert numbers["median_oos"] == pytest.approx(0.015)

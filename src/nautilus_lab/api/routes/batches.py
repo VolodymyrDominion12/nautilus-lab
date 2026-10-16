@@ -18,6 +18,7 @@ import signal
 import subprocess
 import threading
 from collections.abc import Callable
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,7 @@ from nautilus_lab.application.batch_plan import (
     BatchCell,
     BatchRequest,
     BatchVariant,
+    parse_parquet_end,
     plan_cells,
 )
 from nautilus_lab.application.decision_digest import build_digest, digest_markdown
@@ -216,12 +218,35 @@ def _series_probe(root: Path) -> Callable[[str, str, str], bool]:
     return probe
 
 
+def _series_end_probe(root: Path) -> Callable[[str, str, str], datetime | None]:
+    """When a bar series ends, read from the Parquet file names (no file is opened).
+
+    Nautilus names each file `<first ts>_<last ts>.parquet` with `:` and `.` written as `-`
+    (`2020-01-01T03-59-59-999000064Z_2024-09-10T02-59-59-999000064Z.parquet`). The latest
+    end over the files is the series end; a name that does not parse is skipped, and no
+    parseable file gives None (= unknown, the plan does not block on it).
+    """
+
+    def probe(catalog: str, instrument_id: str, interval: str) -> datetime | None:
+        name = nautilus_bar_type(instrument_id, interval).replace("/", "")
+        directory = root / catalog / "data" / "bar" / name
+        if not directory.is_dir():
+            return None
+        ends = [
+            end for path in directory.glob("*.parquet") if (end := parse_parquet_end(path.name))
+        ]
+        return max(ends) if ends else None
+
+    return probe
+
+
 def _planned_cells(ctx: LabContext, request: BatchRequest) -> list[BatchCell]:
     return plan_cells(
         request,
         exists=lambda rel: (ctx.root / rel).exists(),
         series=_series_probe(ctx.root),
         wired=[robot.value for robot in BACKTEST_WIRED_ROBOTS],
+        series_end=_series_end_probe(ctx.root),
     )
 
 

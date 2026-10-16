@@ -165,6 +165,43 @@ def _near_miss(row: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _by_session(bars: Sequence[Mapping[str, Any]]) -> list[list[Mapping[str, Any]]]:
+    """Bars grouped by `session_id`, each group in the order given (rows without one: one group)."""
+    groups: dict[object, list[Mapping[str, Any]]] = {}
+    for row in bars:
+        groups.setdefault(row.get("session_id"), []).append(row)
+    return list(groups.values())
+
+
+def _add_forward(
+    forward: dict[str, dict[str, list[float]]],
+    bars: Sequence[Mapping[str, Any]],
+    horizons: Sequence[int],
+) -> None:
+    """Signed forward returns, % after h bars of the same session, per outcome group."""
+    closes = [_close(r) for r in bars]
+    for index, row in enumerate(bars):
+        outcome = str(row.get("outcome"))
+        group = (
+            "executed"
+            if outcome in EXECUTED
+            else "blocked"
+            if outcome in BLOCKED
+            else "vetoed"
+            if outcome == "SIGNAL_VETOED"
+            else None
+        )
+        side = row.get("signal") if group != "vetoed" else _vetoed_side(row)
+        entry = closes[index]
+        if group is None or side not in ("buy", "sell") or not entry:
+            continue
+        sign = 1.0 if side == "buy" else -1.0
+        for h in horizons:
+            later = closes[index + h] if index + h < len(closes) else None
+            if later is not None:
+                forward[group][f"+{h}"].append(sign * (later - entry) / entry * 100.0)
+
+
 def build_digest(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -187,43 +224,32 @@ def build_digest(
 
     regimes = [str(r.get("regime") or "UNKNOWN") for r in bars]
     regime_counts = Counter(regimes)
-    trading_regimes = [g for g in regimes if g not in ("WARMUP", "UNKNOWN", "")]
-    switches = sum(1 for a, b in pairwise(trading_regimes) if a != b)
-    flip_flops = sum(
-        1
-        for i in range(2, len(trading_regimes))
-        if trading_regimes[i] == trading_regimes[i - 2] != trading_regimes[i - 1]
-    )
 
-    seqs = [seq for seq in (r.get("bar_seq") for r in bars) if isinstance(seq, int)]
-    gaps = sum(1 for a, b in pairwise(seqs) if b - a > 1)
-
-    closes = [_close(r) for r in bars]
+    # Sequence statistics are per session. A walk-forward writes one session per fold, and
+    # fold k+1's warm-up replays the last bars of fold k's out-of-sample window, so the
+    # timestamp sort above interleaves two sessions over the same hours. Counted across that
+    # seam, `bar_seq` jumped back and forth (745 phantom "gaps" in every cell of the
+    # 2026-10-12/13 batches, ~150 per fold seam), regimes "switched" on every bar and a
+    # forward return at +h read a bar of the other session h/2 bars away.
+    switches = flip_flops = gaps = 0
     forward: dict[str, dict[str, list[float]]] = {
         "executed": {f"+{h}": [] for h in horizons},
         "blocked": {f"+{h}": [] for h in horizons},
         "vetoed": {f"+{h}": [] for h in horizons},
     }
-    for index, row in enumerate(bars):
-        outcome = str(row.get("outcome"))
-        group = (
-            "executed"
-            if outcome in EXECUTED
-            else "blocked"
-            if outcome in BLOCKED
-            else "vetoed"
-            if outcome == "SIGNAL_VETOED"
-            else None
+    for session_bars in _by_session(bars):
+        trading = [
+            g
+            for g in (str(r.get("regime") or "UNKNOWN") for r in session_bars)
+            if g not in ("WARMUP", "UNKNOWN", "")
+        ]
+        switches += sum(1 for a, b in pairwise(trading) if a != b)
+        flip_flops += sum(
+            1 for i in range(2, len(trading)) if trading[i] == trading[i - 2] != trading[i - 1]
         )
-        side = row.get("signal") if group != "vetoed" else _vetoed_side(row)
-        entry = closes[index]
-        if group is None or side not in ("buy", "sell") or not entry:
-            continue
-        sign = 1.0 if side == "buy" else -1.0
-        for h in horizons:
-            later = closes[index + h] if index + h < len(closes) else None
-            if later is not None:
-                forward[group][f"+{h}"].append(sign * (later - entry) / entry * 100.0)
+        seqs = [seq for seq in (r.get("bar_seq") for r in session_bars) if isinstance(seq, int)]
+        gaps += sum(1 for a, b in pairwise(seqs) if b - a > 1)
+        _add_forward(forward, session_bars, horizons)
 
     near = [text for text in (_near_miss(r) for r in bars) if text]
 

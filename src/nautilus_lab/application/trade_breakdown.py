@@ -423,3 +423,88 @@ def render_cell_markdown(name: str, rec: Reconstruction, trades: Sequence[Trade]
         ]
         lines.append("")
     return "\n".join(lines)
+
+
+#: How many best trades `cell_breakdown` sums to show how concentrated the result is.
+TOP_TRADES = 10
+
+
+def trade_row(trade: Trade) -> dict[str, Any]:
+    """One trade as a JSON-able row (`trades.jsonl` of a batch cell)."""
+    return {
+        "fold": trade.fold,
+        "side": trade.side,
+        "leg": trade.leg,
+        "regime": trade.regime,
+        "entry_reason": trade.entry_reason,
+        "ts_in": trade.ts_in.isoformat(),
+        "px_in": trade.px_in,
+        "qty": trade.qty,
+        "stop": trade.stop,
+        "ts_out": trade.ts_out.isoformat(),
+        "px_out": trade.px_out,
+        "exit_reason": trade.exit_reason,
+        "gross": round(trade.gross, 4),
+        "fees": round(trade.fees, 4),
+        "net": round(trade.net, 4),
+        "r_multiple": None if trade.r_multiple is None else round(trade.r_multiple, 4),
+        "hold_hours": round(trade.hold_hours, 2),
+    }
+
+
+def _group_payload(rows: Sequence[GroupRow]) -> dict[str, dict[str, Any]]:
+    return {
+        row.key: {
+            "n": row.n,
+            "net": round(row.net, 2),
+            "gross": round(row.gross, 2),
+            "fees": round(row.fees, 2),
+            "win_rate": round(row.win_rate, 4),
+            "mean_r": None if row.mean_r is None else round(row.mean_r, 3),
+        }
+        for row in rows
+    }
+
+
+def cell_breakdown(rec: Reconstruction) -> dict[str, Any]:
+    """The per-trade facts a batch table needs, without reading the trace again.
+
+    What the 2026-10-12/13 analysis had to rebuild by hand from ~18k decision files: long
+    vs short, which leg earns, how the exits split, and how much of the result rests on a
+    handful of trades (`top_share`: the best `TOP_TRADES` trades' net over the total net —
+    above 1 means everything else lost money together). Money is in account currency; the
+    exit fee is estimated at the taker rate, as everywhere in this module.
+    """
+    trades = rec.trades
+    if not trades:
+        return {"trades": 0, "open_at_end": rec.open_at_end}
+    nets = sorted((t.net for t in trades), reverse=True)
+    total = sum(nets)
+    top = sum(nets[:TOP_TRADES])
+    rs = sorted(r for r in (t.r_multiple for t in trades) if r is not None)
+    return {
+        "trades": len(trades),
+        "open_at_end": rec.open_at_end,
+        "net": round(total, 2),
+        "gross": round(sum(t.gross for t in trades), 2),
+        "fees": round(sum(t.fees for t in trades), 2),
+        "profit_factor": _round(profit_factor(trades), 3),
+        "median_r": round(rs[len(rs) // 2], 3) if rs else None,
+        "top_net": round(top, 2),
+        "rest_net": round(total - top, 2),
+        "top_share": round(top / total, 3) if total > 0 else None,
+        "by_side": _group_payload(summarize(trades, lambda t: t.side)),
+        "by_leg": _group_payload(summarize(trades, lambda t: t.leg or "n/a")),
+        "by_exit": _group_payload(summarize(trades, lambda t: t.exit_reason)),
+        "by_hold": _group_payload(
+            summarize(
+                trades,
+                lambda t: t.hold_bucket,
+                order=tuple(label for label, _ in HOLD_BUCKETS),
+            )
+        ),
+    }
+
+
+def _round(value: float | None, digits: int) -> float | None:
+    return None if value is None else round(value, digits)

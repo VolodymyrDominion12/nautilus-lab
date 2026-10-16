@@ -10,8 +10,10 @@ from typing import Any
 import pytest
 
 from nautilus_lab.application.trade_breakdown import (
+    TOP_TRADES,
     Trade,
     bars_from_records,
+    cell_breakdown,
     fold_of,
     gate_features,
     profit_factor,
@@ -19,6 +21,7 @@ from nautilus_lab.application.trade_breakdown import (
     render_cell_markdown,
     summarize,
     tag_trades,
+    trade_row,
 )
 from nautilus_lab.domain.entry_filters import EntryFilterParams
 
@@ -233,3 +236,49 @@ def test_script_writes_report_and_trades_csv(tmp_path: Path) -> None:
     assert len(lines) == 2
     assert lines[1].startswith("0,LONG,UptrendBreakout")
     assert script.main([str(tmp_path / "missing")]) == 1
+
+
+# ---- the batch cell's breakdown (batch analysis 2026-10-16, P0.2) ------------------------
+
+
+def test_cell_breakdown_splits_money_by_side_leg_and_exit() -> None:
+    records = [
+        (0, _entry(1, 100.0, "buy", "UptrendBreakout")),
+        (0, _fill(1, 100.0, "LONG", 2.0, 98.0)),
+        (0, _bar(5, 104.0, "EXIT", signal_reason="uptrend EMA exit")),
+        (0, _entry(6, 104.0, "sell", "DowntrendBreakout")),
+        (0, _fill(6, 104.0, "SHORT", 1.0, 106.0)),
+        (0, _stop(7, 106.0)),
+    ]
+    rec = reconstruct_trades(records, taker_fee=FEE)
+    out = cell_breakdown(rec)
+    long_net, short_net = (t.net for t in rec.trades)
+    assert out["trades"] == 2
+    assert out["net"] == pytest.approx(round(long_net + short_net, 2))
+    assert out["by_side"]["LONG"]["n"] == 1
+    assert out["by_side"]["SHORT"]["net"] == pytest.approx(round(short_net, 2))
+    assert set(out["by_leg"]) == {"UptrendBreakout", "DowntrendBreakout"}
+    assert out["by_exit"]["STOP_LOSS"]["n"] == 1
+    # two trades are fewer than TOP_TRADES: the top is everything, the rest is nothing
+    assert TOP_TRADES > 2
+    assert out["rest_net"] == pytest.approx(0.0)
+    assert out["top_share"] == pytest.approx(1.0)
+
+
+def test_cell_breakdown_of_an_empty_trace_says_so() -> None:
+    rec = reconstruct_trades([], taker_fee=FEE)
+    assert cell_breakdown(rec) == {"trades": 0, "open_at_end": 0}
+
+
+def test_trade_row_is_json_ready() -> None:
+    records = [
+        (2, _entry(1, 100.0, "buy", "UptrendBreakout")),
+        (2, _fill(1, 100.0, "LONG", 2.0, 98.0)),
+        (2, _bar(5, 104.0, "EXIT", signal_reason="uptrend EMA exit")),
+    ]
+    (trade,) = reconstruct_trades(records, taker_fee=FEE).trades
+    row = trade_row(trade)
+    assert json.loads(json.dumps(row)) == row
+    assert row["fold"] == 2
+    assert row["side"] == "LONG"
+    assert row["r_multiple"] == pytest.approx(2.0)

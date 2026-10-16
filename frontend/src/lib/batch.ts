@@ -106,7 +106,10 @@ export interface FoldRef {
 
 export interface GateCheck {
   name: string;
-  /** `pass` | `fail` | `not measured` — an unmeasured check is never a pass. */
+  /**
+   * `pass` | `fail` | `not measured` | `info` — an unmeasured check is never a pass; `info`
+   * is reported but never holds the verdict back (raw buy&hold for trend robots).
+   */
   status: string;
   detail: string;
 }

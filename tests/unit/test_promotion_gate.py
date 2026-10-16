@@ -256,3 +256,56 @@ def test_a_registration_written_after_the_run_rejects() -> None:
     late = PreregistrationVerdict(PreregistrationStatus.LATE, "a" * 64, "dated after the run")
     verdict = evaluate_gate(_multi(["0.05"] * 6), _audit("0.1", "0.97"), preregistration=late)
     assert verdict.label == "REJECT"
+
+
+# ---- raw buy & hold is a report for trend following (batch 2026-10-12/13, P0.4) ----------
+
+
+def test_trend_follower_losing_only_to_raw_buy_and_hold_is_promoted() -> None:
+    """Out of the market 70% of the time, it cannot beat a bull fold's full buy & hold."""
+    verdict = evaluate_gate(
+        _multi(["0.02"] * 6, buy_hold="0.10", vol_matched="0.01"),
+        _audit("0.1", "0.97"),
+        preregistration=MATCHED,
+        strategy_class=StrategyClass.TREND_FOLLOWING,
+    )
+    raw = next(check for check in verdict.checks if check.name == "beats_buy_hold")
+    assert raw.status is CheckStatus.INFO
+    assert "does not beat" in raw.detail
+    assert verdict.promoted
+    assert verdict.label == "PROMOTE"
+
+
+def test_trend_follower_still_needs_vol_matched_buy_and_hold() -> None:
+    verdict = evaluate_gate(
+        _multi(["0.02"] * 6, buy_hold="0.10", vol_matched="0.03"),
+        _audit("0.1", "0.97"),
+        preregistration=MATCHED,
+        strategy_class=StrategyClass.TREND_FOLLOWING,
+    )
+    failed = [check.name for check in verdict.checks if check.status is CheckStatus.FAIL]
+    assert failed == ["beats_vol_matched"]
+    assert verdict.label == "REJECT"
+
+
+def test_other_classes_keep_raw_buy_and_hold_as_a_requirement() -> None:
+    verdict = evaluate_gate(
+        _multi(["0.02"] * 6, buy_hold="0.10"),
+        _audit("0.1", "0.97"),
+        preregistration=MATCHED,
+        strategy_class=StrategyClass.MEAN_REVERSION,
+    )
+    raw = next(check for check in verdict.checks if check.name == "beats_buy_hold")
+    assert raw.status is CheckStatus.FAIL
+    assert verdict.label == "REJECT"
+
+
+def test_info_never_masks_an_unmeasured_check() -> None:
+    verdict = evaluate_gate(
+        _multi(["0.02"] * 6, buy_hold="0.10", vol_matched="0.01"),
+        None,
+        preregistration=MATCHED,
+        strategy_class=StrategyClass.TREND_FOLLOWING,
+    )
+    assert not verdict.promoted
+    assert verdict.label == "INCOMPLETE"

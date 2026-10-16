@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from itertools import product
 
@@ -296,12 +297,19 @@ def sweep_variants(sweep: dict[str, tuple[str, ...]]) -> tuple[BatchVariant, ...
     return tuple(variants)
 
 
+#: How far a cell's last bar may lag the batch's latest one before the cell is blocked.
+#: A day or two of ingest lag between symbols is normal; a series that stopped months
+#: earlier (a delisting, a ticker migration) is not the same experiment.
+MAX_SERIES_END_LAG = timedelta(days=7)
+
+
 def plan_cells(
     request: BatchRequest,
     *,
     exists: Callable[[str], bool],
     series: Callable[[str, str, str], bool] | None = None,
     wired: Sequence[str] | None = None,
+    series_end: Callable[[str, str, str], datetime | None] | None = None,
 ) -> list[BatchCell]:
     """Expand the request into cells, marking the ones that cannot run and why.
 
@@ -319,6 +327,11 @@ def plan_cells(
     so one artefact holds the comparison that used to be several batches read side by side.
     `request.sweep` arrives through the same door: its combinations are variants too, which is
     why a swept parameter costs one dimension and not a second code path.
+
+    `series_end(catalog, instrument_id, interval)` answers "when does that series end"
+    (None = unknown). With it, a cell whose data stops long before the rest of the batch is
+    blocked (`_block_stale_series`): a walk-forward is anchored on its own last bar, so such
+    a cell silently tests another period and pollutes every cross-symbol average.
     """
     cells: list[BatchCell] = []
     for variant in request.resolved_variants() or (None,):
@@ -338,7 +351,59 @@ def plan_cells(
                 )
                 for symbol in request.symbols
             )
+    if series_end is not None:
+        cells = _block_stale_series(cells, series_end)
     return cells
+
+
+def parse_parquet_end(file_name: str) -> datetime | None:
+    """`..._2024-09-10T02-59-59-999000064Z.parquet` -> 2024-09-10 02:59:59 UTC (or None)."""
+    stem = file_name.removesuffix(".parquet")
+    _, sep, end = stem.rpartition("_")
+    if not sep or len(end) < 19:
+        return None
+    try:
+        return datetime.strptime(end[:19], "%Y-%m-%dT%H-%M-%S").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def _block_stale_series(
+    cells: list[BatchCell],
+    series_end: Callable[[str, str, str], datetime | None],
+) -> list[BatchCell]:
+    """Block runnable cells whose series ends more than `MAX_SERIES_END_LAG` before the rest.
+
+    Why: in the 2026-10-13 4h batch `MATICUSDT` (spot data ends 2024-09-10, the POL
+    migration) ran its six folds on 2023-05..2024-09 while the other eleven coins ran on
+    2025-06..2026-10. The cell finished `ok`, posted the best ema result of the batch, and
+    went into every per-fold average as if it were the same months. The window end is
+    derived from each instrument's own last bar, so the plan is the place to say so.
+    """
+    ends: dict[str, datetime] = {}
+    for cell in cells:
+        if not cell.runnable:
+            continue
+        end = series_end(cell.catalog, cell.instrument_id, cell.interval)
+        if end is not None:
+            ends[cell.cell_id] = end
+    if not ends:
+        return cells
+    latest = max(ends.values())
+    out: list[BatchCell] = []
+    for cell in cells:
+        end = ends.get(cell.cell_id)
+        if end is not None and latest - end > MAX_SERIES_END_LAG:
+            cell = replace(
+                cell,
+                blocked=(
+                    f"{cell.instrument_id} {cell.interval} bars end {end:%Y-%m-%d}, "
+                    f"{(latest - end).days} days before the rest of the batch "
+                    f"({latest:%Y-%m-%d}): its folds would cover another period"
+                ),
+            )
+        out.append(cell)
+    return out
 
 
 def _variant_suffix(variant: BatchVariant | None) -> str:

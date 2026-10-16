@@ -66,7 +66,16 @@ export const queryKeys = {
   commandCenter: ['command-center'] as const,
   hypotheses: ['hypotheses'] as const,
   hypothesis: (file: string) => ['hypotheses', file] as const,
+  leaderboard: (params?: import('./api').LeaderboardQueryParams) =>
+    ['leaderboard', params] as const,
 };
+
+export const leaderboardQuery = (params?: import('./api').LeaderboardQueryParams) =>
+  queryOptions({
+    queryKey: queryKeys.leaderboard(params),
+    queryFn: () => import('./api').then((m) => m.fetchLeaderboard(params)),
+    staleTime: 5_000,
+  });
 
 export const statusQuery = (catalogPath: string) =>
   queryOptions({

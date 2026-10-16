@@ -1452,3 +1452,79 @@ export async function fetchRunMargins(
   const query = fold != null ? `?fold=${fold}` : '';
   return parseJson(await fetch(runPath(batchId, cellId, `/margins${query}`)));
 }
+
+export interface LeaderboardProvenance {
+  code_revision?: string;
+  code_dirty?: boolean;
+  revision_source?: string;
+  lock_sha256?: string;
+  python_version?: string;
+  nautilus_version?: string;
+  settings_sha256?: string;
+  catalog_fingerprint?: string;
+  catalog_files?: number;
+  preregistration_sha256?: string;
+  data_quality?: string;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  recorded_at: string;
+  robot: string;
+  instrument_id: string;
+  timeframe: string;
+  bar_count: number;
+  source: string;
+  run_type: string;
+  folds: number;
+  oos_return: string | null;
+  buy_and_hold_return: string | null;
+  excess_return: string | null;
+  sharpe_ratio: string | null;
+  max_drawdown: string | null;
+  fills: number | null;
+  fees_paid: string | null;
+  profitable_folds: string | null;
+  ending_balance: string | null;
+  strategy_params: Record<string, unknown>;
+  run_args: Record<string, unknown>;
+  reproduce_command: string;
+  provenance?: LeaderboardProvenance | null;
+  notes?: string;
+}
+
+export interface LeaderboardResponse {
+  entries: LeaderboardEntry[];
+  total: number;
+  sort_by: string;
+}
+
+export interface LeaderboardQueryParams {
+  limit?: number;
+  sort_by?: 'oos' | 'excess' | 'sharpe' | 'drawdown' | 'fills' | 'date';
+  robot?: string;
+  instrument?: string;
+  timeframe?: string;
+}
+
+export async function fetchLeaderboard(
+  params?: LeaderboardQueryParams,
+): Promise<LeaderboardResponse> {
+  const query = new URLSearchParams();
+  if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.sort_by) query.set('sort_by', params.sort_by);
+  if (params?.robot) query.set('robot', params.robot);
+  if (params?.instrument) query.set('instrument', params.instrument);
+  if (params?.timeframe) query.set('timeframe', params.timeframe);
+
+  const qs = query.toString();
+  return parseJson(await fetch(apiUrl(`/api/leaderboard${qs ? `?${qs}` : ''}`)));
+}
+
+export async function fetchLeaderboardEntry(entryId: string): Promise<LeaderboardEntry> {
+  return parseJson(await fetch(apiUrl(`/api/leaderboard/${encodeURIComponent(entryId)}`)));
+}
+
+export async function syncLeaderboard(): Promise<{ status: string; message: string }> {
+  return parseJson(await fetch(apiUrl('/api/leaderboard/sync'), { method: 'POST' }));
+}

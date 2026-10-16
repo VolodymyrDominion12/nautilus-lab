@@ -466,7 +466,5 @@ def test_oos_warmup_covers_the_global_trend_gate() -> None:
     assert oos_request.trade_start is not None
     warm = [bar for bar in oos_bars if bar.ts_utc < oos_request.trade_start]
     step = bars[1].ts_utc - bars[0].ts_utc
-    assert len(warm) == GlobalTrendParams(
-        enabled=True, timeframe="1h", period=2
-    ).warmup_bars(step)
+    assert len(warm) == GlobalTrendParams(enabled=True, timeframe="1h", period=2).warmup_bars(step)
     assert len(warm) > 50

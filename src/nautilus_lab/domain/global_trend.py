@@ -163,12 +163,16 @@ class GlobalTrendGate:
         if not self._params.enabled:
             return
         key = self._key(bar.ts_utc)
-        if self._current_key is not None and key != self._current_key:
+        if (
+            self._current_key is not None
+            and key != self._current_key
+            and self._current_close is not None
+            and self._current_close > 0
+        ):
             # The previous bucket is complete: its last close is the HTF close.
-            if self._current_close is not None and self._current_close > 0:
-                self._closes.append(self._current_close)
-                self._ema.update(self._current_close)
-                self._completed += 1
+            self._closes.append(self._current_close)
+            self._ema.update(self._current_close)
+            self._completed += 1
         self._current_key = key
         self._current_close = bar.close
         self._last_close = bar.close

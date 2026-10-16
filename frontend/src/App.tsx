@@ -3,9 +3,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, WifiOff } from 'lucide-react';
 import { getSelectedCatalogPath, setSelectedCatalogPath } from './catalogSelection';
 import { catalogQuery, catalogsQuery, statusQuery, strategiesQuery } from './services/queries';
-import type { StrategySpec } from './services/api';
+import type { LeaderboardEntry, StrategySpec } from './services/api';
 import type { TabId } from './tabs';
 import { ResearchLab } from './components/ResearchLab';
+import { LeaderboardTab } from './components/leaderboard/LeaderboardTab';
 import { CatalogManager } from './components/CatalogManager';
 import { StrategyCatalog } from './components/StrategyCatalog';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -211,6 +212,18 @@ function AppContent() {
     toast.success('Клітинка відкрита як кандидат: PBO увімкнено, додайте гіпотезу', cfg.notes);
   };
 
+  const handleRunLeaderboardInLab = (entry: LeaderboardEntry) => {
+    setExternalHypoConfig({
+      robot: entry.robot,
+      instrumentId: entry.instrument_id,
+      folds: entry.folds,
+      notes: entry.notes || `Відтворення лідерборду ${entry.robot} (${entry.timeframe})`,
+    });
+    setSelectedRobot(entry.robot);
+    setActiveTab('research');
+    toast.success(`Бектест ${entry.robot} завантажено в Research Lab`, `${entry.instrument_id} · ${entry.timeframe}`);
+  };
+
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-[#080c14] text-gray-100 font-sans">
       <CommandPalette
@@ -294,6 +307,9 @@ function AppContent() {
                 externalConfig={externalHypoConfig}
                 onClearExternalConfig={() => setExternalHypoConfig(null)}
               />
+            )}
+            {activeTab === 'leaderboard' && (
+              <LeaderboardTab onRunInLab={handleRunLeaderboardInLab} />
             )}
             {activeTab === 'catalog' && (
               <CatalogManager

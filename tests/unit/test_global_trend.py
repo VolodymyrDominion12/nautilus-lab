@@ -199,5 +199,5 @@ def test_invalid_params_fail(kwargs: dict[str, object]) -> None:
 
 
 def test_bad_enum_strings_fail() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Input should be"):
         GlobalTrendParams(ma="wma")  # type: ignore[arg-type]

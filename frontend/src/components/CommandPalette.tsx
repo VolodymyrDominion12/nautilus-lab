@@ -12,6 +12,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  Trophy,
   Zap,
 } from 'lucide-react';
 import type { StrategySpec } from '../services/api';
@@ -77,6 +78,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         icon: <Layers className="w-4 h-4 text-blue-400" />,
         action: () => {
           onNavigateTab('research');
+          onClose();
+        },
+      },
+      {
+        id: 'tab-leaderboard',
+        category: 'Tabs',
+        title: 'Leaderboard',
+        subtitle: 'Ranked backtest runs, OOS alpha, reproducibility commands',
+        icon: <Trophy className="w-4 h-4 text-amber-400" />,
+        action: () => {
+          onNavigateTab('leaderboard');
           onClose();
         },
       },

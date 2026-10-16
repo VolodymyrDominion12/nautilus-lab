@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import {
-  Award,
   Filter,
   Flame,
   GitBranch,

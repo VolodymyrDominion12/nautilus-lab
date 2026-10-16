@@ -14,6 +14,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Trophy,
   Zap,
 } from 'lucide-react';
 
@@ -99,6 +100,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
           ) : undefined,
         )}
+        {navButton('leaderboard', 'Leaderboard', <Trophy className="w-4 h-4 text-amber-400" />)}
         {navButton('batch', 'Пакетний бектест', <Table className="w-4 h-4" />)}
         {navButton(
           'catalog',

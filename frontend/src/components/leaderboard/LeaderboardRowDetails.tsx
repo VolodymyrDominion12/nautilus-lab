@@ -16,7 +16,6 @@ export const LeaderboardRowDetails: React.FC<LeaderboardRowDetailsProps> = ({ en
   };
 
   const params = Object.entries(entry.strategy_params || {});
-  const runArgs = Object.entries(entry.run_args || {});
   const prov = entry.provenance;
 
   return (

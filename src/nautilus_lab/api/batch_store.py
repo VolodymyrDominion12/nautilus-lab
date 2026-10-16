@@ -34,7 +34,13 @@ from typing import Any, cast
 
 from nautilus_lab.application.batch_plan import BatchCell, BatchRequest, BatchVariant, safe_id
 from nautilus_lab.application.decision_digest import build_digest
-from nautilus_lab.application.trade_breakdown import cell_breakdown, reconstruct_trades, trade_row
+from nautilus_lab.application.trade_breakdown import (
+    Settlement,
+    cell_breakdown,
+    funding_costs,
+    reconstruct_trades,
+    trade_row,
+)
 from nautilus_lab.application.trade_history import reconstruct_trades_from_decisions
 from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
 from nautilus_lab.infrastructure.settings import Settings
@@ -102,7 +108,12 @@ def request_to_dict(request: BatchRequest) -> dict[str, Any]:
     # `asdict` already turns the variants into plain dicts; they are the recipe of the
     # batch, so they must round-trip or a restart would run a different matrix.
     payload["variants"] = [
-        {"name": variant.name, "env": dict(variant.env), "cost_profile": variant.cost_profile}
+        {
+            "name": variant.name,
+            "env": dict(variant.env),
+            "cost_profile": variant.cost_profile,
+            "hypothesis": variant.hypothesis,
+        }
         for variant in request.variants
     ]
     # The sweep is stored as it was typed, not expanded: `variants` above are the explicit
@@ -135,6 +146,7 @@ def request_from_dict(payload: dict[str, Any]) -> BatchRequest:
                 name=str(item.get("name", "")),
                 env={str(k): str(v) for k, v in (item.get("env") or {}).items()},
                 cost_profile=(str(item["cost_profile"]) if item.get("cost_profile") else None),
+                hypothesis=str(item.get("hypothesis") or ""),
             )
             for item in (payload.get("variants") or [])
         ),
@@ -143,6 +155,9 @@ def request_from_dict(payload: dict[str, Any]) -> BatchRequest:
             for key, values in (payload.get("sweep") or {}).items()
         },
         models_dir=str(payload.get("models_dir", "models/clean")),
+        # Batches written before `market` existed were all spot.
+        market=str(payload.get("market") or "spot"),
+        hypothesis=str(payload.get("hypothesis") or ""),
     )
 
 
@@ -746,7 +761,7 @@ def build_cell_summary(cell_path: Path, cell: dict[str, Any], cfg: Settings) -> 
         trades.extend(reconstruct_trades_from_decisions(rows))
         index = fold.get("index")
         fold_records.extend((index if isinstance(index, int) else position, r) for r in rows)
-    breakdown = _breakdown(cell_path, fold_records, cfg)
+    breakdown = _breakdown(cell_path, fold_records, cfg, cell)
     digest = build_digest(all_rows, max_narratives=0, no_signal_samples=0) if all_rows else None
     bars = [r for r in all_rows if r.get("kind", "bar_decision") == "bar_decision"]
     untraced = sum(
@@ -782,6 +797,7 @@ def build_cell_summary(cell_path: Path, cell: dict[str, Any], cfg: Settings) -> 
             "mean_breakeven_cost": multi.get("mean_breakeven_cost"),
             "cost_headroom": multi.get("cost_headroom"),
             "risk_breaches": multi.get("risk_breaches") or _collect_breaches(multi, result),
+            "mean_oos_after_funding": _mean_after_funding(multi, result, breakdown),
         },
         # The promotion verdict travels with the row (docs/35 §3): it is what the table is
         # for. Cells never run the overfitting audit, so their `pbo`/`dsr` checks read
@@ -815,25 +831,87 @@ TRADES_FILE = "trades.jsonl"
 
 
 def _breakdown(
-    cell_path: Path, fold_records: list[tuple[int, dict[str, Any]]], cfg: Settings
+    cell_path: Path,
+    fold_records: list[tuple[int, dict[str, Any]]],
+    cfg: Settings,
+    cell: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Rebuild round trips from the trace, write them as `trades.jsonl`, return the totals.
 
     None when the trace has no records (a blocked or failed cell). A cell whose trace cannot
     be paired (an older log format) is reported, never allowed to break the batch table.
+    A perpetual cell also gets the funding its positions paid (`funding_cost`): the
+    directional robots do not book it in the backtest, so without this a perp result would
+    look better than the account would have been.
     """
     if not fold_records:
         return None
+    instrument = str((cell or {}).get("instrument_id") or "")
+    perp = instrument.endswith("-PERP.SIM")
+    taker = cfg.usdm_taker_fee if perp else cfg.spot_taker_fee
     try:
-        rec = reconstruct_trades(fold_records, taker_fee=float(cfg.spot_taker_fee))
+        rec = reconstruct_trades(fold_records, taker_fee=float(taker))
     except (ValueError, TypeError) as exc:
         return {"error": f"trade reconstruction failed: {exc}"}
-    lines = [json.dumps(trade_row(trade), ensure_ascii=False) for trade in rec.trades]
+    settlements = _funding_settlements(cell or {}) if perp else None
+    costs = funding_costs(rec.trades, settlements) if settlements else None
+    lines = [
+        json.dumps(trade_row(trade, None if costs is None else costs[i]), ensure_ascii=False)
+        for i, trade in enumerate(rec.trades)
+    ]
     with contextlib.suppress(OSError):
         (cell_path / TRADES_FILE).write_text(
             "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
         )
-    return cell_breakdown(rec)
+    out = cell_breakdown(rec, costs)
+    if perp and costs is None:
+        out["funding_note"] = "no funding settlements found: perp result is before funding"
+    return out
+
+
+def _funding_settlements(cell: dict[str, Any]) -> list[Settlement] | None:
+    """The cell's funding history from `<catalog>/data/funding/<SYMBOL>/funding.parquet`.
+
+    The catalog path is repo-relative, as everywhere in a batch, and the API and the batch
+    process both run from the repo root. Missing or unreadable history gives None: the
+    summary then says the perp result is before funding instead of inventing a zero.
+    """
+    catalog, symbol = cell.get("catalog"), cell.get("symbol")
+    if not catalog or not symbol:
+        return None
+    try:
+        from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
+
+        snapshots = ParquetFundingCatalog(Path(str(catalog))).load(symbol=str(symbol))
+    except (OSError, ValueError, ImportError):
+        return None
+    return [
+        (
+            snap.ts_utc,
+            float(snap.funding_rate),
+            None if snap.mark_price is None else float(snap.mark_price),
+        )
+        for snap in snapshots
+    ] or None
+
+
+def _mean_after_funding(
+    multi: dict[str, Any], result: dict[str, Any] | None, breakdown: dict[str, Any] | None
+) -> float | None:
+    """Mean OOS fold return with each fold's funding taken out (perp cells only)."""
+    by_fold = (breakdown or {}).get("funding_by_fold")
+    equity = _num((result or {}).get("starting_equity"))
+    folds = multi.get("folds") or []
+    if not isinstance(by_fold, dict) or not equity or not folds:
+        return None
+    values = []
+    for fold in folds:
+        raw = _num(fold.get("oos_return_raw"))
+        if raw is None:
+            continue
+        paid = _num(by_fold.get(str(fold.get("index")))) or 0.0
+        values.append(raw - paid / equity)
+    return sum(values) / len(values) if values else None
 
 
 def _worst(multi: dict[str, Any]) -> float | None:

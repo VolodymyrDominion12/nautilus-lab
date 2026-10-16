@@ -1,6 +1,20 @@
 {
-  "robots": ["regime"],
-  "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT", "LTCUSDT"],
+  "robots": [
+    "regime"
+  ],
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT",
+    "ADAUSDT",
+    "AVAXUSDT",
+    "DOTUSDT",
+    "LINKUSDT",
+    "LTCUSDT"
+  ],
   "interval": "4h",
   "catalog": "catalog_spot_4h",
   "folds": 12,
@@ -9,11 +23,45 @@
   "days": 2200,
   "embargo_bars": 10,
   "label": "p1_regime_4h_fixed",
-  "env": {"BACKTEST_DAYS": "2200"},
+  "env": {
+    "BACKTEST_DAYS": "2200"
+  },
   "variants": [
-    {"name": "R0_grid", "env": {"PARAM_SEARCH": "true"}},
-    {"name": "R1_fixed40", "env": {"PARAM_SEARCH": "false", "DONCHIAN_PERIOD": "40", "REGIME_LEGS": "uptrend,downtrend"}},
-    {"name": "R3_fixed40_gt", "env": {"PARAM_SEARCH": "false", "DONCHIAN_PERIOD": "40", "REGIME_LEGS": "uptrend,downtrend", "ENTRY_FILTER_GLOBAL_TREND": "true"}},
-    {"name": "R4_fixed40_long", "env": {"PARAM_SEARCH": "false", "DONCHIAN_PERIOD": "40", "REGIME_LEGS": "uptrend"}}
-  ]
+    {
+      "name": "R0_grid",
+      "env": {
+        "PARAM_SEARCH": "true"
+      },
+      "hypothesis": "baseline: grid-selected regime as in batch 2026-10-13, reference for R1"
+    },
+    {
+      "name": "R1_fixed40",
+      "env": {
+        "PARAM_SEARCH": "false",
+        "DONCHIAN_PERIOD": "40",
+        "REGIME_LEGS": "uptrend,downtrend"
+      },
+      "hypothesis": "fixed donchian 40 without range leg is no worse than R0 (mean OOS within 0.2pp) and beats vol-matched B&H"
+    },
+    {
+      "name": "R3_fixed40_gt",
+      "env": {
+        "PARAM_SEARCH": "false",
+        "DONCHIAN_PERIOD": "40",
+        "REGIME_LEGS": "uptrend,downtrend",
+        "ENTRY_FILTER_GLOBAL_TREND": "true"
+      },
+      "hypothesis": "1d SMA200 global-trend gate improves R1 mean OOS and cuts the worst fold"
+    },
+    {
+      "name": "R4_fixed40_long",
+      "env": {
+        "PARAM_SEARCH": "false",
+        "DONCHIAN_PERIOD": "40",
+        "REGIME_LEGS": "uptrend"
+      },
+      "hypothesis": "long-only keeps >=60% of R1 net: shorts are not the whole edge"
+    }
+  ],
+  "hypothesis": "P1 regime 4h spot 2023-09..2026-10: OOS mean beats vol-matched buy&hold in >=60% of 11 coins, breakeven >=12 bps"
 }

@@ -108,6 +108,8 @@ class BatchVariant:
     env: dict[str, str] = field(default_factory=dict)
     #: Cost scenario for this variant only; None = the batch's own (see `cost_overrides`).
     cost_profile: str | None = None
+    #: What this variant should show out of sample, and why; "" = the batch's hypothesis.
+    hypothesis: str = ""
 
     def __post_init__(self) -> None:
         if not _VARIANT_RE.match(self.name):
@@ -156,10 +158,22 @@ class BatchRequest:
     #: reason a parameter sweep was asked for in the first place.
     sweep: dict[str, tuple[str, ...]] = field(default_factory=dict)
     models_dir: str = "models/clean"
+    #: `spot` (the `<BASE>/USDT.SIM` pair) or `perp` (`<SYMBOL>-PERP.SIM`, USD-M fees) for
+    #: the single-instrument robots. Perps are where shorts are real and cheaper (4.5 vs
+    #: 7.5 bps taker); the cell summary then takes funding out post hoc (batch_store).
+    #: `funding` and `pairs` keep their own instrument rules.
+    market: str = "spot"
+    #: Pre-registration (docs/27 R-2): when set, every cell writes its walk-forward terms
+    #: down before its first backtest (`preregister` in the cell's config.json), so a matching
+    #: cell can reach `preregistered=pass` instead of `not measured`. Each cell's text gets
+    #: its cell id appended, because one registration describes one dataset.
+    hypothesis: str = ""
 
     def __post_init__(self) -> None:
         if not self.robots:
             raise ValueError("a batch needs at least one robot")
+        if self.market not in ("spot", "perp"):
+            raise ValueError(f"market must be 'spot' or 'perp', not {self.market!r}")
         if not self.symbols:
             raise ValueError("a batch needs at least one symbol")
         for symbol in self.symbols:
@@ -219,6 +233,8 @@ class BatchCell:
     #: Cost scenario this cell will pay (`domain/fees.py`), None = whatever the machine's
     #: settings say. Kept beside `env` so the table can name it without decoding env.
     cost_profile: str | None = None
+    #: Hypothesis this cell registers before it runs; None = an exploratory cell.
+    hypothesis: str | None = None
 
     @property
     def runnable(self) -> bool:
@@ -427,6 +443,15 @@ def _cell_env(request: BatchRequest, variant: BatchVariant | None) -> dict[str, 
     return env
 
 
+def cell_hypothesis(
+    request: BatchRequest, variant: BatchVariant | None, cell_id: str
+) -> str | None:
+    """The variant's hypothesis, else the batch's, tagged with the cell; None if neither."""
+    text = (variant.hypothesis if variant is not None and variant.hypothesis else "").strip()
+    text = text or request.hypothesis.strip()
+    return f"{text} [{cell_id}]" if text else None
+
+
 def cell_cost_profile(request: BatchRequest, variant: BatchVariant | None) -> str | None:
     """The cost scenario of one cell: the variant's if it names one, else the batch's."""
     if variant is not None and variant.cost_profile:
@@ -466,18 +491,27 @@ def _single_cell(
             blocked = f"model {path} not found (train it with an end before the first OOS bar)"
     if blocked is None and not exists(catalog):
         blocked = f"catalog {catalog} not found"
+    instrument = (
+        perp_instrument(symbol)
+        if request.market == "perp" and robot != "funding"
+        else spot_instrument(symbol)
+    )
     if blocked is None and series is not None:
-        blocked = _missing_series(robot, symbol, catalog, interval, exists=exists, series=series)
+        blocked = _missing_series(
+            robot, symbol, catalog, interval, exists=exists, series=series, instrument=instrument
+        )
+    cell_id = f"{robot}_{base}{_variant_suffix(variant)}"
     return BatchCell(
-        cell_id=f"{robot}_{base}{_variant_suffix(variant)}",
+        cell_id=cell_id,
         robot=robot,
         symbol=symbol,
-        instrument_id=spot_instrument(symbol),
+        instrument_id=instrument,
         catalog=catalog,
         interval=interval,
         env=env,
         blocked=blocked,
         cost_profile=cell_cost_profile(request, variant),
+        hypothesis=cell_hypothesis(request, variant, cell_id),
     )
 
 
@@ -489,6 +523,7 @@ def _missing_series(
     *,
     exists: Callable[[str], bool],
     series: Callable[[str, str, str], bool],
+    instrument: str | None = None,
 ) -> str | None:
     """The first data series this cell needs and does not have, named before it starts.
 
@@ -502,7 +537,7 @@ def _missing_series(
     there too. A missing settlement series is the quiet case — the run would finish `ok`
     with zero fills, which is the most expensive kind of empty result.
     """
-    instrument = spot_instrument(symbol)
+    instrument = instrument or spot_instrument(symbol)
     if not series(catalog, instrument, interval):
         return f"no {instrument} {interval} bars in {catalog} (ingest them first)"
     if robot != "funding":
@@ -547,8 +582,9 @@ def _pairs_cell(
                     f"{request.catalog} (ingest them first)"
                 )
                 break
+    cell_id = f"pairs_{base_asset(leg_a)}{base_asset(leg_b)}{_variant_suffix(variant)}"
     return BatchCell(
-        cell_id=f"pairs_{base_asset(leg_a)}{base_asset(leg_b)}{_variant_suffix(variant)}",
+        cell_id=cell_id,
         robot="pairs",
         symbol=leg_a,
         instrument_id=spot_instrument(leg_a),
@@ -557,6 +593,7 @@ def _pairs_cell(
         env=env,
         blocked=blocked,
         cost_profile=cell_cost_profile(request, variant),
+        hypothesis=cell_hypothesis(request, variant, cell_id),
     )
 
 
@@ -577,6 +614,8 @@ def research_job_config(request: BatchRequest, cell: BatchCell) -> dict[str, obj
         payload["days"] = request.days
     if request.embargo_bars is not None:
         payload["embargo_bars"] = request.embargo_bars
+    if cell.hypothesis:
+        payload["preregister"] = cell.hypothesis  # read by api/run_research_job.py
     return payload
 
 

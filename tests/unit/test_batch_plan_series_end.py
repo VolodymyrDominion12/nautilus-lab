@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+import pytest
+
 from nautilus_lab.application.batch_plan import BatchRequest, parse_parquet_end, plan_cells
 
 END = datetime(2026, 10, 6, 23, 59, 59, tzinfo=UTC)
@@ -69,3 +71,61 @@ def test_an_unknown_end_never_blocks() -> None:
 def test_without_a_probe_the_plan_is_unchanged() -> None:
     request = BatchRequest(robots=("ema",), symbols=("BTCUSDT", "MATICUSDT"))
     assert all(cell.runnable for cell in plan_cells(request, exists=_all_exist))
+
+
+# ---- market: spot or perp ----------------------------------------------------------------
+
+
+def test_perp_market_runs_single_instrument_robots_on_the_perpetual() -> None:
+    request = BatchRequest(robots=("regime", "funding"), symbols=("BTCUSDT",), market="perp")
+    cells = {cell.cell_id: cell for cell in plan_cells(request, exists=_all_exist)}
+    assert cells["regime_BTC"].instrument_id == "BTCUSDT-PERP.SIM"
+    # the funding robot keeps its own spot-and-perp pair
+    assert cells["funding_BTC"].instrument_id == "BTC/USDT.SIM"
+
+
+def test_perp_series_is_checked_on_the_perpetual() -> None:
+    request = BatchRequest(robots=("regime",), symbols=("LTCUSDT",), market="perp")
+    (cell,) = plan_cells(
+        request,
+        exists=_all_exist,
+        series=lambda _catalog, instrument, _interval: not instrument.endswith("-PERP.SIM"),
+    )
+    assert cell.blocked is not None
+    assert "LTCUSDT-PERP.SIM" in cell.blocked
+
+
+def test_unknown_market_is_refused() -> None:
+    with pytest.raises(ValueError, match="market must be"):
+        BatchRequest(robots=("regime",), symbols=("BTCUSDT",), market="margin")
+
+
+# ---- pre-registration from a batch (plan 2026-10-16, P0.5) -------------------------------
+
+
+def test_cells_register_the_batch_hypothesis_tagged_with_their_id() -> None:
+    from nautilus_lab.application.batch_plan import BatchVariant, research_job_config
+
+    request = BatchRequest(
+        robots=("regime",),
+        symbols=("BTCUSDT",),
+        hypothesis="fixed donchian 40 beats VM buy&hold",
+        variants=(
+            BatchVariant(name="R1", env={"PARAM_SEARCH": "false"}),
+            BatchVariant(name="R4", env={"REGIME_LEGS": "uptrend"}, hypothesis="longs alone"),
+        ),
+    )
+    cells = {cell.cell_id: cell for cell in plan_cells(request, exists=_all_exist)}
+    r1, r4 = cells["regime_BTC__R1"], cells["regime_BTC__R4"]
+    assert r1.hypothesis == "fixed donchian 40 beats VM buy&hold [regime_BTC__R1]"
+    assert r4.hypothesis == "longs alone [regime_BTC__R4]"
+    assert research_job_config(request, r1)["preregister"] == r1.hypothesis
+
+
+def test_a_batch_without_a_hypothesis_stays_exploratory() -> None:
+    from nautilus_lab.application.batch_plan import research_job_config
+
+    request = BatchRequest(robots=("regime",), symbols=("BTCUSDT",))
+    (cell,) = plan_cells(request, exists=_all_exist)
+    assert cell.hypothesis is None
+    assert "preregister" not in research_job_config(request, cell)

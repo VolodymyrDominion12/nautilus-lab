@@ -79,6 +79,8 @@ class VariantRequest(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     #: Cost scenario for this variant only, e.g. the same hypothesis at stressed costs.
     cost_profile: str | None = None
+    #: What this variant should show OOS; "" = the batch's `hypothesis`.
+    hypothesis: str = ""
 
 
 class BatchRunRequest(BaseModel):
@@ -105,6 +107,10 @@ class BatchRunRequest(BaseModel):
     #: The matrix grows by a dimension, not by a second batch — and the plan preview shows
     #: the cells it will create before anything starts.
     sweep: dict[str, list[str]] = Field(default_factory=dict)
+    #: `spot` or `perp` for the single-instrument robots (`BatchRequest.market`).
+    market: str = "spot"
+    #: Pre-registration text: when set, every cell registers its terms before it runs.
+    hypothesis: str = ""
     dry_run: bool = False
 
 
@@ -138,10 +144,13 @@ def _to_request(req: BatchRunRequest) -> BatchRequest:
                     name=variant.name,
                     env=dict(variant.env),
                     cost_profile=variant.cost_profile,
+                    hypothesis=variant.hypothesis,
                 )
                 for variant in req.variants
             ),
             sweep={key: tuple(values) for key, values in req.sweep.items()},
+            market=req.market,
+            hypothesis=req.hypothesis,
         )
     except (ValueError, InvalidOperation) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -190,6 +199,9 @@ def _plan_payload(cells: list[BatchCell]) -> list[dict[str, Any]]:
             "interval": cell.interval,
             "catalog": cell.catalog,
             "cost_profile": cell.cost_profile,
+            # None = exploratory: the cell will not register terms, so its gate reads
+            # `preregistered=not measured` at best.
+            "hypothesis": cell.hypothesis,
             "runnable": cell.runnable,
             "blocked": cell.blocked,
             # The overrides of this cell, so the preview shows which sweep value it carries

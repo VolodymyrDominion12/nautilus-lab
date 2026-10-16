@@ -302,6 +302,9 @@ def _cell_from_dict(payload: dict[str, Any]) -> BatchCell:
         interval=str(payload["interval"]),
         env={str(k): str(v) for k, v in (payload.get("env") or {}).items()},
         blocked=payload.get("blocked"),
+        cost_profile=payload.get("cost_profile"),
+        # Written by the plan; without it a cell would silently run unregistered.
+        hypothesis=payload.get("hypothesis"),
     )
 
 

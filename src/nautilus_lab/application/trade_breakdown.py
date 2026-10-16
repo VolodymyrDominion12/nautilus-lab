@@ -28,6 +28,7 @@ Floats are fine here: this is reporting over finished runs, not a trading decisi
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -429,7 +430,38 @@ def render_cell_markdown(name: str, rec: Reconstruction, trades: Sequence[Trade]
 TOP_TRADES = 10
 
 
-def trade_row(trade: Trade) -> dict[str, Any]:
+#: One funding settlement as the breakdown needs it: (time, rate, mark price or None).
+Settlement = tuple[datetime, float, float | None]
+
+
+def funding_cost(trade: Trade, settlements: Sequence[Settlement]) -> float:
+    """Funding the position paid (+) or received (-) over its life, account currency.
+
+    A perpetual settles funding every 8h on the position open at that instant: a long pays
+    `rate x notional` when the rate is positive, a short receives it. The backtest itself
+    does not book funding for a directional robot (only the `funding` robot models it), so
+    this is the post-hoc correction that turns a perp cell's net into what the account
+    would have kept. Notional uses the settlement's mark price when the history has one,
+    else the entry price (Binance serves no mark before late 2023). `settlements` must be
+    sorted by time; a settlement exactly at the entry fill is not paid, one at the exit is.
+    """
+    times = [item[0] for item in settlements]
+    lo = bisect_right(times, trade.ts_in)
+    hi = bisect_right(times, trade.ts_out)
+    cost = 0.0
+    for _, rate, mark in settlements[lo:hi]:
+        price = mark if mark is not None and mark > 0 else trade.px_in
+        cost += trade.direction * rate * trade.qty * price
+    return cost
+
+
+def funding_costs(trades: Sequence[Trade], settlements: Sequence[Settlement]) -> list[float]:
+    """`funding_cost` for every trade, against one sorted settlement series."""
+    ordered = sorted(settlements, key=lambda item: item[0])
+    return [funding_cost(trade, ordered) for trade in trades]
+
+
+def trade_row(trade: Trade, funding: float | None = None) -> dict[str, Any]:
     """One trade as a JSON-able row (`trades.jsonl` of a batch cell)."""
     return {
         "fold": trade.fold,
@@ -449,6 +481,7 @@ def trade_row(trade: Trade) -> dict[str, Any]:
         "net": round(trade.net, 4),
         "r_multiple": None if trade.r_multiple is None else round(trade.r_multiple, 4),
         "hold_hours": round(trade.hold_hours, 2),
+        "funding": None if funding is None else round(funding, 4),
     }
 
 
@@ -466,7 +499,7 @@ def _group_payload(rows: Sequence[GroupRow]) -> dict[str, dict[str, Any]]:
     }
 
 
-def cell_breakdown(rec: Reconstruction) -> dict[str, Any]:
+def cell_breakdown(rec: Reconstruction, funding: Sequence[float] | None = None) -> dict[str, Any]:
     """The per-trade facts a batch table needs, without reading the trace again.
 
     What the 2026-10-12/13 analysis had to rebuild by hand from ~18k decision files: long
@@ -478,6 +511,19 @@ def cell_breakdown(rec: Reconstruction) -> dict[str, Any]:
     trades = rec.trades
     if not trades:
         return {"trades": 0, "open_at_end": rec.open_at_end}
+    extra: dict[str, Any] = {}
+    if funding is not None:
+        if len(funding) != len(trades):
+            raise ValueError("one funding cost per trade")
+        by_fold: dict[int, float] = defaultdict(float)
+        for trade, cost in zip(trades, funding, strict=True):
+            by_fold[trade.fold] += cost
+        total_funding = sum(funding)
+        extra = {
+            "funding": round(total_funding, 2),
+            "net_after_funding": round(sum(t.net for t in trades) - total_funding, 2),
+            "funding_by_fold": {str(k): round(v, 2) for k, v in sorted(by_fold.items())},
+        }
     nets = sorted((t.net for t in trades), reverse=True)
     total = sum(nets)
     top = sum(nets[:TOP_TRADES])
@@ -493,6 +539,7 @@ def cell_breakdown(rec: Reconstruction) -> dict[str, Any]:
         "top_net": round(top, 2),
         "rest_net": round(total - top, 2),
         "top_share": round(top / total, 3) if total > 0 else None,
+        **extra,
         "by_side": _group_payload(summarize(trades, lambda t: t.side)),
         "by_leg": _group_payload(summarize(trades, lambda t: t.leg or "n/a")),
         "by_exit": _group_payload(summarize(trades, lambda t: t.exit_reason)),

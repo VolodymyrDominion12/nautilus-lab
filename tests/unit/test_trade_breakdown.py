@@ -15,6 +15,8 @@ from nautilus_lab.application.trade_breakdown import (
     bars_from_records,
     cell_breakdown,
     fold_of,
+    funding_cost,
+    funding_costs,
     gate_features,
     profit_factor,
     reconstruct_trades,
@@ -282,3 +284,61 @@ def test_trade_row_is_json_ready() -> None:
     assert row["fold"] == 2
     assert row["side"] == "LONG"
     assert row["r_multiple"] == pytest.approx(2.0)
+
+
+# ---- post-hoc funding for perpetual cells ------------------------------------------------
+
+
+def _settle(
+    hours: int, rate: float, mark: float | None = None
+) -> tuple[datetime, float, float | None]:
+    return (T0 + timedelta(hours=hours), rate, mark)
+
+
+def _one_trade(side: str, hours_in: int, hours_out: int) -> Trade:
+    leg = "UptrendBreakout" if side == "LONG" else "DowntrendBreakout"
+    stop = 98.0 if side == "LONG" else 102.0
+    records = [
+        (0, _entry(hours_in, 100.0, "buy" if side == "LONG" else "sell", leg)),
+        (0, _fill(hours_in, 100.0, side, 2.0, stop)),
+        (0, _bar(hours_out, 100.0, "EXIT", signal_reason="exit")),
+    ]
+    (trade,) = reconstruct_trades(records, taker_fee=FEE).trades
+    return trade
+
+
+def test_a_long_pays_positive_funding_held_through_the_settlement() -> None:
+    trade = _one_trade("LONG", 1, 20)
+    # settlements at 8h and 16h are inside the trade, the one at 24h is after it
+    settlements = [_settle(8, 0.0001), _settle(16, 0.0001, mark=110.0), _settle(24, 0.0001)]
+    cost = funding_cost(trade, settlements)
+    assert cost == pytest.approx(0.0001 * 2.0 * 100.0 + 0.0001 * 2.0 * 110.0)
+
+
+def test_a_short_receives_positive_funding() -> None:
+    trade = _one_trade("SHORT", 1, 20)
+    assert funding_cost(trade, [_settle(8, 0.0001)]) == pytest.approx(-0.0001 * 2.0 * 100.0)
+
+
+def test_a_settlement_at_the_entry_instant_is_not_paid_one_at_the_exit_is() -> None:
+    trade = _one_trade("LONG", 8, 16)
+    assert funding_cost(trade, [_settle(8, 0.01)]) == 0.0
+    assert funding_cost(trade, [_settle(16, 0.01)]) == pytest.approx(0.01 * 2.0 * 100.0)
+
+
+def test_cell_breakdown_takes_funding_out_per_fold() -> None:
+    records = [
+        (0, _entry(1, 100.0, "buy", "UptrendBreakout")),
+        (0, _fill(1, 100.0, "LONG", 2.0, 98.0)),
+        (0, _bar(20, 104.0, "EXIT", signal_reason="exit")),
+        (1, _entry(30, 100.0, "buy", "UptrendBreakout")),
+        (1, _fill(30, 100.0, "LONG", 1.0, 98.0)),
+        (1, _bar(50, 101.0, "EXIT", signal_reason="exit")),
+    ]
+    rec = reconstruct_trades(records, taker_fee=FEE)
+    costs = funding_costs(rec.trades, [_settle(40, 0.001), _settle(8, 0.001)])
+    out = cell_breakdown(rec, costs)
+    assert out["funding_by_fold"] == {"0": pytest.approx(0.2), "1": pytest.approx(0.1)}
+    assert out["net_after_funding"] == pytest.approx(round(out["net"] - 0.3, 2), abs=0.011)
+    row = trade_row(rec.trades[0], costs[0])
+    assert row["funding"] == pytest.approx(0.2)

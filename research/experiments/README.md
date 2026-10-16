@@ -24,3 +24,27 @@ regime 4h, 11 монет (MATIC без даних після 2024-09-10 — пл
 Спот, комісія 7.5 bps, шорти без вартості позики — R4 показує, що лишається без них.
 Варіант на перпах (R2 у плані) — окремим рецептом, коли `catalog_perp_4h` має funding.
 Вирішальний бенчмарк — vol-matched buy&hold (гейт з 16.10 показує сирий buy&hold як `info`).
+
+## p1_regime_4h_perp.json (R2)
+
+Те саме, що R1/R3/R4, але на USDⓈ-M перпах (`"market": "perp"`, `catalog_perp_4h`, профіль
+`binance_vip0_bnb` → taker 5 bps). 10 монет: перп-барів LTC у каталозі немає, MATIC
+закінчується 2024-09. Кінець даних перпів — 2026-10-03.
+
+Funding у самому бектесті не нараховується (його моделює лише робот `funding`), тому summary
+клітинки віднімає його постфактум: `breakdown.funding` / `net_after_funding` /
+`funding_by_fold` і `numbers.mean_oos_after_funding`. Порівнювати R2 з R1 — саме за цим
+числом. Funding до кінця 2023 у Binance без mark price → там номінал рахується за ціною входу.
+
+## Преєстрація
+
+Обидва рецепти мають `hypothesis` (батчу і кожного варіанта). Кожна клітинка пише свої
+умови в `research/preregistrations/` **до** першого бектесту (`preregister` у її config.json),
+тож гейт може показати `preregistered=pass`. Без `hypothesis` клітинка — exploratory і
+`preregistered=not measured`. Змінив рецепт після запуску → нова гіпотеза, нова спроба.
+
+## Портфель
+
+Після батчу: `uv run python scripts/portfolio_replay.py reports/batches/<id> --variant R1_fixed40
+--heat 0.03 --per-side 4 --target-vol 0.12` — угоди всіх монет на одному рахунку з лімітами.
+Працює й на старих батчах (угоди відновлюються з decision-логів, без funding).

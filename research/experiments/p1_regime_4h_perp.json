@@ -1,0 +1,57 @@
+{
+  "robots": [
+    "regime"
+  ],
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT",
+    "ADAUSDT",
+    "AVAXUSDT",
+    "DOTUSDT",
+    "LINKUSDT"
+  ],
+  "market": "perp",
+  "interval": "4h",
+  "catalog": "catalog_perp_4h",
+  "cost_profile": "binance_vip0_bnb",
+  "folds": 12,
+  "is_fraction": "0.5",
+  "parallel": 4,
+  "days": 2200,
+  "embargo_bars": 10,
+  "label": "p1_regime_4h_perp",
+  "env": {
+    "BACKTEST_DAYS": "2200",
+    "PARAM_SEARCH": "false",
+    "DONCHIAN_PERIOD": "40"
+  },
+  "variants": [
+    {
+      "name": "R2_perp40",
+      "env": {
+        "REGIME_LEGS": "uptrend,downtrend"
+      },
+      "hypothesis": "perp execution (5 bps, funding post hoc) keeps R1's edge after funding"
+    },
+    {
+      "name": "R2_perp40_gt",
+      "env": {
+        "REGIME_LEGS": "uptrend,downtrend",
+        "ENTRY_FILTER_GLOBAL_TREND": "true"
+      },
+      "hypothesis": "global-trend gate improves R2_perp40 after funding"
+    },
+    {
+      "name": "R2_perp40_long",
+      "env": {
+        "REGIME_LEGS": "uptrend"
+      },
+      "hypothesis": "long-only perp keeps >=60% of R2_perp40 net after funding"
+    }
+  ],
+  "hypothesis": "P1 regime 4h on USD-M perps: OOS mean after funding beats vol-matched buy&hold in >=60% of 10 coins"
+}

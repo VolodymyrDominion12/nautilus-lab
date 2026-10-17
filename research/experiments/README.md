@@ -48,3 +48,25 @@ Funding у самому бектесті не нараховується (йог
 Після батчу: `uv run python scripts/portfolio_replay.py reports/batches/<id> --variant R1_fixed40
 --heat 0.03 --per-side 4 --target-vol 0.12` — угоди всіх монет на одному рахунку з лімітами.
 Працює й на старих батчах (угоди відновлюються з decision-логів, без funding).
+
+## p1_regime_4h_ensemble.json (план 16.10, ансамбль каналів + фільтр волатильності)
+
+Ті самі вікна, що й p1_regime_4h_fixed (2200 днів, 12 фолдів, IS 0.5), 4 спроби:
+
+| Варіант | Що |
+|---|---|
+| E20 / E40 / E90 | donchian 20 / 40 / 90 без IS-пошуку, без range-ноги — підсистеми ансамблю |
+| E40_vol | E40 + `ENTRY_FILTER_VOL_EXPANSION` (знахідка батчу 20261016_094231, тут — преєстрована перевірка) |
+
+Ансамбль не окремий робот, а три підсистеми на одному рахунку, кожна з 1/3 ризику:
+
+```bash
+uv run python scripts/portfolio_replay.py reports/batches/<id> --variant E20,E40,E90 --risk 0.00167
+uv run python scripts/portfolio_replay.py reports/batches/<id> --variant E40 --risk 0.005
+```
+
+Ліміт на бік рахує монету один раз, хоч би скільки підсистем її тримало. Гіпотеза: Sharpe
+денних прибутків ансамблю вищий, ніж E40 з тим самим сумарним ризиком, а MaxDD не гірший.
+
+Угоди, які walk-forward закрив кінцем фолду, з 17.10 є в `trades.jsonl` з причиною
+`FOLD_END` (SUMMARY_VERSION 6); без них угоди не сходились із доходністю фолдів.

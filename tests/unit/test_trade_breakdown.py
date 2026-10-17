@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from nautilus_lab.application.trade_breakdown import (
+    FOLD_END,
     TOP_TRADES,
     Trade,
     bars_from_records,
@@ -124,10 +125,31 @@ def test_reverse_closes_then_opens_and_open_positions_are_counted_per_fold() -> 
         (1, _fill(10, 90.0, "LONG", 1.0, 89.0)),
     ]
     rec = reconstruct_trades(records, taker_fee=FEE)
-    assert [t.exit_reason for t in rec.trades] == ["flip"]
+    assert [t.exit_reason for t in rec.trades][:1] == ["flip"]
     assert rec.trades[0].gross == pytest.approx(-3.0)
     assert rec.open_at_end == 2
     assert rec.outcomes["intrabar:ENTRY_FILLED"] == 3
+
+
+def test_a_position_open_at_the_fold_end_is_marked_at_the_last_close() -> None:
+    # The fold's OOS return counts the open position at the last close; the trades must
+    # add up to it (20261016_094231: ema's fold-end winners were missing from the rows).
+    records = [
+        (0, _entry(1, 100.0, "buy", "UptrendBreakout")),
+        (0, _fill(1, 100.0, "LONG", 1.0, 99.0)),
+        (0, _bar(2, 104.0, "HOLD_NOOP")),
+        (0, _bar(3, 110.0, "HOLD_NOOP")),
+        (1, _bar(10, 90.0, "NO_SIGNAL")),
+    ]
+    rec = reconstruct_trades(records, taker_fee=FEE)
+    (trade,) = rec.trades
+    assert trade.exit_reason == FOLD_END
+    assert trade.px_out == pytest.approx(110.0)
+    assert trade.fold == 0
+    assert rec.open_at_end == 1
+    # the next fold's bars never close the previous fold's position
+    assert trade.ts_out == T0 + timedelta(hours=3)
+    assert cell_breakdown(rec)["fold_end_net"] == pytest.approx(trade.net, abs=0.01)
 
 
 def test_fill_without_price_is_ignored() -> None:

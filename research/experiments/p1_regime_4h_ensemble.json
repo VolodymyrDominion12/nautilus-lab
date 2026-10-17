@@ -1,0 +1,69 @@
+{
+  "robots": [
+    "regime"
+  ],
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT",
+    "ADAUSDT",
+    "AVAXUSDT",
+    "DOTUSDT",
+    "LINKUSDT",
+    "LTCUSDT"
+  ],
+  "interval": "4h",
+  "catalog": "catalog_spot_4h",
+  "folds": 12,
+  "is_fraction": "0.5",
+  "parallel": 4,
+  "days": 2200,
+  "embargo_bars": 10,
+  "label": "p1_regime_4h_ensemble",
+  "env": {
+    "BACKTEST_DAYS": "2200"
+  },
+  "variants": [
+    {
+      "name": "E20",
+      "env": {
+        "PARAM_SEARCH": "false",
+        "REGIME_LEGS": "uptrend,downtrend",
+        "DONCHIAN_PERIOD": "20"
+      },
+      "hypothesis": "donchian 20 sub-system of the 20/40/90 ensemble; judged only as part of the ensemble replay"
+    },
+    {
+      "name": "E40",
+      "env": {
+        "PARAM_SEARCH": "false",
+        "REGIME_LEGS": "uptrend,downtrend",
+        "DONCHIAN_PERIOD": "40"
+      },
+      "hypothesis": "donchian 40 sub-system (= R1_fixed40); judged only as part of the ensemble replay"
+    },
+    {
+      "name": "E90",
+      "env": {
+        "PARAM_SEARCH": "false",
+        "REGIME_LEGS": "uptrend,downtrend",
+        "DONCHIAN_PERIOD": "90"
+      },
+      "hypothesis": "donchian 90 sub-system of the 20/40/90 ensemble; judged only as part of the ensemble replay"
+    },
+    {
+      "name": "E40_vol",
+      "env": {
+        "PARAM_SEARCH": "false",
+        "REGIME_LEGS": "uptrend,downtrend",
+        "DONCHIAN_PERIOD": "40",
+        "ENTRY_FILTER_VOL_EXPANSION": "true"
+      },
+      "hypothesis": "vol-expansion entry filter (seen in batch 20261016_094231: same mean, fold sd 1.95->1.02pp, worst fold -3.06->-0.33pp) keeps E40 mean OOS within 0.2pp and cuts the sd of the 11-coin fold portfolio by >=30% on the longer history"
+    }
+  ],
+  "hypothesis": "P1 regime 4h ensemble: equal-risk 20/40/90 replay (portfolio_replay --variant E20,E40,E90, risk 1/3 each) has a higher Sharpe of daily portfolio returns than E40 alone at the same total risk, and no worse max drawdown"
+}

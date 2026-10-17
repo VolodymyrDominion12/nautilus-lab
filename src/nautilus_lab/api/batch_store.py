@@ -955,7 +955,7 @@ def _collect_breaches(multi: dict[str, Any], result: dict[str, Any] | None) -> d
 
 #: Bumped whenever the shape of `summary.json` changes, so a cache written by an older
 #: build is rebuilt instead of served half-empty (docs/35 §3, item 19).
-SUMMARY_VERSION = 5
+SUMMARY_VERSION = 6
 
 
 #: Phases kept in a cell's compact timing record (the slowest ones; the full list stays

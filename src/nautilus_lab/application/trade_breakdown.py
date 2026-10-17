@@ -8,7 +8,8 @@ once, the same way for every cell:
 * trades are rebuilt from the backtest's own records: `ENTRY_FILLED` (venue price, size,
   fee, stop), then the first exit (`STOP_LOSS` at the venue's stop fill, or a bar
   `EXIT` / `REVERSE` / regime flatten at the bar close, which is where a zero-latency
-  backtest fills it);
+  backtest fills it); a position still open when its fold ends is closed at the fold's
+  last bar close with the reason `FOLD_END` — that is what the fold's OOS return counts;
 * every trade is tagged with the two entry-gate features of `domain/entry_filters.py`,
   computed by **the same** `EntryFilter` code over the trace's closed bars, so "aligned
   with the slow EMA" here means exactly what `ENTRY_FILTER_HTF_TREND=true` would test;
@@ -45,6 +46,11 @@ _ENTRY_OUTCOMES = frozenset({"ENTRY_OPENED", "REVERSE"})
 _BAR_EXIT_OUTCOMES = frozenset(
     {"EXIT", "REVERSE", "FLATTEN_REGIME_CHANGE", "RATCHET_EXIT", "TAKE_PROFIT", "MANUAL_CLOSE"}
 )
+#: Exit reason of a position the walk-forward closed because its fold ended. The fold's OOS
+#: return marks it at the last close, so the breakdown must too, or the trades stop adding
+#: up to the fold returns (20261016_094231: the ema cells' closed trades lost 59-71k while
+#: their folds made money — the winners were the trends still open at the fold's end).
+FOLD_END = "FOLD_END"
 #: Holding-time buckets, hours (upper bounds, inclusive).
 HOLD_BUCKETS: tuple[tuple[str, float], ...] = (
     ("<=2h", 2.0),
@@ -187,6 +193,7 @@ def reconstruct_trades(
     pending: dict[str, Any] = {}
     current: dict[str, Any] | None = None
     current_fold: int | None = None
+    last_close: tuple[datetime, float] | None = None  # the fold's latest bar close
     open_at_end = 0
 
     def close(ts: datetime, price: float, reason: str) -> None:
@@ -204,16 +211,27 @@ def reconstruct_trades(
         )
         current = None
 
+    def end_fold() -> None:
+        """A position open at the fold's end is marked at the fold's last close."""
+        nonlocal open_at_end, current
+        if current is None:
+            return
+        open_at_end += 1
+        if last_close is not None and last_close[0] >= current["ts_in"]:
+            close(last_close[0], last_close[1], FOLD_END)
+        current = None
+
     for fold, record in records:
         if fold != current_fold:
-            if current is not None:
-                open_at_end += 1  # a fold ends with the position still open
-            current, pending, current_fold = None, {}, fold
+            end_fold()
+            pending, current_fold, last_close = {}, fold, None
         kind = record.get("kind")
         outcome = str(record.get("outcome") or "")
         outcomes[f"{kind}:{outcome}"] += 1
         if kind == "bar_decision":
             close_px = _num(record.get("close"))
+            if close_px is not None:
+                last_close = (_ts(record.get("ts")), close_px)
             if current is not None and outcome in _BAR_EXIT_OUTCOMES and close_px is not None:
                 close(_ts(record.get("ts")), close_px, str(record.get("signal_reason") or outcome))
             if outcome in _ENTRY_OUTCOMES:
@@ -248,8 +266,7 @@ def reconstruct_trades(
             level = _num((_step_values(record, "stop_loss") or {}).get("level"))
             if level is not None:
                 close(_ts(record.get("ts")), level, "STOP_LOSS")
-    if current is not None:
-        open_at_end += 1
+    end_fold()
     return Reconstruction(tuple(trades), open_at_end, dict(outcomes))
 
 
@@ -391,7 +408,7 @@ def render_cell_markdown(name: str, rec: Reconstruction, trades: Sequence[Trade]
     rs = [r for r in (t.r_multiple for t in trades) if r is not None]
     top = sorted((t.net for t in trades), reverse=True)[:4]
     lines += [
-        f"- trades: {len(trades)} (open at a fold's end: {rec.open_at_end})",
+        f"- trades: {len(trades)} (closed by a fold's end: {rec.open_at_end})",
         f"- net {_fmt(sum(t.net for t in trades))} = gross {_fmt(sum(t.gross for t in trades))}"
         f" - fees {_fmt(sum(t.fees for t in trades))} (exit fee estimated at the taker rate)",
         f"- profit factor {_fmt(profit_factor(trades), 2)}; "
@@ -539,6 +556,8 @@ def cell_breakdown(rec: Reconstruction, funding: Sequence[float] | None = None) 
         "top_net": round(top, 2),
         "rest_net": round(total - top, 2),
         "top_share": round(top / total, 3) if total > 0 else None,
+        # How much of the result is positions the walk-forward closed at a fold's end.
+        "fold_end_net": round(sum(t.net for t in trades if t.exit_reason == FOLD_END), 2),
         **extra,
         "by_side": _group_payload(summarize(trades, lambda t: t.side)),
         "by_leg": _group_payload(summarize(trades, lambda t: t.leg or "n/a")),

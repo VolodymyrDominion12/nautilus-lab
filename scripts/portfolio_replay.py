@@ -8,6 +8,11 @@ funding) and runs them through `application/portfolio_replay.py`:
     uv run python scripts/portfolio_replay.py reports/batches/20261013_053010_batch --robot regime
     uv run python scripts/portfolio_replay.py <batch> --variant R1_fixed40 --heat 0.03 --per-side 4
     uv run python scripts/portfolio_replay.py <batch> --variant R1_fixed40 --target-vol 0.12
+    uv run python scripts/portfolio_replay.py <batch> --variant E20,E40,E90 --risk 0.00167
+
+Several variants (comma-separated) replay as one ensemble: every sub-system's trades go
+on the account, each at `--risk`, and the side cap counts a coin once however many
+sub-systems hold it. Give the ensemble the single system's total risk split evenly.
 
 Three replays are printed side by side: `uncapped` (every trade at the same risk — the sum
 of the separate accounts), `capped` (heat and side caps) and, with `--target-vol`,
@@ -37,11 +42,11 @@ from nautilus_lab.application.portfolio_replay import (
 from nautilus_lab.application.trade_breakdown import fold_of, reconstruct_trades, trade_row
 
 
-def _cell_matches(name: str, robot: str, variant: str | None) -> bool:
+def _cell_matches(name: str, robot: str, variants: frozenset[str]) -> bool:
     base, _, suffix = name.partition("__")
     if not base.startswith(f"{robot}_"):
         return False
-    return suffix == (variant or "")
+    return suffix in variants if variants else suffix == ""
 
 
 def _decision_records(decisions: Path) -> Iterator[tuple[int, Mapping[str, Any]]]:
@@ -78,7 +83,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1] if __doc__ else None)
     parser.add_argument("batch_dir", type=Path)
     parser.add_argument("--robot", default="regime")
-    parser.add_argument("--variant", default=None, help="Variant name (cell id after '__')")
+    parser.add_argument(
+        "--variant",
+        default=None,
+        help="Variant name (cell id after '__'); comma-separated = one ensemble",
+    )
     parser.add_argument("--risk", type=float, default=0.005, help="Risk per trade, share")
     parser.add_argument("--heat", type=float, default=0.03, help="Max open risk, share")
     parser.add_argument("--per-side", type=int, default=4, help="Max positions per side")
@@ -92,13 +101,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no cells directory in {args.batch_dir}", file=sys.stderr)
         return 2
     excluded = {item.strip() for item in args.exclude.split(",") if item.strip()}
+    variants = frozenset(v.strip() for v in (args.variant or "").split(",") if v.strip())
     trades: list[ReplayTrade] = []
     sources: list[str] = []
     for cell_dir in sorted(p for p in cells_root.iterdir() if p.is_dir()):
-        if cell_dir.name in excluded or not _cell_matches(cell_dir.name, args.robot, args.variant):
+        if cell_dir.name in excluded or not _cell_matches(cell_dir.name, args.robot, variants):
             continue
         rows, source = _cell_rows(cell_dir, args.taker_fee)
-        cell_trades = [t for t in (trade_from_row(cell_dir.name, r) for r in rows) if t]
+        group = cell_dir.name.partition("__")[0]  # the coin: one position for the side cap
+        cell_trades = [
+            t for t in (trade_from_row(cell_dir.name, r, group=group) for r in rows) if t
+        ]
         trades.extend(cell_trades)
         sources.append(f"- {cell_dir.name}: {len(cell_trades)} trades from {source}")
     if not trades:
@@ -149,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     lines += [f"| {cell} | {pnl:+,.0f} |" for cell, pnl in capped.pnl_by_cell.items()]
     lines += ["", "## Sources", "", *sources, ""]
     report = "\n".join(lines)
-    suffix = f"_{args.variant}" if args.variant else ""
+    suffix = f"_{'+'.join(sorted(variants))}" if variants else ""
     out = args.batch_dir / f"portfolio_{args.robot}{suffix}.md"
     out.write_text(report, encoding="utf-8")
     print(report)

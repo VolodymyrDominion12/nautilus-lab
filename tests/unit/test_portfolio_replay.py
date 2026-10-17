@@ -17,7 +17,9 @@ from nautilus_lab.application.portfolio_replay import (
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _t(cell: str, start_h: int, end_h: int, r: float, side: str = "LONG") -> ReplayTrade:
+def _t(
+    cell: str, start_h: int, end_h: int, r: float, side: str = "LONG", group: str | None = None
+) -> ReplayTrade:
     return ReplayTrade(
         cell=cell,
         side=side,
@@ -25,6 +27,7 @@ def _t(cell: str, start_h: int, end_h: int, r: float, side: str = "LONG") -> Rep
         ts_out=T0 + timedelta(hours=end_h),
         r_net=r,
         fold=0,
+        group=group,
     )
 
 
@@ -63,6 +66,22 @@ def test_side_cap_counts_longs_and_shorts_separately() -> None:
     result = replay(trades, rules)
     assert result.taken == 2
     assert result.skipped_side == 1
+
+
+def test_side_cap_counts_an_ensembles_sub_systems_on_one_coin_once() -> None:
+    # donchian 20/40/90 long BTC is one BTC position for the side cap, not three
+    rules = ReplayRules(risk_per_trade=0.002, max_heat=None, max_per_side=2)
+    trades = [
+        _t("regime_BTC__E20", 0, 10, 1.0, group="regime_BTC"),
+        _t("regime_BTC__E40", 1, 10, 1.0, group="regime_BTC"),
+        _t("regime_BTC__E90", 2, 10, 1.0, group="regime_BTC"),
+        _t("regime_ETH__E40", 3, 10, 1.0, group="regime_ETH"),
+        _t("regime_SOL__E40", 4, 10, 1.0, group="regime_SOL"),
+    ]
+    result = replay(trades, rules)
+    assert result.taken == 4
+    assert result.skipped_side == 1
+    assert "regime_SOL__E40" not in result.pnl_by_cell
 
 
 def test_drawdown_is_measured_on_realised_equity() -> None:

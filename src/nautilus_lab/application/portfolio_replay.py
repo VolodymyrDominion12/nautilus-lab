@@ -10,7 +10,8 @@ single timeline and re-sizes them under portfolio rules:
   entry, and keeps the R multiple it earned in its own cell (net of fees and, for perps,
   of funding);
 * **heat cap** — a new entry is skipped while the open trades already risk `max_heat`;
-* **side cap** — at most `max_per_side` positions long and as many short;
+* **side cap** — at most `max_per_side` instruments long and as many short (trades of one
+  `group` — the same coin traded by several sub-systems of an ensemble — count once);
 * **volatility target** — optional: the risk per trade is scaled by
   `target_vol / realised vol` of the replayed account's own past daily returns (look-back
   `vol_lookback_days`, factor clipped to `[min_scale, max_scale]`), so the account runs
@@ -49,6 +50,13 @@ class ReplayTrade:
     ts_out: datetime
     r_net: float  # net PnL (after fees and funding) over the cell's cash at risk
     fold: int | None = None
+    #: What the side cap counts: the instrument. Defaults to the cell, so a plain batch
+    #: counts each coin once; an ensemble (donchian 20/40/90 on one coin) shares a group.
+    group: str | None = None
+
+    @property
+    def group_key(self) -> str:
+        return self.group or self.cell
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +121,9 @@ class ReplayResult:
         return None if sd == 0 else sum(returns) / len(returns) / sd * math.sqrt(365.0)
 
 
-def trade_from_row(cell: str, row: Mapping[str, Any]) -> ReplayTrade | None:
+def trade_from_row(
+    cell: str, row: Mapping[str, Any], *, group: str | None = None
+) -> ReplayTrade | None:
     """A `trades.jsonl` row -> `ReplayTrade`; None when it has no stop or no prices."""
     try:
         px_in = float(row["px_in"])
@@ -134,6 +144,7 @@ def trade_from_row(cell: str, row: Mapping[str, Any]) -> ReplayTrade | None:
             ts_out=datetime.fromisoformat(str(row["ts_out"])),
             r_net=(net - funding) / risk,
             fold=int(fold) if isinstance(fold, int) else None,
+            group=group,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -154,7 +165,8 @@ def replay(trades: Iterable[ReplayTrade], rules: ReplayRules) -> ReplayResult:
     equity = rules.starting_equity
     peak = equity
     open_risk: dict[int, float] = {}  # trade index -> cash at risk
-    sides: dict[str, int] = defaultdict(int)
+    # side -> group -> open trades of that group on that side
+    sides: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     by_cell: dict[str, float] = defaultdict(float)
     by_fold: dict[int, float] = defaultdict(float)
     daily: dict[date, float] = defaultdict(float)
@@ -167,7 +179,10 @@ def replay(trades: Iterable[ReplayTrade], rules: ReplayRules) -> ReplayResult:
                 continue  # it was skipped at entry
             pnl = trade.r_net * risk
             equity += pnl
-            sides[trade.side] -= 1
+            groups = sides[trade.side]
+            groups[trade.group_key] -= 1
+            if groups[trade.group_key] <= 0:
+                del groups[trade.group_key]
             by_cell[trade.cell] += pnl
             if trade.fold is not None:
                 by_fold[trade.fold] += pnl
@@ -178,7 +193,12 @@ def replay(trades: Iterable[ReplayTrade], rules: ReplayRules) -> ReplayResult:
         if not math.isfinite(trade.r_net):
             result.skipped_no_risk += 1
             continue
-        if rules.max_per_side is not None and sides[trade.side] >= rules.max_per_side:
+        groups = sides[trade.side]
+        if (
+            rules.max_per_side is not None
+            and trade.group_key not in groups
+            and len(groups) >= rules.max_per_side
+        ):
             result.skipped_side += 1
             continue
         risk_share = rules.risk_per_trade * _vol_scale(daily, equity, ts.date(), rules)
@@ -187,7 +207,7 @@ def replay(trades: Iterable[ReplayTrade], rules: ReplayRules) -> ReplayResult:
             result.skipped_heat += 1
             continue
         open_risk[index] = risk_share * equity
-        sides[trade.side] += 1
+        groups[trade.group_key] += 1
         result.taken += 1
         result.peak_heat = max(result.peak_heat, heat + risk_share)
 

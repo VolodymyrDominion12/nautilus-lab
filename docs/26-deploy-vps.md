@@ -190,6 +190,38 @@ research тут вимкнено.
   треба, `reverse_proxy` проксіює його тим самим `handle`. Токен до WebSocket їде в
   `?token=`, бо браузер не вміє ставити заголовки на handshake; дашборд робить це сам.
 
+### SSH-тунель замість Tailscale
+
+Tailscale — зручний, але не єдиний шлях. Якщо ssh до сервера вже є, дашборд можна
+підняти на робочій станції як звичайний localhost — без нових портів на сервері:
+
+```bash
+VPS=lab@100.101.102.103 uv run lab tunnel          # -> http://127.0.0.1:8087
+uv run lab tunnel --vps lab@1.2.3.4 --print-only   # лише ssh-команда, без запуску
+make tunnel-vps VPS=lab@1.2.3.4                    # те саме через Makefile
+```
+
+Команда робить `ssh -N -T -L 127.0.0.1:8087:127.0.0.1:80 user@host`: тунель слухає лише
+loopback станції, а на сервері нічого не публікується. Прапорці: `--local-port` (типово
+8087, щоб не займати локальний API на 8000), `--remote-host` (адреса, на якій слухає
+Caddy; типово `127.0.0.1`), `--remote-port` (`80`), `--ssh-port`, `--identity`,
+`--print-only`. `Ctrl-C` закриває тунель — торгівлю на сервері це не чіпає.
+
+Дві умови, без яких тунель відкриється, а дашборд буде порожній:
+
+1. **`API_ALLOWED_ORIGINS`** у `.env` сервера мусить містити **точний** origin тунелю —
+   `http://127.0.0.1:8087`: бандл дашборда same-origin (`VITE_API_URL=same-origin`), тож
+   браузер шле саме цей `Origin`. Після зміни —
+   `docker compose -f deploy/docker-compose.yml restart api`.
+2. **`BIND_ADDR`**: якщо Caddy прив'язаний до Tailscale-адреси (`BIND_ADDR=100.x.y.z`),
+   `127.0.0.1` на сервері нічого не слухає — передайте `--remote-host 100.x.y.z`.
+
+Локальний фронтенд замість бандла сервера: `lab tunnel --local-port 8000` (за умови, що
+локальний API цей порт не займає), `cd frontend && npm run dev`, на сервері
+`API_ALLOWED_ORIGINS=http://localhost:5173`. Живий термінал при цьому все одно
+обслуговує VPS — тунель лише везе до нього запити. Замок `DASHBOARD_AUTH=on` працює й
+через тунель: Caddy попросить логін і пароль.
+
 ### Варіант із публічним доменом
 
 DNS `A lab.example.com → IP VPS`, потім у `deploy/.env`: `BIND_ADDR=0.0.0.0`,
@@ -433,9 +465,12 @@ curl -sI http://<BIND_ADDR>/ | grep -iE "content-security|strict-transport|x-fra
 
 | Симптом | Причина / що робити |
 |---|---|
-| Дашборд: `origin ... is not allowed` | `API_ALLOWED_ORIGINS` у `.env` не збігається з адресою в браузері; після зміни — `docker compose ... restart api` |
+| Дашборд: `origin ... is not allowed` | `API_ALLOWED_ORIGINS` у `.env` не збігається з адресою в браузері; після зміни — `docker compose ... restart api`. Через `lab tunnel` це зазвичай `http://127.0.0.1:8087`, а не `...:80` чи `localhost` |
+| `lab tunnel`: тунель стоїть, браузер на `http://127.0.0.1:8087` не відкриває дашборд | Caddy слухає `BIND_ADDR`, а не localhost: передайте `--remote-host 100.x.y.z` (або `127.0.0.1`, якщо `BIND_ADDR` такий) |
+| `lab tunnel`: `ssh exited with code 255: the tunnel is not established` | ssh не підключився або порт зайнятий (`ExitOnForwardFailure`): перевірте `--vps`/`--ssh-port`/`--identity` і що `--local-port` вільний на станції |
 | Дашборд: `missing or invalid API token` | `API_TOKEN` у `.env` і `deploy/.env` різні; змінили токен — треба `up -d --build` (він вшивається в бандл) |
 | `... is disabled on this server (LAB_ROLE=paper)` | Так і задумано: research/ingest/ML — на станції; дозволені write-и перелічені в §4 |
+| У лозі `live paper boot: idle`, хоч у `data/paper/sessions/` лежать журнали | `LIVE_PAPER_SESSIONS_DIR` і `LIVE_PAPER_PORTFOLIO` порожні — типово тому, що на сервер поклали робочий `.env` замість `deploy/vps.env.example` (docs §4): сесії йдуть лише в пам'ять, після рестарту не відновлюються. Задайте `LIVE_PAPER_SESSIONS_DIR=data/paper/sessions` і `LIVE_PAPER_PORTFOLIO=deploy/paper_portfolio.yaml`, потім `docker compose ... restart api` — boot підхопить незавершені журнали |
 | У лозі `live paper boot: resume_failed` | Журнал посилається на робота, якого термінал не вміє будувати; Start нового сеансу з UI |
 | У лозі `live paper boot: skipped <name>: stopped by a person` | Так і задумано: Stop остаточний, і портфель таку сесію не піднімає — перейменуйте, щоб почати знову |
 | У лозі `live paper boot: portfolio error: ...` | `deploy/paper_portfolio.yaml` не розібрався (найчастіше — робот або ключ, яких термінал не знає): поки помилка не зникне, оголошений портфель не піднімається |

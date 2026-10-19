@@ -13,6 +13,7 @@ uv run lab <команда> [прапорці]
 | `lab ingest` | Завантажує публічні klines (або фандинг, aggTrades, знімки книги) у Parquet-каталог | 1 |
 | `lab research` | Бектест/симуляція (основний шлях; за замовчуванням walk-forward) | 1 |
 | `lab paper` | Paper-сесія: заморожена конфігурація вперед, повний реєстр філів, ордери нікуди не йдуть | 1 |
+| `lab tunnel` | SSH-тунель до paper-дашборда на VPS: `http://127.0.0.1:8087`, нічого не публікується на сервері | 1 |
 | `lab scan` | Дослідницькі сканери (трикутний арбітраж) | 1 |
 | `lab propose` | Офлайн-опитування LLM про гіпотези альф (не торгує) | 1 |
 | `lab ml train` | Purged-K-Fold тренування моделі (`formulaic`, `meta_label`, `obi`) → файл у `models/` | 1 |
@@ -363,6 +364,61 @@ paper_orders=289 (no exchange submission)
 ```
 
 Друкує перші 10 ордерів; повний список — в об'єкті `PaperTradingLogger.orders`.
+
+---
+
+## `lab tunnel`
+
+```
+usage: lab tunnel [-h] [--vps VPS] [--local-port LOCAL_PORT]
+                  [--remote-host REMOTE_HOST] [--remote-port REMOTE_PORT]
+                  [--ssh-port SSH_PORT] [--identity IDENTITY] [--print-only]
+```
+
+Локальний port-forward по SSH до **живого paper-термінала на VPS**: браузер на
+робочій станції відкриває `http://127.0.0.1:<local-port>`, sshd на сервері з'єднує з
+Caddy, і на сервері не відкривається жодного нового порту. Альтернатива Tailscale, а не
+заміна: торгує й далі VPS ([docs/26](26-deploy-vps.md)).
+
+| Прапорець | Типово | Опис |
+|-----------|--------|------|
+| `--vps user@host` | `$VPS` | Сервер; та сама змінна, що в `deploy_vps.sh`/`pull_vps.sh` |
+| `--local-port` | `8087` | Порт тунелю на станції (не `8000`: там типовий локальний API) |
+| `--remote-host` | `127.0.0.1` | Адреса, на якій слухає Caddy **на сервері**; для `BIND_ADDR=100.x.y.z` — ця адреса |
+| `--remote-port` | `80` | Порт Caddy на сервері |
+| `--ssh-port` | `22` | SSH-порт сервера |
+| `--identity` | — | Приватний ключ (`ssh -i`); `~` розкривається |
+| `--print-only` | вимкнено | Надрукувати `ssh`-команду і вийти, нічого не запускаючи |
+
+```bash
+VPS=lab@100.101.102.103 uv run lab tunnel        # тримає тунель у foreground
+uv run lab tunnel --vps lab@1.2.3.4 --print-only # лише команда для скрипта
+uv run lab tunnel --vps lab@1.2.3.4 --remote-host 100.101.102.103   # BIND_ADDR=Tailscale
+```
+
+Друкує попередження, команду й далі тримає `ssh` у foreground; `Ctrl-C` закриває
+тунель. Фактична команда:
+
+```bash
+ssh -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+    -L 127.0.0.1:8087:127.0.0.1:80 user@host
+```
+
+Тунель слухає лише loopback станції, а `ExitOnForwardFailure` не дає йому вдавати
+працюючий, коли порт уже зайнятий.
+
+Дві умови, без яких тунель відкриється, а дашборд буде порожній:
+
+1. **`API_ALLOWED_ORIGINS`** у `.env` сервера має містити точний origin тунелю —
+   `http://127.0.0.1:8087` (бандл дашборда same-origin, тож браузер шле саме його);
+   після зміни — `docker compose -f deploy/docker-compose.yml restart api`.
+2. **`BIND_ADDR`**: якщо Caddy прив'язаний до Tailscale-адреси, `127.0.0.1` на сервері
+   нічого не слухає — передайте `--remote-host 100.x.y.z`.
+
+Локальний фронтенд проти віддаленого paper-API: `lab tunnel --local-port 8000` (якщо
+локальний API не займає цей порт), `cd frontend && npm run dev`, а на сервері
+`API_ALLOWED_ORIGINS=http://localhost:5173`. Обидва сценарії — у
+[docs/26 §5](26-deploy-vps.md#ssh-тунель-замість-tailscale).
 
 ---
 

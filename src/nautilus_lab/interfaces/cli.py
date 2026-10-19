@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
@@ -56,6 +58,15 @@ from nautilus_lab.domain.walk_forward import WalkForwardWindow
 from nautilus_lab.infrastructure.llm_client import LlmRequestError
 from nautilus_lab.infrastructure.paper_sessions import append_session
 from nautilus_lab.infrastructure.settings import Settings
+from nautilus_lab.infrastructure.vps_tunnel import (
+    DEFAULT_LOCAL_PORT,
+    DEFAULT_REMOTE_HOST,
+    DEFAULT_REMOTE_PORT,
+    VpsTunnel,
+    build_ssh_command,
+    parse_vps_target,
+    run_tunnel,
+)
 from nautilus_lab.interfaces.composition import (
     collect_live_agg_trades_use_case,
     funding_ingest_request,
@@ -439,6 +450,50 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Append this session to reports/paper/sessions.jsonl",
     )
 
+    tunnel = sub.add_parser(
+        "tunnel",
+        help="Open an SSH tunnel to the live paper terminal on the VPS",
+        description=(
+            "Forward a local loopback port to the paper dashboard on the VPS over SSH, so "
+            "the live paper terminal is browsable at http://127.0.0.1:<local-port> without "
+            "publishing anything on the server (docs/26-deploy-vps.md)."
+        ),
+    )
+    tunnel.add_argument(
+        "--vps",
+        default=os.environ.get("VPS", ""),
+        help="Server as user@host (default: $VPS, the variable deploy_vps.sh uses)",
+    )
+    tunnel.add_argument(
+        "--local-port",
+        type=int,
+        default=DEFAULT_LOCAL_PORT,
+        help="Workstation port of the tunnel (default: 8087; 8000 is the local API)",
+    )
+    tunnel.add_argument(
+        "--remote-host",
+        default=DEFAULT_REMOTE_HOST,
+        help=(
+            "Address Caddy listens on, as seen from the server (default: 127.0.0.1; "
+            "use the Tailscale 100.x.y.z when BIND_ADDR is set to it)"
+        ),
+    )
+    tunnel.add_argument(
+        "--remote-port",
+        type=int,
+        default=DEFAULT_REMOTE_PORT,
+        help="Caddy's port on the server (default: 80)",
+    )
+    tunnel.add_argument(
+        "--ssh-port", type=int, default=None, help="SSH port on the server (default: 22)"
+    )
+    tunnel.add_argument("--identity", default=None, help="SSH private key to use (ssh -i)")
+    tunnel.add_argument(
+        "--print-only",
+        action="store_true",
+        help="Print the ssh command instead of running it",
+    )
+
     scan = sub.add_parser("scan", help="Research scanners (no orders)")
     scan.add_argument(
         "--triangular",
@@ -591,6 +646,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     sub.add_parser("live", help="Live trading (always fail closed)")
     args = parser.parse_args(list(argv) if argv is not None else None)
+
+    # The tunnel needs no catalog, no Settings and no data: dispatch before composing them.
+    if args.command == "tunnel":
+        return _run_tunnel(args)
 
     cfg = settings()
     catalog_path = getattr(args, "catalog", None)
@@ -1722,6 +1781,26 @@ def _print_paper_session(report: PaperSessionReport) -> None:
         )
     if len(report.fills) > 10:
         print(f"  ... {len(report.fills) - 10} more fills")
+
+
+def _run_tunnel(args: argparse.Namespace) -> int:
+    """Open (or print) the local port-forward to the paper dashboard on the VPS."""
+    try:
+        tunnel = VpsTunnel(
+            target=parse_vps_target(args.vps),
+            local_port=args.local_port,
+            remote_host=args.remote_host,
+            remote_port=args.remote_port,
+            ssh_port=args.ssh_port,
+            identity=args.identity,
+        )
+        if args.print_only:
+            print(shlex.join(build_ssh_command(tunnel)))
+            return 0
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    return run_tunnel(tunnel)
 
 
 def _run_scan(args: argparse.Namespace) -> int:

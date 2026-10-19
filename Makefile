@@ -241,7 +241,7 @@ notebook-check: ## Перевірити виконання дослідниць�
 .PHONY: api frontend-install frontend-dev frontend-build frontend-lint frontend-check
 
 api: ## Запустити бекенд-сервер FastAPI з автоперезавантаженням (порт 8000)
-	$(RUN) uvicorn nautilus_lab.api.app:app --host 0.0.0.0 --port 8000 --reload
+	$(RUN) uvicorn nautilus_lab.api.app:app --host 0.0.0.0 --port 8002 --reload
 
 frontend-install: ## Встановити залежності фронтенду (npm install)
 	cd frontend && npm install
@@ -261,7 +261,7 @@ frontend-check: ## Перевірити логіку зв'язку фронте�
 # ------------------------------------------------------------------------------
 # Docker та VPS Деплой
 # ------------------------------------------------------------------------------
-.PHONY: docker-build docker-up docker-down docker-logs deploy-vps pull-vps
+.PHONY: docker-build docker-up docker-down docker-logs deploy-vps pull-vps tunnel-vps
 
 docker-build: ## Зібрати Docker-образи (deploy/docker-compose.yml)
 	docker compose -f deploy/docker-compose.yml build
@@ -280,6 +280,9 @@ deploy-vps: ## Задеплоїти зафіксований код на VPS (п
 
 pull-vps: ## Синхронізувати логи/дані/каталог з VPS (потрібно VPS=user@host)
 	bash scripts/pull_vps.sh
+
+tunnel-vps: ## SSH-тунель до paper-дашборда на VPS (потрібно VPS=user@host)
+	$(LAB) tunnel
 
 # ------------------------------------------------------------------------------
 # Очищення

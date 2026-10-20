@@ -1,0 +1,31 @@
+{
+ "note": "Чернетка для преєстрації після exploration-скринінгу 20261020_085712_perp_1h. Відібрано по одному представнику з кластерів (premium≈funding ρ=0.56). Пройшли лаг-1/лаг-24, leave-one-coin-out і таргет без funding. Застереження: у 2023 сигнали значно слабші, ніж у 2020–2021 (композит net SR 0.31 проти 2.2–2.3).",
+ "panel_label": "perp_1h",
+ "cost_bps": 7.0,
+ "criteria": {
+  "alpha": 0.05,
+  "min_net_sharpe": 0.5,
+  "max_abs_market_corr": 0.3,
+  "min_positive_years": 0.6666666666666666
+ },
+ "hypotheses": [
+  {
+   "id": "H1-premium-short-72h",
+   "legs": [{"signal": "premium_1d", "direction": -1}],
+   "horizon": 72,
+   "beta_neutral": true,
+   "rationale": "Перп-премія над індексом = переплата за плече; монети з найвищою премією відстають у залишковій доходності 3 дні. Exploration: IC −0.080, t −5.3, без funding t −4.4, net SR 2.2 (2021: 4.2, 2023: 0.6)."
+  },
+  {
+   "id": "H2-composite3-72h",
+   "legs": [
+    {"signal": "premium_1d", "direction": -1},
+    {"signal": "taker_imb_1d", "direction": 1},
+    {"signal": "dist_high_30d", "direction": 1}
+   ],
+   "horizon": 72,
+   "beta_neutral": true,
+   "rationale": "Рівноважний композит трьох майже ортогональних сімей (basis, flow, anchoring; |ρ| ≤ 0.28), кожна з інкрементальним IC t ≥ 3.1. Exploration: IC 0.117, t 7.5, net SR 1.8 (2023: 0.3)."
+  }
+ ]
+}

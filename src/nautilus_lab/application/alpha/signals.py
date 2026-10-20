@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+import numpy.typing as npt
 
 from nautilus_lab.application.alpha.operators import (
     cs_mean,
@@ -49,10 +50,13 @@ class Context:
         return max(1, round(days * self.bars_per_day))
 
 
-def build_context(panel: Panel, min_names: int) -> Context:
+def build_context(
+    panel: Panel, min_names: int, member: npt.NDArray[np.bool_] | None = None
+) -> Context:
+    """`member` (optional `T x N`): the market return averages universe members only."""
     close = panel.get("close")
     ret = pct_change(close, 1)
-    market = cs_mean(ret, min_names)
+    market = cs_mean(ret if member is None else np.where(member, ret, np.nan), min_names)
     bars_per_day = max(1, round(24 * 60 / panel.bar_minutes))
     beta = rolling_beta(ret, market, window=BETA_WINDOW_DAYS * bars_per_day)
     return Context(panel=panel, ret=ret, market=market, beta=beta, bars_per_day=bars_per_day)

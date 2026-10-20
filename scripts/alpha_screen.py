@@ -26,6 +26,7 @@ from pathlib import Path
 
 from nautilus_lab.application.alpha.report import record_trials, write_report
 from nautilus_lab.application.alpha.screen import ScreenConfig, run_screen
+from nautilus_lab.application.alpha.universe import load_universe
 from nautilus_lab.domain.data_zone import DEFAULT_ZONE_POLICY, DataZone
 from nautilus_lab.infrastructure.alpha_panel_store import load_or_build
 from nautilus_lab.infrastructure.trial_ledger import JsonlTrialLedger
@@ -42,6 +43,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--interval", default="1h")
     parser.add_argument("--spot", action="store_true", help="spot bars: no funding, no premium")
     parser.add_argument("--symbols", default=DEFAULT_SYMBOLS)
+    parser.add_argument(
+        "--universe",
+        default=None,
+        help="point-in-time universe file (scripts/alpha_universe.py); replaces --symbols",
+    )
     parser.add_argument("--horizons", default="1,4,24,72,168", help="in bars")
     parser.add_argument("--cost-bps", type=float, default=7.0)
     parser.add_argument("--perms", type=int, default=200)
@@ -54,7 +60,12 @@ def main(argv: list[str] | None = None) -> int:
 
     perp = not args.spot
     label = f"{'perp' if perp else 'spot'}_{args.interval}"
-    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    universe = load_universe(Path(args.universe)) if args.universe else None
+    if universe is not None:
+        label += f"_top{universe.top_n}"
+        symbols = list(universe.ever())
+    else:
+        symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     cache = Path(args.panel_cache or f"research/panels/{label}.npz")
 
     started = time.monotonic()
@@ -75,7 +86,22 @@ def main(argv: list[str] | None = None) -> int:
         cost_bps=args.cost_bps,
         permutations=args.perms,
     )
-    report = run_screen(panel, policy=DEFAULT_ZONE_POLICY, zone=DataZone.EXPLORATION, config=config)
+    membership = universe.mask(panel) if universe is not None else None
+    report = run_screen(
+        panel,
+        policy=DEFAULT_ZONE_POLICY,
+        zone=DataZone.EXPLORATION,
+        config=config,
+        membership=membership,
+    )
+    if universe is not None:
+        report = replace(
+            report,
+            notes=(
+                f"point-in-time universe {args.universe}: top-{universe.top_n} by "
+                f"{universe.lookback_days}d dollar volume, monthly",
+            ),
+        )
     ledger = None if args.no_ledger else JsonlTrialLedger(Path(args.ledger))
     report = replace(report, trials_total=record_trials(ledger, report, label))
 

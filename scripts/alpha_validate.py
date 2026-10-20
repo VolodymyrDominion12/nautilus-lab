@@ -21,11 +21,13 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from nautilus_lab.application.alpha.universe import load_universe
 from nautilus_lab.application.alpha.validate import (
     Criteria,
     Hypothesis,
     Leg,
     Preregistration,
+    file_sha256,
     read_preregistration,
     run_validation,
     write_preregistration,
@@ -40,9 +42,15 @@ DEFAULT_SYMBOLS = (
 
 def _register(args: argparse.Namespace) -> int:
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-    symbols = DEFAULT_ZONE_POLICY.research_symbols(
-        s.strip().upper() for s in args.symbols.split(",") if s.strip()
-    )
+    if args.universe:
+        universe = load_universe(Path(args.universe))
+        symbols = DEFAULT_ZONE_POLICY.research_symbols(universe.ever())
+        panel_label = f"{spec.get('panel_label', 'perp_1h')}_top{universe.top_n}"
+    else:
+        symbols = DEFAULT_ZONE_POLICY.research_symbols(
+            s.strip().upper() for s in args.symbols.split(",") if s.strip()
+        )
+        panel_label = spec.get("panel_label", "perp_1h")
     prereg = Preregistration(
         hypotheses=tuple(
             Hypothesis(
@@ -57,12 +65,14 @@ def _register(args: argparse.Namespace) -> int:
             for h in spec["hypotheses"]
         ),
         symbols=symbols,
-        panel_label=spec.get("panel_label", "perp_1h"),
+        panel_label=panel_label,
         cost_bps=float(spec.get("cost_bps", 7.0)),
         criteria=Criteria(**spec.get("criteria", {})),
         exploration_report=args.exploration_report,
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
         note=spec.get("note", ""),
+        universe=args.universe or "",
+        universe_sha256=file_sha256(Path(args.universe)) if args.universe else "",
     )
     path = write_preregistration(prereg, Path(args.out))
     print(f"registered {len(prereg.hypotheses)} hypotheses as {prereg.digest}: {path}")
@@ -72,7 +82,16 @@ def _register(args: argparse.Namespace) -> int:
 
 def _run(args: argparse.Namespace) -> int:
     prereg = read_preregistration(Path(args.prereg))
-    interval = prereg.panel_label.split("_", 1)[1]
+    interval = prereg.panel_label.split("_")[1]
+    membership_of = None
+    if prereg.universe:
+        universe_path = Path(prereg.universe)
+        if file_sha256(universe_path) != prereg.universe_sha256:
+            raise SystemExit(
+                f"{universe_path} changed since registration (sha256 mismatch); "
+                "the registered universe is the only one this hypothesis may use"
+            )
+        membership_of = load_universe(universe_path).mask
     panel = load_or_build(
         Path(args.panel_cache or f"research/panels/{prereg.panel_label}.npz"),
         rebuild=False,
@@ -82,7 +101,13 @@ def _run(args: argparse.Namespace) -> int:
         perp=prereg.panel_label.startswith("perp"),
         funding_catalog=Path(args.funding_catalog),
     )
-    run = run_validation(panel, prereg, policy=DEFAULT_ZONE_POLICY, log=Path(args.log))
+    run = run_validation(
+        panel,
+        prereg,
+        policy=DEFAULT_ZONE_POLICY,
+        log=Path(args.log),
+        membership=membership_of(panel) if membership_of else None,
+    )
     print(f"validation {run.digest} windows={run.windows} (logged to {args.log})")
     for outcome in run.outcomes:
         book = outcome.book
@@ -109,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     reg.add_argument("--spec", required=True)
     reg.add_argument("--exploration-report", required=True)
     reg.add_argument("--symbols", default=DEFAULT_SYMBOLS)
+    reg.add_argument("--universe", default=None, help="point-in-time universe file")
     reg.add_argument("--out", default="research/preregistrations")
     run = sub.add_parser("run")
     run.add_argument("--prereg", required=True)

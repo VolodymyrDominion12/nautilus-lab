@@ -27,6 +27,7 @@ from nautilus_lab.application.alpha.panel import (
     bucket_events,
     minutes_from_ns,
 )
+from nautilus_lab.domain.errors import CatalogEmptyError
 from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
 from nautilus_lab.infrastructure.nautilus.bar_convert import datetime_to_nanos
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
@@ -60,7 +61,13 @@ def build_panel(
     interval: str,
     perp: bool = True,
     funding_catalog: Path | None = None,
+    skip_missing: bool = False,
 ) -> Panel:
+    """`skip_missing`: drop a symbol whose bar series is absent instead of failing.
+
+    For the universe builder, which sweeps hundreds of archive symbols. The screen
+    itself keeps the default and fails closed on a coin it was told to use.
+    """
     bars_api = NautilusParquetCatalog(bar_catalog)
     taker_api = ParquetTakerFlowCatalog(bar_catalog)
     premium_api = ParquetPremiumIndexCatalog(bar_catalog)
@@ -71,9 +78,16 @@ def build_panel(
     }
     funding_events: dict[str, tuple[IntArray, FloatArray]] = {}
     grids: list[IntArray] = []
+    loaded: list[str] = []
     for symbol in symbols:
         base = symbol.upper().removesuffix("-PERP")
-        bars = bars_api.load(bar_type=bar_type_for(base, interval, perp=perp))
+        try:
+            bars = bars_api.load(bar_type=bar_type_for(base, interval, perp=perp))
+        except CatalogEmptyError:
+            if not skip_missing:
+                raise
+            continue
+        loaded.append(base)
         ts = _minutes([bar.ts_utc for bar in bars])
         grids.append(ts)
         columns["close"][base] = (ts, np.array([float(b.close) for b in bars]))
@@ -100,13 +114,13 @@ def build_panel(
 
     grid = np.unique(np.concatenate(grids)) if grids else np.empty(0, dtype=np.int64)
     fields = {name: align_columns(grid, series) for name, series in columns.items()}
-    paid = np.full((grid.size, len(symbols)), np.nan)
-    last = np.full((grid.size, len(symbols)), np.nan)
+    paid = np.full((grid.size, len(loaded)), np.nan)
+    last = np.full((grid.size, len(loaded)), np.nan)
     for column, (events, rates) in enumerate(funding_events.values()):
         paid[:, column], last[:, column] = bucket_events(grid, events, rates)
     fields["funding_paid"] = paid
     fields["funding_last"] = last
-    names = tuple(s.upper().removesuffix("-PERP") for s in symbols)
+    names = tuple(loaded)
     return Panel(ts_min=grid, symbols=names, fields=fields, bar_minutes=interval_minutes(interval))
 
 

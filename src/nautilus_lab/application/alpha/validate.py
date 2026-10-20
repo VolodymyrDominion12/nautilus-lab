@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 
 from nautilus_lab.application.alpha.operators import cs_rank, neutralise, ts_sum, unit_gross
-from nautilus_lab.application.alpha.panel import FloatArray, Panel
+from nautilus_lab.application.alpha.panel import BoolArray, FloatArray, Panel
 from nautilus_lab.application.alpha.screen import (
     BookStats,
     bar_returns,
@@ -36,6 +36,7 @@ from nautilus_lab.application.alpha.screen import (
     book_stats,
     decision_rows,
     forward_returns,
+    only_members,
     pnl_rows,
     rank_ic,
     residual_forward,
@@ -91,6 +92,8 @@ class Preregistration:
     exploration_report: str
     created_at: str
     note: str = ""
+    universe: str = ""  # path of the point-in-time universe file; "" = every coin with data
+    universe_sha256: str = ""
     kind: str = PREREG_KIND
 
     def payload(self) -> dict[str, Any]:
@@ -158,6 +161,8 @@ def read_preregistration(path: Path) -> Preregistration:
         exploration_report=data["exploration_report"],
         created_at=data["created_at"],
         note=data.get("note", ""),
+        universe=data.get("universe", ""),
+        universe_sha256=data.get("universe_sha256", ""),
     )
     if stored != prereg.digest:
         raise ValueError(
@@ -165,6 +170,10 @@ def read_preregistration(path: Path) -> Preregistration:
             f"content digest {prereg.digest}); register a new hypothesis instead"
         )
     return prereg
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def already_run(log: Path, digest: str) -> bool:
@@ -210,8 +219,14 @@ def run_validation(
     log: Path,
     ran_at: datetime | None = None,
     min_names: int = 5,
+    membership: BoolArray | None = None,
 ) -> ValidationRun:
-    """Evaluate every registered hypothesis on the validation zone, exactly once."""
+    """Evaluate every registered hypothesis on the validation zone, exactly once.
+
+    `membership` must be the point-in-time universe the registration names (see
+    `Preregistration.universe`). The script loads it from that file, never from
+    something chosen after the fact.
+    """
     if already_run(log, prereg.digest):
         raise PermissionError(
             f"preregistration {prereg.digest} was already run on validation; "
@@ -225,7 +240,10 @@ def run_validation(
         raise PermissionError(f"registered symbols include holdout coins: {held}")
 
     view = panel.select_symbols(prereg.symbols)
-    ctx = build_context(view, min_names)
+    member = None
+    if membership is not None:
+        member = membership[:, [panel.column(s) for s in prereg.symbols]]
+    ctx = build_context(view, min_names, member)
     segment = zone_segments(view, policy, DataZone.VALIDATION)
     rows_pnl = pnl_rows(segment)
     returns_1 = bar_returns(view)
@@ -240,10 +258,12 @@ def run_validation(
         leg_ranks = []
         for leg in hyp.legs:
             if leg.signal not in cache:
-                cache[leg.signal] = cs_rank(template(leg.signal).compute(ctx), min_names)
+                raw = only_members(template(leg.signal).compute(ctx), member)
+                cache[leg.signal] = cs_rank(raw, min_names)
             leg_ranks.append(leg.direction * cache[leg.signal])
         score = composite_scores(leg_ranks)
-        target = residual_forward(forward_returns(view, hyp.horizon), ctx.beta, min_names)
+        forward = only_members(forward_returns(view, hyp.horizon), member)
+        target = residual_forward(forward, ctx.beta, min_names)
         rows = decision_rows(segment, hyp.horizon)
         ic = rank_ic(cs_rank(score, min_names)[rows], cs_rank(target, min_names)[rows], min_names)
         block_id = (np.arange(view.shape[0]) // max(block, hyp.horizon))[rows]

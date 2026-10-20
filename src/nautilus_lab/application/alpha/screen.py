@@ -172,6 +172,25 @@ def _funding_paid(panel: Panel) -> FloatArray:
     return np.nan_to_num(panel.get("funding_paid"), nan=0.0)
 
 
+def only_members(values: FloatArray, member: BoolArray | None) -> FloatArray:
+    """NaN outside the point-in-time universe; unchanged without one."""
+    if member is None:
+        return values
+    return np.where(member, values, np.nan)
+
+
+def _member_view(
+    panel: Panel, symbols: Sequence[str], membership: BoolArray | None
+) -> BoolArray | None:
+    if membership is None:
+        return None
+    if membership.shape != panel.shape:
+        raise ValueError(f"membership shape {membership.shape} != panel shape {panel.shape}")
+    columns = [panel.column(s) for s in symbols]
+    view: BoolArray = membership[:, columns]
+    return view
+
+
 # --------------------------------------------------------------------------- zones
 
 
@@ -341,11 +360,16 @@ def run_screen(
     config: ScreenConfig | None = None,
     templates: Iterable[SignalSpec] = TEMPLATES,
     generated_at: datetime | None = None,
+    membership: BoolArray | None = None,
 ) -> ScreenReport:
     """Screen `templates` on the research coins of `panel` inside `zone`.
 
     Only exploration may be screened. A screen is selection, and selection on
     validation or holdout data turns them into exploration for good.
+
+    `membership` (`T x N`, aligned with `panel.symbols`) is the point-in-time
+    universe. A coin is ranked, traded and counted in the market return only while it
+    is a member. Without it every coin with data is a member.
     """
     if zone is not DataZone.EXPLORATION:
         raise PermissionError(
@@ -361,7 +385,8 @@ def run_screen(
             f"a cross-section needs at least {cfg.min_names}"
         )
     view = panel.select_symbols(research)
-    ctx = build_context(view, cfg.min_names)
+    member = _member_view(panel, research, membership)
+    ctx = build_context(view, cfg.min_names, member)
     returns_1 = bar_returns(view)
     segment = zone_segments(view, policy, zone)
     rows_pnl = pnl_rows(segment)
@@ -371,17 +396,21 @@ def run_screen(
 
     available = [spec for spec in templates if spec.available(view)]
     skipped = tuple(spec.name for spec in templates if not spec.available(view))
-    signal_ranks = {spec.name: cs_rank(spec.compute(ctx), cfg.min_names) for spec in available}
+    signal_ranks = {
+        spec.name: cs_rank(only_members(spec.compute(ctx), member), cfg.min_names)
+        for spec in available
+    }
     families = {spec.name: spec.family for spec in available}
     noise = rng.standard_normal(view.shape)
     noise[~np.isfinite(view.get("close"))] = np.nan
-    signal_ranks[CONTROL_RANDOM] = cs_rank(noise, cfg.min_names)
+    signal_ranks[CONTROL_RANDOM] = cs_rank(only_members(noise, member), cfg.min_names)
     families[CONTROL_RANDOM] = "control"
 
     results: list[SignalResult] = []
     rows_by_horizon: dict[int, int] = {}
     for horizon in cfg.horizons:
-        target = residual_forward(forward_returns(view, horizon), ctx.beta, cfg.min_names)
+        forward = only_members(forward_returns(view, horizon), member)
+        target = residual_forward(forward, ctx.beta, cfg.min_names)
         target_rank = cs_rank(target, cfg.min_names)
         rows = decision_rows(segment, horizon)
         rows_by_horizon[horizon] = int(rows.sum())

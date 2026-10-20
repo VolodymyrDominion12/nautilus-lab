@@ -142,6 +142,10 @@ select = [
 # хибне спрацювання на легітимному тексті, що й у specs/_validator.py.
 "scripts/signal_screen.py" = ["RUF001", "RUF002", "RUF003"]
 "src/nautilus_lab/domain/errors.py" = ["N818"]
+# application/alpha/report.py — звіт скринінгу альфи для дослідника, українською (як і
+# scripts/signal_screen.py); RUF001-003 спрацьовують на тексті звіту, не на коді.
+"src/nautilus_lab/application/alpha/report.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/unit/test_alpha_screen.py" = ["RUF001", "RUF002", "RUF003"]
 # scripts/generate_research_notebook.py — генератор зошита, чий ВМІСТ це довгий
 # український текст і код комірок, записані рядковими літералами. Тому:
 #   * RUF001-003 — той самий випадок, що й у specs/_validator.py: легітимний

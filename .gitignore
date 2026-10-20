@@ -109,6 +109,8 @@ models/*
 
 # Reports & visualization HTML
 reports/
+# Alpha-screen panel cache (rebuilt from the catalogs; research/trials.jsonl stays tracked)
+research/panels/
 *.html
 # ...except the Vite entry point: without it `npm run build` has nothing to build
 # (and scripts/deploy_vps.sh ships only what git tracks).

@@ -15,6 +15,7 @@ import json
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -118,9 +119,13 @@ def save_panel(panel: Panel, path: Path, *, source: dict[str, str] | None = None
         "fields": sorted(panel.fields),
         "source": source or {},
     }
-    arrays = {f"field__{name}": values for name, values in panel.fields.items()}
+    # `Any` values: numpy's stub would otherwise match `**arrays` against the
+    # `allow_pickle: bool` keyword and reject a perfectly valid call.
+    arrays: dict[str, Any] = {f"field__{name}": values for name, values in panel.fields.items()}
+    arrays["ts_min"] = panel.ts_min
+    arrays["meta"] = np.array(json.dumps(meta))
     temporary = path.with_name(path.name + ".tmp.npz")
-    np.savez_compressed(temporary, ts_min=panel.ts_min, meta=np.array(json.dumps(meta)), **arrays)
+    np.savez_compressed(temporary, **arrays)
     temporary.replace(path)
 
 

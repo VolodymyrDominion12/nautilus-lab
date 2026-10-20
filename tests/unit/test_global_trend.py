@@ -106,7 +106,10 @@ def test_pullback_inside_the_band_keeps_the_bull_state() -> None:
 def test_a_break_below_the_band_flips_to_bear() -> None:
     gate = _gate(band_pct=Decimal("0.02"))
     hour = _feed_days(gate, [100, 100, 100, 100, 100, 110])
-    assert gate.state is TrendState.BULL
+    # A local copy: asserting on `gate.state` itself would make mypy narrow the property
+    # to BULL and flag the BEAR check below as impossible, though `update` changes it.
+    before = gate.state
+    assert before is TrendState.BULL
     gate.update(_bar(Decimal("90"), hour))
     assert gate.state is TrendState.BEAR
     assert gate.evaluate(SignalSide.SELL).allowed
@@ -199,5 +202,6 @@ def test_invalid_params_fail(kwargs: dict[str, object]) -> None:
 
 
 def test_bad_enum_strings_fail() -> None:
-    with pytest.raises(ValueError, match="Input should be"):
+    # A plain dataclass, not a pydantic model: the enum constructor itself rejects it.
+    with pytest.raises(ValueError, match="not a valid MaKind"):
         GlobalTrendParams(ma="wma")  # type: ignore[arg-type]

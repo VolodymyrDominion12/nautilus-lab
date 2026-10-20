@@ -285,3 +285,22 @@ def test_live_config_round_trip_keeps_the_ema_dead_band() -> None:
     config = LivePaperConfig(robot="ema", ema_min_spread_pct=Decimal("0.003"))
     restored = config_from_dict(config_to_dict(config))
     assert restored.ema_min_spread_pct == Decimal("0.003")
+
+
+def test_live_regime_session_honours_the_legs_switch() -> None:
+    """`REGIME_LEGS` reaches the live router; `""` (the settings default) keeps all legs.
+
+    The batch runs behind a leaderboard portfolio switch legs off (uptrend,downtrend), so a
+    live session that ignored the switch would open range entries the backtest never took.
+    """
+    from nautilus_lab.domain.regime import MarketRegime
+    from nautilus_lab.domain.regime_router import ALL_LEGS
+
+    narrowed = LivePaperSessionManager(
+        LivePaperConfig(robot="regime", regime_legs="uptrend,downtrend")
+    )
+    assert narrowed._robot_instance._legs == frozenset(
+        {MarketRegime.UPTREND, MarketRegime.DOWNTREND}
+    )
+    everything = LivePaperSessionManager(LivePaperConfig(robot="regime", regime_legs=""))
+    assert everything._robot_instance._legs == ALL_LEGS

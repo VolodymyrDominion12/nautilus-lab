@@ -56,18 +56,19 @@
   `DONCHIAN_PERIOD`, `BB_PERIOD`, `BB_K`, `REGIME_CONFIRMATION_BARS`,
   `REGIME_RANGE_ALLOW_SHORT`, `REGIME_MIN_HOLD_BARS`), `adaptive_ema_params()`,
   `MAX_DAILY_LOSS`, `MAX_DRAWDOWN`, `EMA_MIN_SPREAD_PCT` (мертва зона робота `ema`,
-  прокидається в `EmaCrossover`) і `SPOT_*`/`USDM_*`. **Не діють**, скільки б їх не
+  прокидається в `EmaCrossover`), `REGIME_LEGS` (ноги `regime`/`adaptive_ema`) і
+  `SPOT_*`/`USDM_*`. **Не діють**, скільки б їх не
   правили: `VPIN_BUCKET_VOLUME`/`VPIN_TOXIC_THRESHOLD`,
   `FORMULAIC_THRESHOLD`/`META_LABEL_THRESHOLD` (зашиті в `api/paper_streamer.py`),
-  `ENTRY_FILTER_*`/`REGIME_LEGS`/`NO_INSTANT_REVERSE` і решта research-налаштувань
+  `ENTRY_FILTER_*`/`NO_INSTANT_REVERSE` і решта research-налаштувань
   ([docs/31 §7](31-peremikachi-regime-ta-filtry-vkhodu.md)). Тому `deploy/vps.env.example`
   їх не містить, але містить `REGIME_RANGE_ALLOW_SHORT=false`:
   **дефолт у коді — `true`**, тобто без цього рядка range-нога шортить верхню смугу і
   сервер репетирує не ту конфігурацію, яку міряли (H3, [docs/32 §2](32-model-vykonannia-ta-filtry-vkhodu.md)).
-  Параметри робота з `.env` — **глобальні**: їх отримує будь-яка *нова* сесія цього
-  робота, тому два різні набори одного робота одночасно не запустити (портфель задає
-  лише `symbol`/`interval`/`robot`/`starting_equity`/`risk_per_trade`/`stop_pct`/
-  `take_profit_multiple`). Уже запущена сесія тримає конфіг із журналу.
+  Параметри робота з `.env` — це **база**: її отримує будь-яка нова сесія, яку портфель
+  не перекриває. Два різні набори одного робота одночасно запускаються через `regime:`/
+  `adaptive:`/`legs:`/`fast_ema`/`slow_ema`/`ema_min_spread_pct` у самому портфелі (§5a).
+  Уже запущена сесія тримає конфіг із журналу.
 
 ---
 
@@ -263,7 +264,7 @@ BASIC_AUTH_HASH='$2a$14$...'
 
 ## 5a. Кілька роботів одночасно
 
-Сервер тримає до `LIVE_PAPER_MAX_SESSIONS` (8) сесій. У кожної свій робот, свій
+Сервер тримає до `LIVE_PAPER_MAX_SESSIONS` (8; у `deploy/vps.env.example` — 12) сесій. У кожної свій робот, свій
 віртуальний рахунок із запобіжниками і свій журнал `data/paper/sessions/<id>.jsonl`.
 Сесії на одному symbol+interval читають **один** сокет Binance (`api/market_feed.py`),
 тож бачать ті самі бари. Різних ринків одночасно може бути до `LIVE_PAPER_MAX_FEEDS` (5).
@@ -283,6 +284,41 @@ BASIC_AUTH_HASH='$2a$14$...'
 Сесія з роботом `hold` — це бенчмарк buy & hold. Інші сесії на тому самому
 symbol+interval порівнюються з нею: колонка «vs hold» у дашборді та рядок
 `vs hold` у звіті.
+
+### Параметри робота на кожну сесію
+
+`RISK_PER_TRADE`, `STOP_PCT`, комісії та запобіжники — спільні для сервера (`.env`). Але
+**параметри робота** можна перекрити в самому портфелі, інакше кілька варіантів одного
+робота не запустити одночасно (`api/live_paper_boot.py:127`, `_PORTFOLIO_FIELDS`):
+
+```yaml
+sessions:
+  - name: lead-sol-4h
+    robot: regime
+    symbol: SOLUSDT
+    interval: 4h
+    legs: uptrend,downtrend      # REGIME_LEGS тільки для цієї сесії
+    regime:                      # RegimeParams; решта полів — з .env
+      donchian_period: 40
+  - name: lead-ema-eth
+    robot: ema
+    symbol: ETHUSDT
+    interval: 1h
+    fast_ema: 10
+    slow_ema: 40
+    ema_min_spread_pct: 0.003
+```
+
+Дозволені ключі: `legs`, `fast_ema`, `slow_ema`, `ema_min_spread_pct`, `regime`,
+`adaptive` (окрім спільних `name`/`robot`/`symbol`/`interval`/`starting_equity`/
+`risk_per_trade`/`stop_pct`/`take_profit_multiple`/`notes`/`auto_trade`). Друкарська
+помилка **всередині** `regime:`/`adaptive:` — це помилка завантаження портфеля, а не тихо
+проігнороване перекриття: `donchian: 120` інакше торгувало б дефолтні 20, а журнал
+записав би інше. Усе, що не вказано, береться з `.env`; `hold` ігнорує ці поля.
+
+Параметри з `.env`, як і раніше, діють лише на **нову** сесію: уже запущена торгує тим,
+що заморожено в її журналі. Тому «змінити параметри» = нове ім'я в портфелі (або Stop +
+нове ім'я), а не редагування рядка.
 
 Живих роботів рівно шість (`LIVE_PAPER_ROBOTS` у `api/paper_streamer.py`):
 `regime`, `ema`, `adaptive_ema`, `vpin_momentum`, `formulaic_lgbm`, `hold`.

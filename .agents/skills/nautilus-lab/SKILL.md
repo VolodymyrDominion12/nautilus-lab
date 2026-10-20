@@ -298,12 +298,16 @@ uv run lab research --synthetic --bars 3000   # smoke-тест після змі
   не пише, а `deploy/Dockerfile.api` бере `APP_UID`/`APP_GID` як build-args із дефолтом
   **1001** — тож `chown` на сервері: `1001:1001` (або `APP_UID=$(id -u lab)` у `deploy/.env`).
 - **Живий paper-термінал читає з `.env` не все.** Діють risk/stop/tp, `FAST_EMA`/`SLOW_EMA`,
-  `regime_params()`, `adaptive_ema_params()`, `MAX_DAILY_LOSS`, `MAX_DRAWDOWN`,
+  `regime_params()`, `adaptive_ema_params()`, `REGIME_LEGS`, `MAX_DAILY_LOSS`, `MAX_DRAWDOWN`,
   `SPOT_*`/`USDM_*`, `EMA_MIN_SPREAD_PCT` (прокинуто в `EmaCrossover`). **Не діють**:
   `VPIN_BUCKET_VOLUME`, `VPIN_TOXIC_THRESHOLD`, `FORMULAIC_THRESHOLD`/`META_LABEL_THRESHOLD`
-  (зашиті в `api/paper_streamer.py`), `ENTRY_FILTER_*`/`REGIME_LEGS`/`NO_INSTANT_REVERSE`
-  (docs/31 §7). Параметри з `.env` глобальні для робота: два різні набори одного
-  робота одночасно не запустити, запущена сесія тримає конфіг із журналу.
+  (зашиті в `api/paper_streamer.py`), `ENTRY_FILTER_*`/`NO_INSTANT_REVERSE` (docs/31 §7).
+- **Параметри робота можна задати НА СЕСІЮ** в `deploy/paper_portfolio.yaml`: `legs`,
+  `fast_ema`, `slow_ema`, `ema_min_spread_pct`, `regime: {…}`, `adaptive: {…}`
+  (`_PORTFOLIO_FIELDS` у `api/live_paper_boot.py`). Це єдиний спосіб тримати кілька
+  варіантів одного робота одночасно; невідомий ключ — помилка завантаження портфеля, не
+  тихе ігнорування. `.env` лишається базою, а запущена сесія тримає конфіг із журналу
+  (docs/26 §5a).
   Тому `deploy/vps.env.example` містить `REGIME_RANGE_ALLOW_SHORT=false` (дефолт у коді —
   `true`, це інший rulebook, H3), а мертвих `MAKER_FEE`/`TAKER_FEE` там більше немає;
   `tests/unit/test_deploy_vps_env.py` це стереже.

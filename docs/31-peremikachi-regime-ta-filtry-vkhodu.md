@@ -118,7 +118,10 @@
 створюється без `legs` (`api/paper_streamer.py:381-385`) — тобто всі ноги ввімкнені, а
 гейти в `_decide` — лише `session_active` (`:676-681`) і `auto_trade` (`:682-687`).
 
-Отже в live-paper **не діють**: `REGIME_LEGS`, `ENTRY_FILTER_*`, `NO_INSTANT_REVERSE`.
-**Діють** `REGIME_RANGE_ALLOW_SHORT` і `REGIME_MIN_HOLD_BARS`: вони приходять як
-`RegimeParams` через `regime=cfg.regime_params()` (`api/live_paper_boot.py:63`), а не
-через робота. Те саме обмеження зафіксовано в [docs/32 §2](32-model-vykonannia-ta-filtry-vkhodu.md).
+Отже в live-paper **не діють**: `ENTRY_FILTER_*` і `NO_INSTANT_REVERSE`.
+**Діють** `REGIME_RANGE_ALLOW_SHORT`, `REGIME_MIN_HOLD_BARS` (приходять як
+`RegimeParams` через `regime=cfg.regime_params()`, `api/live_paper_boot.py:63`) і
+`REGIME_LEGS`: ноги передаються в `RegimeRouter`/`AdaptiveEmaRouter`
+(`legs=parse_legs(...)`, `api/paper_streamer.py`), з `.env` або per-session ключем
+`legs:` у `deploy/paper_portfolio.yaml` ([docs/26 §5a](26-deploy-vps.md)). Те саме
+обмеження на фільтри зафіксовано в [docs/32 §2](32-model-vykonannia-ta-filtry-vkhodu.md).

@@ -333,6 +333,76 @@ def test_portfolio_file_is_parsed_strictly() -> None:
             parse_portfolio(bad, cfg)
 
 
+def test_portfolio_can_override_robot_parameters_per_session() -> None:
+    """Two variants of one robot at once: settings are global, so the file must say it.
+
+    Without these keys a `regime` portfolio trades every session with whatever `.env`
+    says, which makes a leaderboard-style comparison of two parameter sets impossible.
+    """
+    cfg = Settings(_env_file=None, donchian_period=20, regime_legs="")  # type: ignore[call-arg]
+    configs = parse_portfolio(
+        {
+            "defaults": {"symbol": "ETHUSDT", "interval": "4h", "starting_equity": 5000},
+            "sessions": [
+                {"name": "lead-eth-e20", "robot": "regime", "regime": {"donchian_period": 20}},
+                {
+                    "name": "lead-eth-e90",
+                    "robot": "regime",
+                    "regime": {"donchian_period": 90, "bb_period": 60},
+                    "legs": "uptrend,downtrend",
+                },
+            ],
+        },
+        cfg,
+    )
+    assert [c.name for c in configs] == ["lead-eth-e20", "lead-eth-e90"]
+    assert configs[0].regime.donchian_period == 20
+    assert configs[0].regime_legs == "", "no override means the settings-wide value"
+    assert configs[1].regime.donchian_period == 90
+    assert configs[1].regime.bb_period == 60
+    assert configs[1].regime.bb_k == cfg.regime_params().bb_k, "unstated fields stay from .env"
+    assert configs[1].regime_legs == "uptrend,downtrend"
+
+
+def test_portfolio_overrides_ema_parameters_and_keeps_the_dead_band() -> None:
+    cfg = Settings(_env_file=None, fast_ema=10, slow_ema=20)  # type: ignore[call-arg]
+    configs = parse_portfolio(
+        {
+            "sessions": [
+                {
+                    "name": "lead-ema-btc",
+                    "robot": "ema",
+                    "symbol": "BTCUSDT",
+                    "fast_ema": 10,
+                    "slow_ema": 40,
+                    "ema_min_spread_pct": "0.003",
+                }
+            ]
+        },
+        cfg,
+    )
+    assert (configs[0].fast_ema, configs[0].slow_ema) == (10, 40)
+    assert configs[0].ema_min_spread_pct == Decimal("0.003")
+
+
+@pytest.mark.parametrize(
+    ("session", "message"),
+    [
+        ({"regime": {"donchian": 120}}, "unknown keys in `regime`"),
+        ({"regime": [20, 40]}, "must be a mapping"),
+        ({"adaptive": {"nope": 1}}, "unknown keys in `adaptive`"),
+        ({"legs": "sideways"}, "unknown regime leg"),
+    ],
+)
+def test_portfolio_refuses_a_typo_inside_robot_parameters(
+    session: dict[str, object], message: str
+) -> None:
+    """A silently ignored override trades the default and the ledger then lies about it."""
+    cfg = Settings(_env_file=None)  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match=message):
+        parse_portfolio({"sessions": [{"name": "x", "robot": "regime", **session}]}, cfg)
+
+
 def test_boot_uses_the_file_and_falls_back_to_autostart(tmp_path: Path) -> None:
     (tmp_path / "portfolio.yaml").write_text(
         "sessions:\n  - {name: ema-eth, robot: ema, symbol: ETHUSDT, interval: 1h}\n",

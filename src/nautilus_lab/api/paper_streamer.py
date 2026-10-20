@@ -66,7 +66,7 @@ from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
 from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.position_plan import Holding, plan_for_signal
 from nautilus_lab.domain.regime import RegimeParams
-from nautilus_lab.domain.regime_router import RegimeRouter
+from nautilus_lab.domain.regime_router import RegimeRouter, parse_legs
 from nautilus_lab.domain.risk import AccountSnapshot, RiskDecision, RiskLimits
 from nautilus_lab.domain.signals import Signal, SignalSide
 from nautilus_lab.domain.vpin import BarVpin
@@ -129,6 +129,11 @@ class LivePaperConfig:
     ema_min_spread_pct: Decimal = Decimal("0")
     regime: RegimeParams = field(default_factory=RegimeParams)
     adaptive: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
+    # Which regime legs may open positions (settings `REGIME_LEGS`; "" = all). The batch
+    # runs that produced these portfolios switched legs *off* (`uptrend,downtrend`), so a
+    # live session that ignored the switch would trade range entries the backtest never
+    # took - a different hypothesis under the same name.
+    regime_legs: str = ""
     max_daily_loss: Decimal = Decimal("0.02")
     max_drawdown: Decimal = Decimal("0.06")
     # Identity of the session in a portfolio of several: a stable human name
@@ -362,6 +367,7 @@ class LivePaperSessionManager:
             self._robot_instance = AdaptiveEmaRouter(
                 instrument_id=self.config.symbol,
                 params=self.config.adaptive,
+                legs=parse_legs(self.config.regime_legs),
             )
         elif name == "vpin_momentum":
             vpin = BarVpin(
@@ -387,6 +393,7 @@ class LivePaperSessionManager:
             self._robot_instance = RegimeRouter(
                 instrument_id=self.config.symbol,
                 params=self.config.regime,
+                legs=parse_legs(self.config.regime_legs),
             )
         self._last_closed_ts = None
 

@@ -7,9 +7,13 @@ started by `LIVE_PAPER_AUTOSTART` must not trade two different rulebooks.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+from collections.abc import Mapping
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from nautilus_lab.api.live_sessions import SessionRegistry
 from nautilus_lab.api.market_feed import FeedHub
@@ -18,8 +22,12 @@ from nautilus_lab.api.paper_streamer import (
     HistoryLoader,
     LivePaperConfig,
     LivePaperSessionManager,
+    _field_values,
     default_session_name,
 )
+from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
+from nautilus_lab.domain.regime import RegimeParams
+from nautilus_lab.domain.regime_router import parse_legs
 from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
 from nautilus_lab.infrastructure.live_paper_journal import LivePaperJournal
 from nautilus_lab.infrastructure.settings import Settings
@@ -63,6 +71,7 @@ def live_config_from_settings(
         ema_min_spread_pct=cfg.ema_min_spread_pct,
         regime=cfg.regime_params(),
         adaptive=cfg.adaptive_ema_params(),
+        regime_legs=cfg.regime_legs,
         max_daily_loss=cfg.max_daily_loss,
         max_drawdown=cfg.max_drawdown,
         name=name.strip(),
@@ -136,7 +145,60 @@ _PORTFOLIO_FIELDS = {
     "take_profit_multiple",
     "notes",
     "auto_trade",
+    # Per-session robot parameters. Settings are global: two variants of one robot can only
+    # run at the same time if the portfolio can override them (docs/26 §1, §5a).
+    "legs",
+    "fast_ema",
+    "slow_ema",
+    "ema_min_spread_pct",
+    "regime",
+    "adaptive",
 }
+
+#: Portfolio keys that carry a dataclass of robot parameters, with its type.
+_PARAMS_BLOCKS: dict[str, type[RegimeParams] | type[AdaptiveEmaParams]] = {
+    "regime": RegimeParams,
+    "adaptive": AdaptiveEmaParams,
+}
+
+
+def _params_override(
+    cls: type[RegimeParams] | type[AdaptiveEmaParams], raw: object, *, name: str, field: str
+) -> RegimeParams | AdaptiveEmaParams:
+    """A params dataclass from the portfolio, refusing unknown keys.
+
+    Typed like the dataclass defaults (Decimal stays Decimal, bool stays bool) through the
+    same helper the journal replay uses, so a YAML scalar and a journalled value cannot be
+    read two different ways. An unknown key is an error, not a silently ignored override:
+    `donchian: 120` would otherwise trade the default 20 and the ledger would lie.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError(f"{name}: `{field}` must be a mapping of {cls.__name__} fields")
+    known = {str(item.name) for item in dataclasses.fields(cls)}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        raise ValueError(f"{name}: unknown keys in `{field}`: {unknown}; allowed: {sorted(known)}")
+    return cls(**_field_values(cls, raw))
+
+
+def _apply_portfolio_overrides(
+    config: LivePaperConfig, merged: Mapping[str, Any], *, name: str
+) -> LivePaperConfig:
+    """Per-session robot parameters on top of the settings-wide configuration."""
+    changes: dict[str, Any] = {}
+    if "legs" in merged:
+        text = str(merged["legs"])
+        parse_legs(text)  # fail at boot, never mid-session
+        changes["regime_legs"] = text
+    for key in ("fast_ema", "slow_ema"):
+        if key in merged:
+            changes[key] = int(str(merged[key]))
+    if "ema_min_spread_pct" in merged:
+        changes["ema_min_spread_pct"] = Decimal(str(merged["ema_min_spread_pct"]))
+    for field, cls in _PARAMS_BLOCKS.items():
+        if field in merged:
+            changes[field] = _params_override(cls, merged[field], name=name, field=field)
+    return replace(config, **changes) if changes else config
 
 
 def _resolve(path: str, root: Path) -> Path:
@@ -175,23 +237,27 @@ def parse_portfolio(raw: object, cfg: Settings) -> list[LivePaperConfig]:
             known = ", ".join(sorted(LIVE_PAPER_ROBOTS))
             raise ValueError(f"{name}: robot {robot!r} is not available live ({known})")
         configs.append(
-            live_config_from_settings(
-                cfg,
-                symbol=str(merged.get("symbol") or cfg.live_paper_symbol),
-                interval=str(merged.get("interval") or cfg.live_paper_interval),
-                robot=robot,
-                starting_equity=Decimal(
-                    str(merged.get("starting_equity", cfg.live_paper_starting_equity))
+            _apply_portfolio_overrides(
+                live_config_from_settings(
+                    cfg,
+                    symbol=str(merged.get("symbol") or cfg.live_paper_symbol),
+                    interval=str(merged.get("interval") or cfg.live_paper_interval),
+                    robot=robot,
+                    starting_equity=Decimal(
+                        str(merged.get("starting_equity", cfg.live_paper_starting_equity))
+                    ),
+                    risk_per_trade=Decimal(str(merged.get("risk_per_trade", cfg.risk_per_trade))),
+                    stop_pct=Decimal(str(merged.get("stop_pct", cfg.stop_pct))),
+                    take_profit_multiple=Decimal(
+                        str(merged.get("take_profit_multiple", cfg.live_paper_take_profit_multiple))
+                    ),
+                    auto_trade=bool(merged.get("auto_trade", True)),
+                    name=name,
+                    notes=str(merged.get("notes") or ""),
+                    created_from="portfolio",
                 ),
-                risk_per_trade=Decimal(str(merged.get("risk_per_trade", cfg.risk_per_trade))),
-                stop_pct=Decimal(str(merged.get("stop_pct", cfg.stop_pct))),
-                take_profit_multiple=Decimal(
-                    str(merged.get("take_profit_multiple", cfg.live_paper_take_profit_multiple))
-                ),
-                auto_trade=bool(merged.get("auto_trade", True)),
+                merged,
                 name=name,
-                notes=str(merged.get("notes") or ""),
-                created_from="portfolio",
             )
         )
     return configs

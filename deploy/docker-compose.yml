@@ -180,8 +180,8 @@ services:
       TMPDIR: /cache/tmp
     volumes:
       # Whole folders, never single files or sub-folders: a bind mount of a path that
-      # does not exist yet makes Docker create it as root, and the API (uid 1000) could
-      # then not write its journal there.
+      # does not exist yet makes Docker create it as root, and the API (uid APP_UID,
+      # 1001 by default) could then not write its journal there.
       - ../data:/backup/data:ro
       - ../reports:/backup/reports:ro
       - ../catalog:/backup/catalog:ro

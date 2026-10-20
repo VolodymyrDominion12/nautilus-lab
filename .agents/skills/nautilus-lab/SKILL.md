@@ -291,11 +291,20 @@ uv run lab research --synthetic --bars 3000   # smoke-тест після змі
   (`adaptive_ema`, `formulaic_lgbm`, `vpin_momentum`). Висновок таблиці від цього не
   змінюється, але конкретні числа не відтворюються з `reports/paper/sessions.jsonl` —
   попередження додано прямо в документі.
-- **Два дефекти коду, знайдені під час аудиту документації (не виправлені):**
-  `scripts/deploy_vps.sh` дописує `LAB_UID`/`LAB_GID`, яких **ніхто не читає**, тоді як
-  `deploy/Dockerfile.api` жорстко фіксує `--uid 1000`; `deploy/paper_portfolio.yaml`
-  обіцяє логувати змінені параметри сесії, а `live_sessions.py` порівнює лише
-  `robot`/`symbol`/`interval`.
+- **Один дефект коду, знайдений під час аудиту документації (не виправлений):**
+  `deploy/paper_portfolio.yaml` обіцяє логувати змінені параметри сесії, а
+  `live_sessions.py` порівнює лише `robot`/`symbol`/`interval`.
+  Колишня скарга на `LAB_UID`/`LAB_GID` у `scripts/deploy_vps.sh` **застаріла**: скрипт їх
+  не пише, а `deploy/Dockerfile.api` бере `APP_UID`/`APP_GID` як build-args із дефолтом
+  **1001** — тож `chown` на сервері: `1001:1001` (або `APP_UID=$(id -u lab)` у `deploy/.env`).
+- **Живий paper-термінал читає з `.env` не все.** Діють risk/stop/tp, `FAST_EMA`/`SLOW_EMA`,
+  `regime_params()`, `adaptive_ema_params()`, `MAX_DAILY_LOSS`, `MAX_DRAWDOWN`,
+  `SPOT_*`/`USDM_*`. **Не діють**: `EMA_MIN_SPREAD_PCT`, `VPIN_BUCKET_VOLUME`,
+  `VPIN_TOXIC_THRESHOLD`, `FORMULAIC_THRESHOLD`/`META_LABEL_THRESHOLD` (зашиті в
+  `api/paper_streamer.py`), `ENTRY_FILTER_*`/`REGIME_LEGS`/`NO_INSTANT_REVERSE` (docs/31 §7).
+  Тому `deploy/vps.env.example` містить `REGIME_RANGE_ALLOW_SHORT=false` (дефолт у коді —
+  `true`, це інший rulebook, H3), а мертвих `MAKER_FEE`/`TAKER_FEE` там більше немає;
+  `tests/unit/test_deploy_vps_env.py` це стереже.
 - **Крок покриття в CI блокує** (у Фазі E-1.9 `continue-on-error` прибрано,
   покриття 80.50% ≥ `fail_under = 80`). `pyproject.toml` тримає поріг 80%.
 - **`uv` без доступу до кеша** падає з `Permission denied` — тоді працюй через

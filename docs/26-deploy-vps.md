@@ -50,6 +50,22 @@
   більше не відкриває позицій (виходи працюють). Для тижневого прогону це очікувана
   поведінка «fail closed», але її видно в `risk_refusals`.
 * Один процес API = один сеанс = один робот. Тому uvicorn завжди з `--workers 1`.
+* **Не всі ключі `.env` доходять до живої сесії.** Діють (`api/live_paper_boot.py:30`):
+  `RISK_PER_TRADE`, `STOP_PCT`, `LIVE_PAPER_TAKE_PROFIT_MULTIPLE`, `FAST_EMA`/`SLOW_EMA`,
+  усі `regime_params()` (`ER_PERIOD`, `TREND_EMA_PERIOD`, `ENTER_TREND_ER`/`EXIT_TREND_ER`,
+  `DONCHIAN_PERIOD`, `BB_PERIOD`, `BB_K`, `REGIME_CONFIRMATION_BARS`,
+  `REGIME_RANGE_ALLOW_SHORT`, `REGIME_MIN_HOLD_BARS`), `adaptive_ema_params()`,
+  `MAX_DAILY_LOSS`, `MAX_DRAWDOWN` і `SPOT_*`/`USDM_*`. **Не діють**, скільки б їх не
+  правили: `EMA_MIN_SPREAD_PCT` (`EmaCrossover` будується без нього,
+  `api/paper_streamer.py:349`), `VPIN_BUCKET_VOLUME`/`VPIN_TOXIC_THRESHOLD`,
+  `FORMULAIC_THRESHOLD`/`META_LABEL_THRESHOLD` (зашиті в `api/paper_streamer.py:361-379`),
+  `ENTRY_FILTER_*`/`REGIME_LEGS`/`NO_INSTANT_REVERSE` і решта research-налаштувань
+  ([docs/31 §7](31-peremikachi-regime-ta-filtry-vkhodu.md)). Тому `deploy/vps.env.example`
+  їх не містить, але містить `REGIME_RANGE_ALLOW_SHORT=false`:
+  **дефолт у коді — `true`**, тобто без цього рядка range-нога шортить верхню смугу і
+  сервер репетирує не ту конфігурацію, яку міряли (H3, [docs/32 §2](32-model-vykonannia-ta-filtry-vkhodu.md)).
+  Наслідок для читання звітів: живий `ema-eth` — не той самий робот, що `ema` з
+  `EMA_MIN_SPREAD_PCT` у бектесті.
 
 ---
 
@@ -482,6 +498,6 @@ curl -sI http://<BIND_ADDR>/ | grep -iE "content-security|strict-transport|x-fra
 | У лозі `Read-only file system: '/...'` | Бібліотека пише поза змонтованими теками. Якщо це кеш — спрямуйте його в `/tmp` змінною середовища сервісу (як `XDG_CACHE_HOME`); якщо дані — додайте том у `docker-compose.yml`. Знімати `read_only` не треба |
 | Контейнер перезапускається, `docker inspect ... --format '{{.State.OOMKilled}}'` → `true` | Упирається в ліміт пам'яті: підніміть `API_MEM_LIMIT` (чи відповідний) у `deploy/.env` і `docker compose up -d` |
 | `docker compose ps` показує `unhealthy` | `curl -s http://<BIND_ADDR>/readyz` — у полі `problems` написано, який фід мовчить або яка сесія не пише журнал; те саме прийшло в Telegram, якщо його налаштовано |
-| Permission denied у `data/` (у лозі `Live paper journal write failed (...)`) | `data/` належить комусь іншому, ніж uid 1000 контейнера: `sudo chown -R 1000:1000 data reports catalog`. Поки це не зроблено, сесії йдуть у пам'ять, і після рестарту починаються з нуля |
+| Permission denied у `data/` (у лозі `Live paper journal write failed (...)`) | `data/` належить комусь іншому, ніж uid контейнера (`APP_UID`, типово **1001**): `sudo chown -R 1001:1001 data reports catalog` або `APP_UID=$(ssh $VPS id -u lab)` у `deploy/.env` + `up -d --build`. Поки це не зроблено, сесії йдуть у пам'ять, і після рестарту починаються з нуля |
 | Контейнер `api` не стартує: `live paper journal is not writable` | Той самий chown `data/`. Навмисно fail closed: паперовий термінал без журналу — це не «деградований режим», а порожній ledger при здоровому дашборді. Режим спостереження без журналу — порожній `LIVE_PAPER_JOURNAL` |
 | `deploy_vps.sh`: `check_exposure: refusing — BIND_ADDR=...` | Дашборд був би відкритий без замка: прив'яжіть до Tailscale (`BIND_ADDR=100.x.y.z`) або ввімкніть `DASHBOARD_AUTH=on` (розділ «Варіант із публічним доменом») |

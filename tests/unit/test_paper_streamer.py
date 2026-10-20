@@ -9,6 +9,8 @@ import pytest
 from nautilus_lab.api.paper_streamer import (
     LivePaperConfig,
     LivePaperSessionManager,
+    config_from_dict,
+    config_to_dict,
 )
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.signals import Signal, SignalSide
@@ -255,3 +257,31 @@ def test_formulaic_lgbm_processes_bar_without_error() -> None:
     manager = LivePaperSessionManager(LivePaperConfig(robot="formulaic_lgbm", symbol="BTCUSDT"))
     bars = _bars(60)  # formulaic needs a warm-up window
     manager.warm_up(bars)  # must not raise
+
+
+# --- ema dead-band: the live session must trade the rulebook research measured ------
+
+
+def test_ema_live_session_carries_the_spread_dead_band() -> None:
+    """`EMA_MIN_SPREAD_PCT` used to stop at Settings, so live `ema` was a different robot.
+
+    The portfolio rehearses a leaderboard entry that was measured with the 0.003 dead
+    band; without this the paper session silently trades a looser rule.
+    """
+    manager = LivePaperSessionManager(
+        LivePaperConfig(
+            symbol="BTCUSDT",
+            robot="ema",
+            fast_ema=10,
+            slow_ema=40,
+            ema_min_spread_pct=Decimal("0.003"),
+        )
+    )
+    assert manager._robot_instance._min_spread_pct == Decimal("0.003")
+
+
+def test_live_config_round_trip_keeps_the_ema_dead_band() -> None:
+    """A resumed session trades the dead band it started with, not what `.env` says now."""
+    config = LivePaperConfig(robot="ema", ema_min_spread_pct=Decimal("0.003"))
+    restored = config_from_dict(config_to_dict(config))
+    assert restored.ema_min_spread_pct == Decimal("0.003")

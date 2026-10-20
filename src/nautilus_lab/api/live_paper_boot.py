@@ -60,6 +60,7 @@ def live_config_from_settings(
         taker_fee=usdm_fees.taker if symbol.endswith("PERP") else spot_fees.taker,
         fast_ema=cfg.fast_ema,
         slow_ema=cfg.slow_ema,
+        ema_min_spread_pct=cfg.ema_min_spread_pct,
         regime=cfg.regime_params(),
         adaptive=cfg.adaptive_ema_params(),
         max_daily_loss=cfg.max_daily_loss,

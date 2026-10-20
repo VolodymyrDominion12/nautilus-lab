@@ -299,9 +299,11 @@ uv run lab research --synthetic --bars 3000   # smoke-тест після змі
   **1001** — тож `chown` на сервері: `1001:1001` (або `APP_UID=$(id -u lab)` у `deploy/.env`).
 - **Живий paper-термінал читає з `.env` не все.** Діють risk/stop/tp, `FAST_EMA`/`SLOW_EMA`,
   `regime_params()`, `adaptive_ema_params()`, `MAX_DAILY_LOSS`, `MAX_DRAWDOWN`,
-  `SPOT_*`/`USDM_*`. **Не діють**: `EMA_MIN_SPREAD_PCT`, `VPIN_BUCKET_VOLUME`,
-  `VPIN_TOXIC_THRESHOLD`, `FORMULAIC_THRESHOLD`/`META_LABEL_THRESHOLD` (зашиті в
-  `api/paper_streamer.py`), `ENTRY_FILTER_*`/`REGIME_LEGS`/`NO_INSTANT_REVERSE` (docs/31 §7).
+  `SPOT_*`/`USDM_*`, `EMA_MIN_SPREAD_PCT` (прокинуто в `EmaCrossover`). **Не діють**:
+  `VPIN_BUCKET_VOLUME`, `VPIN_TOXIC_THRESHOLD`, `FORMULAIC_THRESHOLD`/`META_LABEL_THRESHOLD`
+  (зашиті в `api/paper_streamer.py`), `ENTRY_FILTER_*`/`REGIME_LEGS`/`NO_INSTANT_REVERSE`
+  (docs/31 §7). Параметри з `.env` глобальні для робота: два різні набори одного
+  робота одночасно не запустити, запущена сесія тримає конфіг із журналу.
   Тому `deploy/vps.env.example` містить `REGIME_RANGE_ALLOW_SHORT=false` (дефолт у коді —
   `true`, це інший rulebook, H3), а мертвих `MAKER_FEE`/`TAKER_FEE` там більше немає;
   `tests/unit/test_deploy_vps_env.py` це стереже.

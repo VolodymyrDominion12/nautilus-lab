@@ -8,39 +8,57 @@
 # Removing an entry does not stop a running session; stop it in the dashboard.
 #
 # Robot parameters, fees, RISK_PER_TRADE, STOP_PCT and the breakers come from .env —
-# the same settings the research runs use. Only what to trade is declared here.
+# the same settings the research runs use. Only what to trade is declared here, plus the
+# per-session equity/risk/stop that make a session comparable with the run it rehearses.
 # Robots available live: regime, ema, adaptive_ema, vpin_momentum, formulaic_lgbm, hold.
 # `hold` is the buy-and-hold benchmark: every other session on the same symbol and
 # interval is compared with it (vs_benchmark_pp in the dashboard and the report).
+#
+# WHAT THESE TWO SESSIONS ARE (read this before drawing a conclusion from the journal):
+# both are the top rows of research/leaderboard.jsonl, and both LOST to buy & hold over
+# their own out-of-sample window. They are rehearsals of one configuration each, not a
+# validated edge: `excess_return` is negative for both, and both runs used `--folds 2`,
+# below the promotion gate's `min_folds=6` (INCOMPLETE, not PROMOTE). Rehearse them to see
+# how the live terminal behaves next to the backtest — never to present them as "the
+# strategy works" (AGENTS.md rules 2 and 4).
+#
+# The robot parameters each one needs live are shared by every session of that robot, so
+# `.env` on this server carries the leader's values:
+#   regime: DONCHIAN_PERIOD=120 BB_PERIOD=120 BB_K=3
+#   ema:    FAST_EMA=10 SLOW_EMA=40 EMA_MIN_SPREAD_PCT=0.003
+# `research/leaderboard.jsonl` ships in the image, so the ranking these came from is
+# visible in the Leaderboard tab of the same server.
 
 defaults:
-  starting_equity: 10000
+  # The runs below used 100 000, so the paper account starts there too: a 10 000 account
+  # would size positions differently and produce numbers that are not comparable.
+  starting_equity: 100000
   interval: 1h
+  risk_per_trade: 0.005
+  stop_pct: 0.03
 
 sessions:
-  - name: regime-eth
+  - name: lead-regime-eth
     robot: regime
     symbol: ETHUSDT
     notes: >-
-      Main hypothesis: over 60 days regime beats hold-eth after fees.
-      Otherwise the hypothesis is rejected (breakeven 7.96 bp < 10 bp paid, docs/24).
+      Leaderboard lb_20261008_054535_regime (ETHUSDT 1h, folds 2): OOS +10.2%,
+      buy & hold +34.6%, excess -24.5%, 188 fills. Reproduce:
+      BB_K=3 BB_PERIOD=120 DONCHIAN_PERIOD=120 uv run lab research --robot regime
+      --instrument ETH/USDT.SIM --interval 1h --folds 2.
 
-  - name: regime-btc
-    robot: regime
-    symbol: BTCUSDT
-    notes: Same parameters on another instrument (generalisation check).
-
-  - name: ema-eth
+  - name: lead-ema-eth
     robot: ema
     symbol: ETHUSDT
-    notes: Negative control (OOS -5.6%). If it "wins" here, suspect the paper, not the robot.
+    notes: >-
+      Leaderboard lb_20261008_055108_ema (ETHUSDT 1h, folds 2): OOS +9.6%,
+      buy & hold +34.6%, excess -25.1%, 546 fills. Reproduce:
+      EMA_MIN_SPREAD_PCT=0.003 FAST_EMA=10 SLOW_EMA=40 uv run lab research --robot ema
+      --instrument ETH/USDT.SIM --interval 1h --folds 2. The 0.003 dead band reaches the
+      live robot through api/paper_streamer.py; without it this session is a looser rule.
 
   - name: hold-eth
     robot: hold
     symbol: ETHUSDT
-    notes: Benchmark for every ETHUSDT 1h session.
-
-  - name: hold-btc
-    robot: hold
-    symbol: BTCUSDT
-    notes: Benchmark for every BTCUSDT 1h session.
+    notes: >-
+      Benchmark for every ETHUSDT 1h session: buy & hold from the same start.

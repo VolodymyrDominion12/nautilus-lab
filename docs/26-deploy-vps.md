@@ -55,17 +55,19 @@
   усі `regime_params()` (`ER_PERIOD`, `TREND_EMA_PERIOD`, `ENTER_TREND_ER`/`EXIT_TREND_ER`,
   `DONCHIAN_PERIOD`, `BB_PERIOD`, `BB_K`, `REGIME_CONFIRMATION_BARS`,
   `REGIME_RANGE_ALLOW_SHORT`, `REGIME_MIN_HOLD_BARS`), `adaptive_ema_params()`,
-  `MAX_DAILY_LOSS`, `MAX_DRAWDOWN` і `SPOT_*`/`USDM_*`. **Не діють**, скільки б їх не
-  правили: `EMA_MIN_SPREAD_PCT` (`EmaCrossover` будується без нього,
-  `api/paper_streamer.py:349`), `VPIN_BUCKET_VOLUME`/`VPIN_TOXIC_THRESHOLD`,
-  `FORMULAIC_THRESHOLD`/`META_LABEL_THRESHOLD` (зашиті в `api/paper_streamer.py:361-379`),
+  `MAX_DAILY_LOSS`, `MAX_DRAWDOWN`, `EMA_MIN_SPREAD_PCT` (мертва зона робота `ema`,
+  прокидається в `EmaCrossover`) і `SPOT_*`/`USDM_*`. **Не діють**, скільки б їх не
+  правили: `VPIN_BUCKET_VOLUME`/`VPIN_TOXIC_THRESHOLD`,
+  `FORMULAIC_THRESHOLD`/`META_LABEL_THRESHOLD` (зашиті в `api/paper_streamer.py`),
   `ENTRY_FILTER_*`/`REGIME_LEGS`/`NO_INSTANT_REVERSE` і решта research-налаштувань
   ([docs/31 §7](31-peremikachi-regime-ta-filtry-vkhodu.md)). Тому `deploy/vps.env.example`
   їх не містить, але містить `REGIME_RANGE_ALLOW_SHORT=false`:
   **дефолт у коді — `true`**, тобто без цього рядка range-нога шортить верхню смугу і
   сервер репетирує не ту конфігурацію, яку міряли (H3, [docs/32 §2](32-model-vykonannia-ta-filtry-vkhodu.md)).
-  Наслідок для читання звітів: живий `ema-eth` — не той самий робот, що `ema` з
-  `EMA_MIN_SPREAD_PCT` у бектесті.
+  Параметри робота з `.env` — **глобальні**: їх отримує будь-яка *нова* сесія цього
+  робота, тому два різні набори одного робота одночасно не запустити (портфель задає
+  лише `symbol`/`interval`/`robot`/`starting_equity`/`risk_per_trade`/`stop_pct`/
+  `take_profit_multiple`). Уже запущена сесія тримає конфіг із журналу.
 
 ---
 

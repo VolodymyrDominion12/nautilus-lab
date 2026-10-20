@@ -122,6 +122,11 @@ class LivePaperConfig:
     # Settings so the terminal rehearses the configuration that was actually tested.
     fast_ema: int = 10
     slow_ema: int = 20
+    # The `ema` robot's dead-band (`domain/ema_crossover.py`): a cross closer than this
+    # fraction of price is not a signal. It used to be dropped here, so a live `ema`
+    # session traded a different rulebook than the research run it was meant to rehearse
+    # (settings `EMA_MIN_SPREAD_PCT`, `api/live_paper_boot.py`).
+    ema_min_spread_pct: Decimal = Decimal("0")
     regime: RegimeParams = field(default_factory=RegimeParams)
     adaptive: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
     max_daily_loss: Decimal = Decimal("0.02")
@@ -351,6 +356,7 @@ class LivePaperSessionManager:
                 instrument_id=self.config.symbol,
                 fast_period=self.config.fast_ema,
                 slow_period=self.config.slow_ema,
+                min_spread_pct=self.config.ema_min_spread_pct,
             )
         elif name == "adaptive_ema":
             self._robot_instance = AdaptiveEmaRouter(

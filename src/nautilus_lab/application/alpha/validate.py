@@ -331,7 +331,9 @@ def _net_sharpe_by_year(
     min_bars: int,
 ) -> dict[int, float]:
     target = np.nan_to_num(unit_gross(weights), nan=0.0)
-    held = np.nan_to_num(ts_sum(target, horizon) / horizon)
+    held = ts_sum(target, horizon) / horizon
+    held[: horizon - 1] = np.cumsum(target, axis=0)[: horizon - 1] / horizon
+    held = np.nan_to_num(held, nan=0.0)
     previous = np.zeros_like(held)
     previous[1:] = held[:-1]
     pnl = (previous * np.nan_to_num(returns)).sum(axis=1)

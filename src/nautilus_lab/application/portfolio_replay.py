@@ -224,13 +224,15 @@ def _vol_scale(
     """`target / realised` over the look-back before `today`, clipped; 1 without a target."""
     if rules.target_vol is None:
         return 1.0
-    window = [
-        pnl / equity
-        for day, pnl in daily.items()
-        if 0 < (today - day).days <= rules.vol_lookback_days
-    ]
+    if not daily:
+        return 1.0
+    first_day = min(daily)
+    elapsed_days = min(rules.vol_lookback_days, max(0, (today - first_day).days))
+    if elapsed_days < 5:
+        return 1.0
+    window = [pnl / equity for day, pnl in daily.items() if 0 < (today - day).days <= elapsed_days]
     # Days without an exit are flat days: count them, or the vol is overstated.
-    flat = rules.vol_lookback_days - len(window)
+    flat = elapsed_days - len(window)
     returns = window + [0.0] * max(flat, 0)
     if len(window) < 5:
         return 1.0  # not enough history yet to scale on

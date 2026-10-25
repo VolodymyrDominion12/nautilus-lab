@@ -69,9 +69,9 @@ class StrategyClass(StrEnum):
 
 
 def class_for_robot(robot: str) -> StrategyClass | None:
-    if robot in ("ema", "regime", "adaptive_ema"):
+    if robot in ("ema", "regime", "adaptive_ema", "xsmom", "vpin_momentum", "meta_label"):
         return StrategyClass.TREND_FOLLOWING
-    if robot in ("vpin_momentum", "pairs", "meta_label", "ml_obi", "glft", "tri_scan", "xsmom"):
+    if robot in ("pairs", "ml_obi", "glft", "tri_scan", "formulaic_lgbm"):
         return StrategyClass.MEAN_REVERSION
     if robot == "funding":
         return StrategyClass.CARRY
@@ -333,10 +333,9 @@ def _audit_checks(
         trials = dsr_result.n_trials_total
         dsr_str = f"DSR={dsr} (OOS daily returns)"
     else:
-        dsr = None
+        dsr = audit.deflated_sharpe.probability
         trials = audit.deflated_sharpe.n_trials_total
-        missing = "run `lab research --folds N` for OOS daily returns"
-        dsr_str = missing
+        dsr_str = f"DSR={dsr} (block returns)" if dsr is not None else audit.deflated_sharpe.note
 
     return (
         _check("pbo", pbo_passed, f"PBO={audit.pbo} (need <= {rules.max_pbo})"),

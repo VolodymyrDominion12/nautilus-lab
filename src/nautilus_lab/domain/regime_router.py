@@ -170,6 +170,12 @@ class RegimeRouter:
                 side="buy" if is_buy else "sell", volume=volume, dt_seconds=dt_seconds
             )
 
+    def sync_holding(self, holding: SignalSide) -> None:
+        """Keep the internal position state in sync with the broker/account."""
+        if holding != self._current_side:
+            self._current_side = holding
+            self._bars_held = 0
+
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
         prior = self._current_side
         signal = self._route_bar(bar)

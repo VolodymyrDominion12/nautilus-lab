@@ -386,6 +386,18 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._last_vol_forecast = self._vol.update(domain_bar, self._previous_close)
         self._previous_close = domain_bar.close
 
+        if self._warming_up(int(bar.ts_event)):
+            held_side = SignalSide.FLAT
+        elif self._has_working_order():
+            held_side = getattr(self._robot, "current_side", SignalSide.FLAT)
+        elif self._is_flat():
+            held_side = SignalSide.FLAT
+        else:
+            held_side = SignalSide.BUY if self._holding() is Holding.LONG else SignalSide.SELL
+
+        if hasattr(self._robot, "sync_holding"):
+            self._robot.sync_holding(held_side)
+
         signal = self._robot.on_bar(domain_bar)
         self._last_mark = domain_bar.close
         self._current_bar_ts = domain_bar.ts_utc
@@ -395,6 +407,8 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         steps = list(trace) if isinstance(trace, (tuple, list)) else []
 
         if self._warming_up(int(bar.ts_event)):
+            if hasattr(self._robot, "sync_holding"):
+                self._robot.sync_holding(SignalSide.FLAT)
             self._record_decision_log(domain_bar, signal, Outcome.WARMUP, steps)
             return
         self._track_equity(domain_bar.ts_utc)
@@ -496,6 +510,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         client_order_id = getattr(event, "client_order_id", None)
         if self._stop_order_id is not None and client_order_id == self._stop_order_id:
             self._stop_order_id = None
+            self._ratchet = None
+            self._chandelier = None
+            self._stop_cooldown.trip()
             self.log.info("Protective stop filled; position closed at the stop")
             self._record_stop_fill(client_order_id, event)
             return

@@ -99,11 +99,12 @@ def _ic_on_rows(
 ) -> tuple[Decimal | None, Decimal | None, int]:
     predictions: list[Decimal] = []
     realised: list[Decimal] = []
+    filled_rows = _filled(rows)
     for index in range(len(bars) - horizon_bars):
         row = rows[index]
         if row is None:
             continue
-        value = evaluate_recipe(node, _filled(rows), index=index)
+        value = evaluate_recipe(node, filled_rows, index=index)
         future = _forward_return(bars, index, horizon_bars)
         if value is None or future is None:
             continue

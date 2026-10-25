@@ -67,6 +67,13 @@ class FormulaicLgbmStrategy:
             ),
         )
 
+    def sync_holding(self, holding: SignalSide) -> None:
+        """Keep the internal position state in sync with the broker/account."""
+        new_pos = None if holding is SignalSide.FLAT else holding
+        if new_pos != self._position:
+            self._position = new_pos
+            self._bars_held = 0
+
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
         self._seen += 1
         features = self._engine.update(bar)

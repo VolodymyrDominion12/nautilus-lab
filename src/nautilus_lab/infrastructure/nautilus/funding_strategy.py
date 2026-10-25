@@ -128,6 +128,7 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         self._atr_perp = AverageTrueRange(14)
         self._accumulated_funding: Decimal = Decimal("0")
         self._funding_settlements_count: int = 0
+        self._exposure_bars: int = 0
         self._refusal_reasons: dict[str, int] = {}
 
     def on_start(self) -> None:
@@ -162,6 +163,8 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         if equity is not None:
             self._update_equity_path(self._last_spot.ts_utc, equity)
             self._equity_curve.append(equity)
+            if self._holding_spot() is not Holding.FLAT or self._holding_perp() is not Holding.FLAT:
+                self._exposure_bars += 1
             if self._previous_equity is not None and self._previous_equity > 0:
                 self._returns.append((equity - self._previous_equity) / self._previous_equity)
             self._previous_equity = equity
@@ -516,6 +519,13 @@ class FundingRobot(Strategy):  # type: ignore[misc]
     @property
     def daily_returns(self) -> tuple[Decimal, ...]:
         return tuple(self._daily_returns)
+
+    @property
+    def exposure_pct(self) -> Decimal | None:
+        bars = len(self._equity_curve)
+        if bars == 0:
+            return None
+        return Decimal(self._exposure_bars) / Decimal(bars)
 
 
 def _to_domain_bar(bar: Bar) -> OhlcvBar:

@@ -292,6 +292,10 @@ export interface ResearchRunConfig {
   is_end?: string | null;
   oos_start?: string | null;
   oos_end?: string | null;
+  days?: number | null;
+  cost_profile?: string | null;
+  promote?: boolean;
+  register?: string | null;
   param_overrides?: Record<string, string>;
 }
 

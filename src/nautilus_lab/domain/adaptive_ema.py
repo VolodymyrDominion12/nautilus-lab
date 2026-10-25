@@ -278,6 +278,11 @@ class AdaptiveEmaRouter:
     def classifier(self) -> AdaptiveEma:
         return self._classifier
 
+    def sync_holding(self, holding: SignalSide) -> None:
+        """Keep the internal position state in sync with the broker/account."""
+        if holding != self._current_side:
+            self._current_side = holding
+
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
         self._seen += 1
         previous = self._classifier.regime or MarketRegime.RANGE

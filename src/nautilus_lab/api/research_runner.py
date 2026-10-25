@@ -392,6 +392,7 @@ def execute_research(
                 source=bar_origin,
                 blocks=job.pbo_blocks,
                 stress_slice=job.stress_slice,
+                days=job.days,
             )
             pbo_report = overfit_audit_use_case(cfg).execute(request)
             print(pbo_report.notes)
@@ -699,6 +700,10 @@ def config_from_job(job: ResearchJobConfig) -> dict[str, Any]:
         "is_end": job.is_end,
         "oos_start": job.oos_start,
         "oos_end": job.oos_end,
+        "days": job.days,
+        "cost_profile": job.cost_profile,
+        "promote": job.promote,
+        "register": job.register,
         "param_overrides": job.param_overrides or {},
     }
 

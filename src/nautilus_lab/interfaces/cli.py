@@ -1627,6 +1627,7 @@ def _run_pbo(
         source=BarOrigin.SYNTHETIC if args.synthetic else BarOrigin.CATALOG,
         blocks=blocks,
         stress_slice=args.slice,
+        days=getattr(args, "days", None),
     )
     report = overfit_audit_use_case(cfg).execute(request)
     print(report.notes)
@@ -2361,7 +2362,7 @@ def _print_backtest(report: BacktestReport) -> None:
         breakeven = _breakeven_line("cost", report)
         if breakeven is not None:
             print(breakeven)
-    breaches = _breach_line("cost", report)
+    breaches = _breach_line("backtest", report)
     if breaches is not None:
         print(breaches)
     if report.tearsheet_path:

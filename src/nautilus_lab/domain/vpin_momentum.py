@@ -77,6 +77,18 @@ class VpinMomentum:
         if self._vpin is not None and hasattr(self._vpin, "update_from_trade"):
             self._vpin.update_from_trade(is_buy=is_buy, volume=volume)
 
+    def sync_holding(self, holding: SignalSide) -> None:
+        """Keep the internal position state in sync with the broker/account."""
+        if holding is SignalSide.FLAT and self._direction != 0:
+            self._direction = 0
+            self._bars_in_position = 0
+        elif holding is SignalSide.BUY and self._direction != 1:
+            self._direction = 1
+            self._bars_in_position = 0
+        elif holding is SignalSide.SELL and self._direction != -1:
+            self._direction = -1
+            self._bars_in_position = 0
+
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
         self._seen += 1
         self._last_vpin_state = self._vpin.update(bar)

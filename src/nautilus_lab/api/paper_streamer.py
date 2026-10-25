@@ -617,9 +617,17 @@ class LivePaperSessionManager:
                 self._bar_seq += 1
                 # The account as the gates see it, before this bar's execution changes it.
                 account = self._account_snapshot()
+                held = self._holding()
+                held_side = (
+                    SignalSide.FLAT
+                    if held is Holding.FLAT
+                    else (SignalSide.BUY if held is Holding.LONG else SignalSide.SELL)
+                )
+                if hasattr(self._robot_instance, "sync_holding"):
+                    self._robot_instance.sync_holding(held_side)
                 signal = self._robot_instance.on_bar(bar_obj)
                 trace = self._robot_trace()
-                execution = self._decide(signal, close_price, trace)
+                execution = self._decide(signal, close_price, trace, ts=bar_obj.ts_utc)
                 events.extend(execution.events)
                 self._record_decision_log(
                     bar_obj, signal, trace=trace, execution=execution, account=account
@@ -674,7 +682,12 @@ class LivePaperSessionManager:
         return {k: v for k, v in snapshot.items() if v is not None}
 
     def _decide(
-        self, signal: Signal | None, price: Decimal, trace: tuple[TraceStep, ...]
+        self,
+        signal: Signal | None,
+        price: Decimal,
+        trace: tuple[TraceStep, ...],
+        *,
+        ts: datetime | None = None,
     ) -> ExecutionResult:
         """Turn the robot's signal into an outcome: gates first, then execution."""
         if signal is None:
@@ -698,7 +711,7 @@ class LivePaperSessionManager:
                 outcome=Outcome.AUTO_TRADE_OFF,
                 blocked_by="auto_trade",
             )
-        return self._execute_signal(signal, price)
+        return self._execute_signal(signal, price, ts=ts)
 
     @staticmethod
     def _plan_step(held: Holding, exit_position: bool, wants_entry: bool) -> TraceStep:
@@ -897,11 +910,15 @@ class LivePaperSessionManager:
             return Holding.FLAT
         return Holding.LONG if self._pos_side == "LONG" else Holding.SHORT
 
-    def _apply_signal(self, signal: Signal, price: Decimal) -> list[str]:
+    def _apply_signal(
+        self, signal: Signal, price: Decimal, *, ts: datetime | None = None
+    ) -> list[str]:
         """Exit first (never gated), then enter only if the risk gate allows it."""
-        return self._execute_signal(signal, price).events
+        return self._execute_signal(signal, price, ts=ts).events
 
-    def _execute_signal(self, signal: Signal, price: Decimal) -> ExecutionResult:
+    def _execute_signal(
+        self, signal: Signal, price: Decimal, *, ts: datetime | None = None
+    ) -> ExecutionResult:
         """Exit first (never gated), then enter only if pause and risk gate allow it."""
         result = ExecutionResult(events=[f"Robot signal: {signal.side.value}"])
         held = self._holding()
@@ -913,7 +930,7 @@ class LivePaperSessionManager:
         exited = False
         if plan.exit_position:
             side, qty, fills_before = self._pos_side, self._pos_qty, len(self.fills)
-            result.events.append(self._close_position_internal(price, "signal_exit"))
+            result.events.append(self._close_position_internal(price, "signal_exit", ts=ts))
             if len(self.fills) > fills_before:
                 fill = self.fills[-1]
                 exited = True
@@ -982,7 +999,7 @@ class LivePaperSessionManager:
         )
         side = "LONG" if signal.side is SignalSide.BUY else "SHORT"
         fills_before = len(self.fills)
-        message = self._open_position_internal(side, price, result.steps)
+        message = self._open_position_internal(side, price, result.steps, ts=ts)
         result.events.append(message)
         if len(self.fills) > fills_before:
             fill = self.fills[-1]
@@ -1101,7 +1118,12 @@ class LivePaperSessionManager:
         )
 
     def _open_position_internal(
-        self, side: str, price: Decimal, steps: list[TraceStep] | None = None
+        self,
+        side: str,
+        price: Decimal,
+        steps: list[TraceStep] | None = None,
+        *,
+        ts: datetime | None = None,
     ) -> str:
         """Open a virtual position.
 
@@ -1171,12 +1193,13 @@ class LivePaperSessionManager:
         self._pos_sl = sl_price
         self._pos_tp = tp_price
 
+        effective_ts = ts or datetime.now(UTC)
         self.position = LivePosition(
             symbol=self.config.symbol,
             side=side,
             qty=str(qty),
             entry_price=str(price),
-            entry_time=datetime.now(UTC).strftime("%H:%M:%S"),
+            entry_time=effective_ts.strftime("%H:%M:%S"),
             mark_price=str(price),
             unrealized_pnl="0.00",
             unrealized_pnl_pct="0.00%",
@@ -1186,7 +1209,7 @@ class LivePaperSessionManager:
 
         fill = LiveFill(
             id=str(uuid.uuid4())[:8],
-            ts=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            ts=effective_ts.strftime("%Y-%m-%d %H:%M:%S"),
             symbol=self.config.symbol,
             side="BUY" if side == "LONG" else "SELL",
             qty=str(qty),

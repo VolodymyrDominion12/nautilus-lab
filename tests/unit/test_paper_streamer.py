@@ -304,3 +304,24 @@ def test_live_regime_session_honours_the_legs_switch() -> None:
     )
     everything = LivePaperSessionManager(LivePaperConfig(robot="regime", regime_legs=""))
     assert everything._robot_instance._legs == ALL_LEGS
+
+
+def test_paper_streamer_uses_bar_timestamp() -> None:
+    """When a closed bar triggers an order, the fill timestamp matches the bar's UTC time."""
+    config = LivePaperConfig(
+        symbol="BTCUSDT",
+        robot="ema",
+        starting_equity=Decimal("10000"),
+        auto_trade=True,
+    )
+    manager = LivePaperSessionManager(config)
+    manager.is_active = True
+    custom_ts = datetime(2025, 6, 15, 12, 34, 56, tzinfo=UTC)
+    manager._open_position_internal("LONG", Decimal("50000"), ts=custom_ts)
+    assert manager.position is not None
+    assert manager.position.entry_time == "12:34:56"
+    assert manager.fills[-1].ts == "2025-06-15 12:34:56"
+
+    close_ts = datetime(2025, 6, 15, 14, 0, 0, tzinfo=UTC)
+    manager._close_position_internal(Decimal("51000"), "test_exit", ts=close_ts)
+    assert manager.fills[-1].ts == "2025-06-15 14:00:00"

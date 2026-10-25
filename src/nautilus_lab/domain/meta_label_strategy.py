@@ -62,6 +62,18 @@ class MetaLabelStrategy:
         """
         return self._trace
 
+    def on_trade_tick(self, *, is_buy: bool, volume: Decimal, dt_seconds: Decimal) -> None:
+        handler = getattr(self._primary, "on_trade_tick", None)
+        if callable(handler):
+            handler(is_buy=is_buy, volume=volume, dt_seconds=dt_seconds)
+
+    def sync_holding(self, holding: SignalSide) -> None:
+        """Keep the internal position state in sync with the broker/account."""
+        self._position = None if holding is SignalSide.FLAT else holding
+        handler = getattr(self._primary, "sync_holding", None)
+        if callable(handler):
+            handler(holding)
+
     def on_bar(self, bar: OhlcvBar) -> Signal | None:
         self._meta_step = None
         signal = self._decide(bar)

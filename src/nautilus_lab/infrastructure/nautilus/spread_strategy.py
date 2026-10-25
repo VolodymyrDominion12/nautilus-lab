@@ -11,6 +11,7 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.strategy import Strategy
 
 from nautilus_lab.application.risk import (
+    RiskBreachTally,
     TradeStats,
     evaluate_entry,
     resolve_risk_fraction,
@@ -127,6 +128,7 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         self._entry_equity: Decimal | None = None
         self._exposure_bars: int = 0
         self._trade_stats = TradeStats()
+        self._breaches = RiskBreachTally()
         self._atr_a = AverageTrueRange(14)
         self._atr_b = AverageTrueRange(14)
 
@@ -193,6 +195,8 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
                 self._decide(Outcome.EXIT, steps, signal=side_a, reason=signal.reason)
                 return
         if refusal is not None or equity is None:
+            if refusal is not None:
+                self._breaches.record(refusal[1])
             gate, label = refusal_step(*(refusal or ("equity", "no account equity", None, None)))
             steps.append(gate)
             self._decide(
@@ -375,6 +379,10 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         if bars == 0:
             return None
         return Decimal(self._exposure_bars) / Decimal(bars)
+
+    @property
+    def risk_breaches(self) -> tuple[tuple[str, int], ...]:
+        return self._breaches.summary()
 
     def _submit_leg(
         self,

@@ -134,6 +134,9 @@ export function applyArchivedRun(
   if (typeof config.notify === 'boolean') next.notify = config.notify;
   if (typeof config.full_sample === 'boolean') next.fullSample = config.full_sample;
   if (config.instrument_id) next.instrumentId = config.instrument_id;
+  if (typeof config.register === 'string') next.register = config.register;
+  if (typeof config.promote === 'boolean') next.promote = config.promote;
+  if (typeof config.cost_profile === 'string') next.costProfile = config.cost_profile;
   if (config.is_start) {
     next.windowMode = 'custom';
     next.isStart = config.is_start;

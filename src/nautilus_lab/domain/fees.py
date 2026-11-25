@@ -121,3 +121,92 @@ def cost_profile(name: str) -> CostProfile:
         raise InvalidRiskError(
             f"unknown cost profile {name!r}; known profiles: {allowed}"
         ) from None
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesFeeSchedule:
+    """Per-contract commission schedule for exchange-listed commodity futures (USD)."""
+
+    name: str
+    per_contract: Decimal
+    slippage_ticks: int = 1
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise InvalidRiskError("a futures fee schedule needs a name")
+        if self.per_contract < 0 or self.per_contract > Decimal("100"):
+            raise InvalidRiskError("per_contract fee must be in [0, 100]")
+        if self.slippage_ticks < 0:
+            raise InvalidRiskError("slippage_ticks must be >= 0")
+
+    def stressed(self, factor: Decimal, *, name: str, note: str = "") -> FuturesFeeSchedule:
+        """Multiply both commission and slippage ticks by `factor`."""
+        if factor <= 0:
+            raise InvalidRiskError("a stress factor must be > 0")
+        return FuturesFeeSchedule(
+            name=name,
+            per_contract=(self.per_contract * factor).quantize(Decimal("0.01")),
+            slippage_ticks=max(1, round(self.slippage_ticks * float(factor))),
+            note=note,
+        )
+
+
+#: Interactive Brokers tiered COMEX micro gold (`MGC`, 10 oz): ~$0.85/contract/side all-in.
+COMEX_MGC_IBKR = FuturesFeeSchedule(
+    name="comex_mgc_ibkr",
+    per_contract=Decimal("0.85"),
+    slippage_ticks=1,
+    note="COMEX MGC (10 oz) IBKR все включено: $0.85/контракт/сторону + 1 тік проковзування",
+)
+
+#: Interactive Brokers tiered COMEX standard gold (`GC`, 100 oz): ~$2.47/contract/side all-in.
+COMEX_GC_IBKR = FuturesFeeSchedule(
+    name="comex_gc_ibkr",
+    per_contract=Decimal("2.47"),
+    slippage_ticks=1,
+    note="COMEX GC (100 oz) IBKR все включено: $2.47/контракт/сторону + 1 тік проковзування",
+)
+
+#: Interactive Brokers / retail CME 1-Ounce Gold (`1OZ`, 1 oz): ~$0.50/contract/side estimate.
+COMEX_1OZ_IBKR = FuturesFeeSchedule(
+    name="comex_1oz_ibkr",
+    per_contract=Decimal("0.50"),
+    slippage_ticks=1,
+    note="CME 1OZ (1 oz): $0.50/контракт/сторону + 1 тік проковзування",
+)
+
+#: Stress scenario for COMEX futures: 2x per-contract commission and 2 ticks slippage.
+COMEX_STRESS_X2 = COMEX_MGC_IBKR.stressed(
+    Decimal("2"),
+    name="comex_stress_x2",
+    note="стрес COMEX MGC x2: $1.70/контракт/сторону + 2 тіки проковзування",
+)
+
+FUTURES_COST_PROFILES: dict[str, FuturesFeeSchedule] = {
+    schedule.name: schedule
+    for schedule in (COMEX_MGC_IBKR, COMEX_GC_IBKR, COMEX_1OZ_IBKR, COMEX_STRESS_X2)
+}
+
+
+def futures_cost_profile(name: str) -> FuturesFeeSchedule:
+    """Look up a COMEX/futures per-contract profile by name; unknown fails closed."""
+    try:
+        return FUTURES_COST_PROFILES[name]
+    except KeyError:
+        allowed = ", ".join(sorted(FUTURES_COST_PROFILES))
+        raise InvalidRiskError(
+            f"unknown futures cost profile {name!r}; known profiles: {allowed}"
+        ) from None
+
+
+def default_futures_fee_schedule(instrument_id: str) -> FuturesFeeSchedule:
+    """Default IBKR COMEX per-contract schedule implied by `instrument_id`."""
+    symbol = instrument_id.strip().upper().rsplit(".", 1)[0]
+    if symbol.startswith("MGC"):
+        return COMEX_MGC_IBKR
+    if symbol.startswith("1OZ"):
+        return COMEX_1OZ_IBKR
+    if symbol.startswith("GC"):
+        return COMEX_GC_IBKR
+    return COMEX_MGC_IBKR

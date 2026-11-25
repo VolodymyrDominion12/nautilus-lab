@@ -36,6 +36,7 @@ from nautilus_lab.domain.adaptive_ema import AdaptiveEmaRouter
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
+from nautilus_lab.domain.gold_session_orb import GoldSessionOrb
 from nautilus_lab.domain.regime import RobotName, require_backtest_support
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.risk import AccountSnapshot
@@ -59,6 +60,7 @@ PAPER_SUPPORTED_ROBOTS: frozenset[RobotName] = frozenset(
         RobotName.FORMULAIC_LGBM,
         RobotName.META_LABEL,
         RobotName.ADAPTIVE_EMA,
+        RobotName.GOLD_SESSION_ORB,
         RobotName.ML_OBI,
         RobotName.FUNDING,
     }
@@ -201,7 +203,14 @@ class RunPaperResearch:
 
 def _build_robot(
     request: BacktestRequest,
-) -> EmaCrossover | RegimeRouter | VpinMomentum | FormulaicLgbmStrategy | AdaptiveEmaRouter:
+) -> (
+    EmaCrossover
+    | RegimeRouter
+    | VpinMomentum
+    | FormulaicLgbmStrategy
+    | AdaptiveEmaRouter
+    | GoldSessionOrb
+):
     """Build the domain robot for a dry-run paper preview.
 
     Each branch is an explicit mapping so that a new `PAPER_SUPPORTED_ROBOTS` entry
@@ -219,6 +228,11 @@ def _build_robot(
         return AdaptiveEmaRouter(
             instrument_id=request.instrument_id,
             params=request.adaptive_params,
+        )
+    if request.robot is RobotName.GOLD_SESSION_ORB:
+        return GoldSessionOrb(
+            instrument_id=request.instrument_id,
+            params=request.gold_session_orb,
         )
     if request.robot is RobotName.VPIN_MOMENTUM:
         vpin = BarVpin(

@@ -343,3 +343,34 @@ def test_a_bar_larger_than_a_bucket_keeps_its_split_inside_every_bucket() -> Non
     assert set(emitted) == {Decimal("0")}
     assert state is not None
     assert state.toxic is False
+
+
+def test_bar_feed_clamps_sub_half_step_rounding_but_rejects_real_excess(tmp_path: Path) -> None:
+    """Nautilus Bar rounds volume to size_precision; taker_flow keeps exact exchange strings."""
+    from dataclasses import replace
+
+    store = ParquetTakerFlowCatalog(tmp_path)
+    # PAXG/USDT.SIM size_increment=0.0001 -> half-step=0.00005.
+    paxg_bar = replace(
+        _bar(0, volume="0.25914700", taker_buy="0.25914700"), instrument_id="PAXG/USDT.SIM"
+    )
+    store.write(
+        [paxg_bar],
+        symbol="PAXGUSDT",
+        interval="1h",
+    )
+    feed = ResearchBarFeed(
+        _FakeBarCatalog([replace(_bar(0, volume="0.2591"), instrument_id="PAXG/USDT.SIM")]),
+        taker_flow=store,
+    )
+    loaded = feed.load(_request(instrument_id="PAXG/USDT.SIM"))
+    assert loaded[0].taker_buy_base_volume == Decimal("0.2591")
+
+    # Anything larger than half a size step must still fail closed.
+    store.write(
+        [replace(_bar(0, volume="0.2591", taker_buy="0.2600"), instrument_id="PAXG/USDT.SIM")],
+        symbol="PAXGUSDT",
+        interval="1h",
+    )
+    with pytest.raises(InvalidBarError, match="taker buy"):
+        feed.load(_request(instrument_id="PAXG/USDT.SIM"))

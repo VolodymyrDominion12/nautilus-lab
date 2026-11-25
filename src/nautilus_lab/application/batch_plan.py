@@ -25,6 +25,7 @@ DEFAULT_ROBOTS: tuple[str, ...] = (
     "regime",
     "ema",
     "adaptive_ema",
+    "gold_session_orb",
     "vpin_momentum",
     "formulaic_lgbm",
     "meta_label",

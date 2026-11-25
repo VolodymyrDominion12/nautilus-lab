@@ -81,6 +81,7 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
                     "formulaic_lgbm",
                     "meta_label",
                     "adaptive_ema",
+                    "gold_session_orb",
                     "ml_obi",
                     "funding",
                 ],
@@ -141,6 +142,14 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
                 key="BINANCE_SYMBOLS", label="Ingest symbols (JSON list)", field_type="string"
             ),
             SettingField(key="EMBARGO_BARS", label="Embargo bars", field_type="number"),
+            SettingField(
+                key="DATABENTO_API_KEY",
+                label="Databento API key",
+                field_type="secret",
+                description=(
+                    "Optional key for CME/COMEX futures historical ingest (`lab ingest-databento`)."
+                ),
+            ),
         ],
     ),
     SettingGroup(
@@ -187,6 +196,28 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
                 field_type="number",
                 description="Perpetual legs of `funding` pay this instead of the spot rate.",
             ),
+            SettingField(
+                key="FUTURES_COST_PROFILE",
+                label="COMEX futures cost profile",
+                field_type="select",
+                options=[
+                    "",
+                    "comex_mgc_ibkr",
+                    "comex_gc_ibkr",
+                    "comex_1oz_ibkr",
+                    "comex_stress_x2",
+                ],
+                description=(
+                    "Per-contract IBKR COMEX commission schedule for gold futures "
+                    "(MGC/GC/1OZ). Empty = use FUTURES_PER_CONTRACT_FEE or instrument default."
+                ),
+            ),
+            SettingField(
+                key="FUTURES_PER_CONTRACT_FEE",
+                label="Futures fee per contract ($)",
+                field_type="number",
+                description="Override USD commission per contract/side for COMEX futures.",
+            ),
         ],
     ),
     SettingGroup(
@@ -222,6 +253,30 @@ SETTING_GROUPS: tuple[SettingGroup, ...] = (
             ),
             SettingField(
                 key="PAIRS_REFIT_EVERY", label="Pairs refit every N bars", field_type="number"
+            ),
+            SettingField(
+                key="PAIRS_HEDGE_ESTIMATOR",
+                label="Pairs hedge ratio estimator",
+                field_type="select",
+                options=["ols", "kalman"],
+                description=(
+                    "ols = rolling regression (default); kalman = causal forgetting-factor filter."
+                ),
+            ),
+            SettingField(
+                key="PAIRS_KALMAN_DELTA",
+                label="Pairs Kalman delta",
+                field_type="number",
+                description="Forgetting rate in (0, 1) when PAIRS_HEDGE_ESTIMATOR=kalman.",
+            ),
+            SettingField(
+                key="META_LABEL_CONTEXT_FEATURES",
+                label="Meta-label context features",
+                field_type="boolean",
+                description=(
+                    "Append 8 causal premium_index and gold-session features "
+                    "to meta_label (21 total)."
+                ),
             ),
         ],
     ),

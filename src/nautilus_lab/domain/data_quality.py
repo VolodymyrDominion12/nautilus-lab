@@ -17,6 +17,10 @@ from enum import StrEnum
 from itertools import pairwise
 
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.calendar import (
+    TradingCalendar,
+    count_expected_bars_between,
+)
 
 
 class QualityStatus(StrEnum):
@@ -38,6 +42,17 @@ class Gap:
 class Jump:
     ts_utc: datetime
     ratio: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class RollBoundary:
+    """Detected or declared futures contract roll boundary in a continuous series."""
+
+    ts_utc: datetime
+    from_contract: str | None = None
+    to_contract: str | None = None
+    price_jump_pct: Decimal = Decimal("0")
+    source: str = "contract_switch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +110,8 @@ def check_bars(
     interval: timedelta,
     partial_dropped: int = 0,
     thresholds: QualityThresholds | None = None,
+    calendar: TradingCalendar = TradingCalendar.CRYPTO_24_7,
+    roll_timestamps: frozenset[datetime] = frozenset(),
 ) -> QualityReport:
     """Inspect a sorted bar series. Pure: reads the bars, decides nothing else."""
     limits = thresholds or QualityThresholds()
@@ -107,18 +124,30 @@ def check_bars(
     gaps: list[Gap] = []
     extreme: list[Jump] = []
     relisting: list[Jump] = []
+    notes: list[str] = []
     zero_volume = sum(1 for bar in bars if bar.volume == 0)
     for previous, current in pairwise(bars):
         step = current.ts_utc - previous.ts_utc
-        after_gap = step > interval
+        if calendar is TradingCalendar.CRYPTO_24_7:
+            missing = int(step / interval) - 1 if step > interval else 0
+        elif step > interval:
+            missing = count_expected_bars_between(
+                previous.ts_utc, current.ts_utc, interval=interval, calendar=calendar
+            )
+        else:
+            missing = 0
+        after_gap = missing > 0
         if after_gap:
             gaps.append(
                 Gap(
                     after=previous.ts_utc,
                     before=current.ts_utc,
-                    missing_bars=int(step / interval) - 1,
+                    missing_bars=missing,
                 )
             )
+        if current.ts_utc in roll_timestamps:
+            notes.append(f"roll boundary isolated at {current.ts_utc.isoformat()}")
+            continue
         if previous.close <= 0:
             continue
         ratio = current.close / previous.close
@@ -128,15 +157,20 @@ def check_bars(
             ratio > limits.relisting_ratio or ratio < Decimal(1) / limits.relisting_ratio
         ):
             relisting.append(Jump(ts_utc=current.ts_utc, ratio=ratio))
-    span = bars[-1].ts_utc - bars[0].ts_utc
+    if calendar is TradingCalendar.CRYPTO_24_7:
+        span = bars[-1].ts_utc - bars[0].ts_utc
+        expected_bars = int(span / interval) + 1
+    else:
+        expected_bars = len(bars) + sum(gap.missing_bars for gap in gaps)
     return QualityReport(
         bars=len(bars),
         first=bars[0].ts_utc,
         last=bars[-1].ts_utc,
-        expected_bars=int(span / interval) + 1,
+        expected_bars=expected_bars,
         gaps=tuple(gaps),
         zero_volume=zero_volume,
         extreme_moves=tuple(extreme),
         relisting_suspects=tuple(relisting),
         partial_dropped=partial_dropped,
+        notes=tuple(notes),
     )

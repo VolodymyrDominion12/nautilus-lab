@@ -205,6 +205,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Funding only: skip the 1h mark/index joins (the backtest does not need them)",
     )
 
+    db = sub.add_parser(
+        "ingest-databento",
+        help=(
+            "Ingest CME/COMEX futures OHLCV from Databento DBN file (offline) or API "
+            "with close-stamped bars, roll-date isolation, and calendar QC"
+        ),
+    )
+    db.add_argument("--dbn-file", default=None, help="Path to local .dbn or .dbn.zst file")
+    db.add_argument(
+        "--symbol",
+        default=None,
+        help="COMEX/Databento symbol (e.g. MGC.v.0, GC.v.0, MGCZ26.XCEC)",
+    )
+    db.add_argument(
+        "--instrument",
+        default=None,
+        help="Target Nautilus instrument id override (e.g. MGC.v.0.GLBX, MGCZ26.XCEC)",
+    )
+    db.add_argument("--dataset", default="GLBX.MDP3", help="Databento dataset (default: GLBX.MDP3)")
+    db.add_argument(
+        "--schema",
+        choices=("ohlcv-1m", "ohlcv-5m", "ohlcv-15m", "ohlcv-1h", "ohlcv-4h", "ohlcv-1d"),
+        default="ohlcv-1h",
+        help="Databento OHLCV schema (default: ohlcv-1h)",
+    )
+    db.add_argument(
+        "--interval",
+        choices=("1m", "5m", "15m", "1h", "4h", "1d"),
+        default=None,
+        help="Bar interval override (default: inferred from DBN or --schema)",
+    )
+    db.add_argument("--start", default=None, help="UTC start (YYYY-MM-DD)")
+    db.add_argument("--end", default=None, help="UTC end exclusive (YYYY-MM-DD)")
+    db.add_argument("--catalog", default=None, help="Target catalog directory (default: settings)")
+    db.add_argument(
+        "--cache-dir",
+        default="data/raw/databento",
+        help="Local cache directory for downloaded DBN files",
+    )
+    db.add_argument(
+        "--glbx-venue",
+        action="store_true",
+        help="Map venue to .GLBX instead of exchange MIC .XCEC",
+    )
+
     refresh = sub.add_parser(
         "refresh-data",
         help=(
@@ -269,7 +314,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     research.add_argument("--catalog", help="Catalog directory (default: settings/catalog)")
     research.add_argument(
         "--slice",
-        help="Named stress slice: covid2020, ftx2022, etf2024",
+        help=(
+            "Named stress slice: covid2020, ftx2022, etf2024, "
+            "gold_efp2020, gold_rates2022, gold_blowoff2026"
+        ),
     )
     research.add_argument(
         "--embargo-bars",
@@ -553,6 +601,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     train.add_argument("--start", help="UTC start (YYYY-MM-DD)")
     train.add_argument("--end", help="UTC end (YYYY-MM-DD)")
     train.add_argument("--threshold", default="0.55", help="Classifier probability threshold")
+    train.add_argument(
+        "--context-features",
+        action="store_true",
+        help="Include 8 causal premium_index and gold-session features (meta_label only)",
+    )
 
     xsmom = sub.add_parser(
         "xsmom",
@@ -694,6 +747,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_ingest(cfg, args)
         if args.command == "ingest-archive":
             return _run_ingest_archive(cfg, args)
+        if args.command == "ingest-databento":
+            return _run_ingest_databento(cfg, args)
         if args.command == "refresh-data":
             return _run_refresh_data(cfg, args)
         if args.command == "research":
@@ -911,6 +966,36 @@ def _run_ingest_archive(cfg: Settings, args: argparse.Namespace) -> int:
         flush=True,
     )
     return 2 if failures else 0
+
+
+def _run_ingest_databento(cfg: Settings, args: argparse.Namespace) -> int:
+    """Ingest CME/COMEX futures OHLCV from DBN or Databento API into a Parquet catalog."""
+    from nautilus_lab.domain.data_quality import QualityStatus
+    from nautilus_lab.interfaces.composition import ingest_databento
+
+    start = parse_utc(args.start) if args.start else None
+    end = parse_utc(args.end) if args.end else None
+    catalog = args.catalog or cfg.catalog_path
+    try:
+        report = ingest_databento(
+            cfg,
+            dbn_file=args.dbn_file,
+            symbol=args.symbol,
+            instrument_id=args.instrument,
+            dataset=args.dataset,
+            schema=args.schema,
+            interval=args.interval,
+            start=start,
+            end=end,
+            catalog_path=catalog,
+            cache_dir=args.cache_dir,
+            use_exchange_as_venue=not bool(args.glbx_venue),
+        )
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"{report.summary_line()} catalog={catalog}", flush=True)
+    return 2 if report.quality is QualityStatus.FAIL else 0
 
 
 def _catalog_instruments(root: Path) -> list[str]:
@@ -2135,7 +2220,8 @@ def _run_xsmom(cfg: Settings, args: argparse.Namespace) -> int:
         run_xsmom_audit,
         run_xsmom_walk_forward,
     )
-    from nautilus_lab.domain.metrics import PERIODS_PER_YEAR, SelectionMetric
+    from nautilus_lab.domain.calendar import trading_calendar_for_instrument
+    from nautilus_lab.domain.metrics import SelectionMetric, periods_per_year
     from nautilus_lab.domain.xsmom import Weighting
     from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
     from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
@@ -2185,7 +2271,9 @@ def _run_xsmom(cfg: Settings, args: argparse.Namespace) -> int:
         in_sample_fraction=Decimal(args.is_fraction),
         embargo_bars=cfg.embargo_bars,
         selection_metric=SelectionMetric(args.metric),
-        periods_per_year=PERIODS_PER_YEAR.get(interval),
+        periods_per_year=periods_per_year(
+            interval, trading_calendar_for_instrument(instrument_ids[0])
+        ),
         pbo_blocks=args.pbo_blocks,
     )
     first = next(iter(bars.values()))
@@ -2412,6 +2500,7 @@ def _run_ml_train(cfg: Settings, args: argparse.Namespace) -> int:
         start=args.start,
         end=args.end,
         threshold=args.threshold,
+        context_features=args.context_features,
     )
     result, _ = execute_ml_train(job)
     if result.get("is_error", False):

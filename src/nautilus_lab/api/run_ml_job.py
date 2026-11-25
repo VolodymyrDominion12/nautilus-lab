@@ -34,6 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         start=payload.get("start"),
         end=payload.get("end"),
         threshold=str(payload.get("threshold", "0.55")),
+        context_features=bool(payload.get("context_features", False)),
     )
     result, log_text = execute_ml_train(job)
     log_path = reports_dir / "ml_train.log"

@@ -2,19 +2,28 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from itertools import pairwise
+from statistics import median
 
 import pandas as pd
 from nautilus_trader.backtest.engine import BacktestEngine
-from nautilus_trader.backtest.models import FillModel, LatencyModel, MakerTakerFeeModel
+from nautilus_trader.backtest.models import (
+    FeeModel,
+    FillModel,
+    LatencyModel,
+    MakerTakerFeeModel,
+    PerContractFeeModel,
+)
 from nautilus_trader.config import BacktestEngineConfig, LoggingConfig, RiskEngineConfig
 from nautilus_trader.model.data import Bar, BarType, FundingRateUpdate
 from nautilus_trader.model.enums import AccountType, OmsType
-from nautilus_trader.model.identifiers import TraderId, Venue
-from nautilus_trader.model.instruments import Instrument
-from nautilus_trader.model.objects import Currency, Money
+from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.model.instruments import FuturesContract, Instrument
+from nautilus_trader.model.objects import Money
 
 from nautilus_lab.application.dtos import (
     BacktestReport,
@@ -25,9 +34,11 @@ from nautilus_lab.application.dtos import (
 )
 from nautilus_lab.application.timing import TIMINGS
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
+from nautilus_lab.domain.calendar import trading_calendar_for_instrument
+from nautilus_lab.domain.fees import default_futures_fee_schedule
 from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.marking import OpenLot, unrealized_pnl
-from nautilus_lab.domain.metrics import PERIODS_PER_YEAR, compute_metrics
+from nautilus_lab.domain.metrics import compute_metrics, periods_per_year
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.regime import RobotName
@@ -38,13 +49,38 @@ from nautilus_lab.infrastructure.nautilus.funding_strategy import (
     FundingRobot,
     FundingRobotConfig,
 )
-from nautilus_lab.infrastructure.nautilus.instrument import resolve_instrument
+from nautilus_lab.infrastructure.nautilus.instrument import (
+    instrument_multiplier,
+    resolve_instrument,
+)
 from nautilus_lab.infrastructure.nautilus.signal_strategy import SignalRobot, SignalRobotConfig
 from nautilus_lab.infrastructure.nautilus.spread_strategy import SpreadRobot, SpreadRobotConfig
 from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_funding_pair
 from nautilus_lab.infrastructure.timeframe import interval_from_bar_type, nautilus_bar_type
 
 _log = logging.getLogger(__name__)
+
+_DEFAULT_FUNDING_INTERVAL_MINUTES = 480
+
+
+def _infer_funding_interval_minutes(snapshots: Sequence[FundingSnapshot]) -> int:
+    """Infer funding settlement cadence in minutes from observed snapshot timestamps.
+
+    Binance USD-M perpetuals settle every 4h (`240`) on newer/volatile contracts (including
+    gold perps such as `PAXGUSDT` / `XAUUSDT`) or every 8h (`480`) on BTC/ETH. Taking the
+    median positive inter-settlement gap avoids hardcoding 8h while staying resilient to a
+    missing settlement. Falls back to `480` when fewer than two distinct timestamps exist.
+    """
+    if len(snapshots) < 2:
+        return _DEFAULT_FUNDING_INTERVAL_MINUTES
+    ordered = sorted(snap.ts_utc for snap in snapshots)
+    deltas_minutes = [
+        round((curr - prev).total_seconds() / 60) for prev, curr in pairwise(ordered) if curr > prev
+    ]
+    positive = [minutes for minutes in deltas_minutes if minutes > 0]
+    if not positive:
+        return _DEFAULT_FUNDING_INTERVAL_MINUTES
+    return round(median(positive))
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,9 +207,52 @@ class NautilusResearchBacktest:
     def _execute(self, spec: _RunSpec) -> tuple[BacktestReport, _Ledger]:
         request = spec.request
         instruments = spec.instruments
+        if not instruments:
+            raise ValueError("backtest requires at least one instrument")
+        venues = {inst.id.venue for inst in instruments}
+        if len(venues) != 1:
+            raise ValueError(
+                f"single backtest run cannot mix venues: {sorted(str(v) for v in venues)}"
+            )
+        currencies = {inst.quote_currency for inst in instruments}
+        if len(currencies) != 1:
+            raise ValueError(
+                "single backtest run cannot mix quote currencies: "
+                f"{sorted(c.code for c in currencies)}"
+            )
+        futures_flags = {isinstance(inst, FuturesContract) for inst in instruments}
+        if len(futures_flags) != 1:
+            raise ValueError("cannot mix FuturesContract and non-futures instruments in one run")
+
+        venue = instruments[0].id.venue
+        base_currency = instruments[0].quote_currency
+        is_futures = isinstance(instruments[0], FuturesContract)
+        if is_futures:
+            futures_schedule = request.futures_fees or default_futures_fee_schedule(
+                str(instruments[0].id)
+            )
+            fee_model: FeeModel = PerContractFeeModel(
+                commission=Money(futures_schedule.per_contract, base_currency)
+            )
+            slip_prob = min(1.0, 0.25 * futures_schedule.slippage_ticks)
+            fee_note = (
+                f"with futures per_contract={futures_schedule.per_contract} "
+                f"{base_currency.code} ({futures_schedule.name}), "
+                f"{_latency_note(request.fill_latency_ms)}, "
+                f"{round(slip_prob * 100)}% {futures_schedule.slippage_ticks}-tick slippage"
+            )
+        else:
+            fee_model = MakerTakerFeeModel()
+            slip_prob = 0.25
+            fee_note = (
+                f"with fees "
+                f"(spot maker={request.spot_fees.maker} taker={request.spot_fees.taker}, "
+                f"usdm maker={request.usdm_fees.maker} taker={request.usdm_fees.taker}), "
+                f"{_latency_note(request.fill_latency_ms)}, 25% one-tick slippage"
+            )
+
         data = spec.data
         strategy = spec.strategy
-        usdt = Currency.from_str("USDT")
         build_started = TIMINGS.elapsed()
         engine = BacktestEngine(
             config=BacktestEngineConfig(
@@ -184,18 +263,18 @@ class NautilusResearchBacktest:
         )
         try:
             engine.add_venue(
-                venue=Venue("SIM"),
+                venue=venue,
                 oms_type=OmsType.NETTING,
                 account_type=AccountType.MARGIN,
-                starting_balances=[Money(request.starting_equity, usdt)],
-                base_currency=usdt,
+                starting_balances=[Money(request.starting_equity, base_currency)],
+                base_currency=base_currency,
                 default_leverage=Decimal(1),
                 fill_model=FillModel(
                     prob_fill_on_limit=1.0,
-                    prob_slippage=0.25,
+                    prob_slippage=slip_prob,
                     random_seed=request.seed,
                 ),
-                fee_model=MakerTakerFeeModel(),
+                fee_model=fee_model,
                 latency_model=_latency_model(request.fill_latency_ms),
                 bar_execution=True,
             )
@@ -209,9 +288,10 @@ class NautilusResearchBacktest:
             reports_started = TIMINGS.elapsed()
             fills_report = engine.trader.generate_order_fills_report()
             positions = engine.trader.generate_positions_report()
-            account = engine.trader.generate_account_report(venue=Venue("SIM"))
+            account = engine.trader.generate_account_report(venue=venue)
+            multipliers = {str(inst.id): instrument_multiplier(inst) for inst in instruments}
             realized = _ending_balance(account)
-            open_pnl = unrealized_pnl(_open_lots(positions), spec.marks)
+            open_pnl = unrealized_pnl(_open_lots(positions, multipliers=multipliers), spec.marks)
             accumulated_funding = getattr(strategy, "accumulated_funding", Decimal("0"))
             if realized is not None:
                 realized = realized + accumulated_funding
@@ -222,7 +302,7 @@ class NautilusResearchBacktest:
             turnover = getattr(strategy, "turnover", Decimal("0"))
             exposure_pct = getattr(strategy, "exposure_pct", None)
             risk_breaches = tuple(getattr(strategy, "risk_breaches", ()))
-            traded_notional = _traded_notional(fills_report)
+            traded_notional = _traded_notional(fills_report, multipliers=multipliers)
             metrics = compute_metrics(
                 starting_equity=request.starting_equity,
                 equity_curve=equity_curve,
@@ -243,12 +323,7 @@ class NautilusResearchBacktest:
                 fills=len(fills_report),
                 positions=len(positions),
                 ending_balance=ending,
-                notes=(
-                    f"{request.robot.value} {request.source.value} backtest with fees "
-                    f"(spot maker={request.spot_fees.maker} taker={request.spot_fees.taker}, "
-                    f"usdm maker={request.usdm_fees.maker} taker={request.usdm_fees.taker}), "
-                    f"{_latency_note(request.fill_latency_ms)}, 25% one-tick slippage"
-                ),
+                notes=f"{request.robot.value} {request.source.value} backtest {fee_note}",
                 metrics=metrics,
                 tearsheet_path=saved_tearsheet,
                 risk_breaches=risk_breaches,
@@ -270,9 +345,14 @@ class NautilusResearchBacktest:
                 engine.dispose()
 
 
-def _open_lots(positions_report: object) -> list[OpenLot]:
+def _open_lots(
+    positions_report: object,
+    *,
+    multipliers: Mapping[str, Decimal] | None = None,
+) -> list[OpenLot]:
     """Positions still open when the data ran out, as lots `domain.marking` can value."""
     lots: list[OpenLot] = []
+    mult_map = multipliers or {}
     for position in _positions_from_report(positions_report):
         if not position.is_open or position.qty == 0:
             continue
@@ -282,6 +362,7 @@ def _open_lots(positions_report: object) -> list[OpenLot]:
                 instrument_id=position.instrument_id,
                 signed_qty=abs(position.qty) * sign,
                 avg_price=position.entry_price,
+                multiplier=mult_map.get(position.instrument_id, Decimal("1")),
             )
         )
     return lots
@@ -292,7 +373,13 @@ def _periods_per_year(request: BacktestRequest) -> int | None:
     if request.robot is RobotName.ML_OBI:
         return None  # sampled on every book update, not once per bar
     try:
-        return PERIODS_PER_YEAR.get(interval_from_bar_type(request.bar_type))
+        calendar_instrument = (
+            request.pairs.leg_a if request.robot is RobotName.PAIRS else request.instrument_id
+        )
+        return periods_per_year(
+            interval_from_bar_type(request.bar_type),
+            trading_calendar_for_instrument(calendar_instrument),
+        )
     except ValueError:
         return None
 
@@ -364,7 +451,11 @@ def _fees_paid(fills_report: object) -> Decimal:
     return Decimal("0")
 
 
-def _traded_notional(fills_report: object) -> Decimal:
+def _traded_notional(
+    fills_report: object,
+    *,
+    multipliers: Mapping[str, Decimal] | None = None,
+) -> Decimal:
     """Two-sided traded notional (entry AND exit fills) from the engine's fills report.
 
     This is the base for breakeven cost. The strategy's own `turnover` counter is
@@ -372,9 +463,10 @@ def _traded_notional(fills_report: object) -> Decimal:
     in the entry branch, and `_flatten()` closes positions without adding anything),
     so a breakeven computed from it would be roughly twice too optimistic.
 
-    One row per filled order (`generate_order_fills_report`), so `avg_px * filled_qty`
-    is the executed notional. Returns 0 when the report has no recognisable columns —
-    breakeven then prints as undefined instead of inventing a number.
+    One row per filled order (`generate_order_fills_report`), so
+    `avg_px * filled_qty * multiplier` is the executed notional. Returns 0 when the
+    report has no recognisable columns — breakeven then prints as undefined instead of
+    inventing a number.
     """
     import pandas as pd
 
@@ -396,11 +488,25 @@ def _traded_notional(fills_report: object) -> Decimal:
             ", ".join(str(name) for name in fills_report.columns),
         )
         return Decimal("0")
+    mult_map = multipliers or {}
     total = Decimal("0")
-    for price, quantity in zip(
-        fills_report[price_column], fills_report[quantity_column], strict=True
-    ):
-        total += _to_decimal(price) * _to_decimal(quantity)
+    if "instrument_id" in fills_report.columns:
+        for price, quantity, inst_id in zip(
+            fills_report[price_column],
+            fills_report[quantity_column],
+            fills_report["instrument_id"],
+            strict=True,
+        ):
+            multiplier = mult_map.get(str(inst_id), Decimal("1"))
+            total += _to_decimal(price) * _to_decimal(quantity) * multiplier
+    else:
+        default_mult = (
+            next(iter(mult_map.values()), Decimal("1")) if len(mult_map) == 1 else Decimal("1")
+        )
+        for price, quantity in zip(
+            fills_report[price_column], fills_report[quantity_column], strict=True
+        ):
+            total += _to_decimal(price) * _to_decimal(quantity) * default_mult
     return total
 
 
@@ -608,6 +714,11 @@ def _single_run(
         for bar in bars
         if bar.taker_buy_base_volume is not None
     }
+    premium_index_by_ns = {
+        datetime_to_nanos(bar.ts_utc): bar.premium_index_close
+        for bar in bars
+        if bar.premium_index_close is not None
+    }
     strategy = SignalRobot(
         SignalRobotConfig(
             instrument_id=instrument.id,
@@ -635,7 +746,9 @@ def _single_run(
             kelly_fraction=request.risk.kelly_fraction,
             max_var_99=request.risk.max_var_99,
             atr_stop_multiplier=request.risk.atr_stop_multiplier,
+            quote_currency=instrument.quote_currency.code,
             qty_step=instrument.size_increment.as_decimal(),
+            qty_multiplier=instrument_multiplier(instrument),
             use_bar_vpin=request.use_bar_vpin,
             use_quantile_vpin=request.use_quantile_vpin,
             vpin_bucket_volume=request.vpin_bucket_volume,
@@ -649,6 +762,7 @@ def _single_run(
             formulaic_min_hold_bars=request.formulaic_min_hold_bars,
             meta_label_model_path=request.meta_label_model_path,
             meta_label_threshold=request.meta_label_threshold,
+            meta_label_context_features=request.meta_label_context_features,
             adaptive_period=request.adaptive_params.base_period,
             adaptive_er_period=request.adaptive_params.er_period,
             adaptive_selectivity=request.adaptive_params.selectivity,
@@ -657,6 +771,14 @@ def _single_run(
             adaptive_range_exit_at_mean=request.adaptive_params.range_exit_at_mean,
             adaptive_min_bb_width_pct=request.adaptive_params.min_bb_width_pct,
             adaptive_hold_trend_in_range=request.adaptive_params.hold_trend_in_range,
+            gold_orb_atr_period=request.gold_session_orb.atr_period,
+            gold_orb_trend_ema_period=request.gold_session_orb.trend_ema_period,
+            gold_orb_min_box_atr=request.gold_session_orb.min_box_atr,
+            gold_orb_max_box_atr=request.gold_session_orb.max_box_atr,
+            gold_orb_buffer_atr=request.gold_session_orb.buffer_atr,
+            gold_orb_max_hold_bars=request.gold_session_orb.max_hold_bars,
+            gold_orb_allow_short=request.gold_session_orb.allow_short,
+            gold_orb_min_asia_bars=request.gold_session_orb.min_asia_bars,
             use_vol_scaling=request.risk_overlay.use_vol_scaling,
             vol_scaling_target=request.risk_overlay.vol_scaling_target,
             vol_model=request.risk_overlay.vol_model,
@@ -700,6 +822,7 @@ def _single_run(
             global_trend_warmup=request.global_trend.warmup.value,
         ),
         taker_buy_base_volume_by_ns=taker_buy_by_ns or None,
+        premium_index_by_ns=premium_index_by_ns or None,
         decision_log=decision_log,
         session_id=request.session_id,
     )
@@ -795,6 +918,15 @@ def _spread_run(
     instrument_b = resolve_instrument(
         leg_b, spot_fees=request.spot_fees, usdm_fees=request.usdm_fees
     )
+    if instrument_a.id.venue != instrument_b.id.venue:
+        raise ValueError(
+            f"pairs legs must share a venue: {instrument_a.id.venue} vs {instrument_b.id.venue}"
+        )
+    if instrument_a.quote_currency != instrument_b.quote_currency:
+        raise ValueError(
+            "pairs legs must share a quote currency: "
+            f"{instrument_a.quote_currency.code} vs {instrument_b.quote_currency.code}"
+        )
     interval = interval_from_bar_type(request.bar_type)
     bar_type_a = BarType.from_str(nautilus_bar_type(leg_a, interval))
     bar_type_b = BarType.from_str(nautilus_bar_type(leg_b, interval))
@@ -815,8 +947,11 @@ def _spread_run(
             kelly_fraction=request.risk.kelly_fraction,
             max_var_99=request.risk.max_var_99,
             atr_stop_multiplier=request.risk.atr_stop_multiplier,
+            quote_currency=instrument_a.quote_currency.code,
             qty_step_a=instrument_a.size_increment.as_decimal(),
             qty_step_b=instrument_b.size_increment.as_decimal(),
+            qty_multiplier_a=instrument_multiplier(instrument_a),
+            qty_multiplier_b=instrument_multiplier(instrument_b),
             use_vol_scaling=request.risk_overlay.use_vol_scaling,
             vol_scaling_target=request.risk_overlay.vol_scaling_target,
             use_fractional_kelly=request.risk_overlay.use_fractional_kelly,
@@ -881,6 +1016,7 @@ def _funding_run(
 
     funding_data: list[FundingRateUpdate] = []
     if funding_snapshots:
+        funding_interval_minutes = _infer_funding_interval_minutes(funding_snapshots)
         for snap in funding_snapshots:
             ts_ns = datetime_to_nanos(snap.ts_utc)
             funding_data.append(
@@ -889,7 +1025,7 @@ def _funding_run(
                     rate=snap.funding_rate,
                     ts_event=ts_ns,
                     ts_init=ts_ns,
-                    interval=480,
+                    interval=funding_interval_minutes,
                 )
             )
 
@@ -917,7 +1053,7 @@ def _funding_run(
             qty_step_perp=instrument_perp.size_increment.as_decimal(),
             trade_start_ns=_trade_start_ns(request),
             drawdown_cooldown_days=request.risk_overlay.drawdown_cooldown_days,
-            quote_currency="USDT",
+            quote_currency=instrument_spot.quote_currency.code,
         ),
         decision_log=decision_log,
         session_id=request.session_id,

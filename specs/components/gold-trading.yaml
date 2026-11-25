@@ -1,0 +1,223 @@
+# =============================================================================
+#  gold-trading — інтеграція торгівлі золотом у nautilus-lab (2026)
+# =============================================================================
+#  Компонентна спека в статусі `active` (specs/_schema.yaml): Фази G1 (Трек A:
+#  першокласна підтримка Binance Gold/Silver), G2 (сесії IANA DST,
+#  gold_session_orb, Kalman pairs, meta_label контекст) та G3 (Трек B: COMEX
+#  FuturesContract `GC`/`MGC`/`1OZ`, календарний QC 23×5, USD, per-contract
+#  комісії, Databento DBN інгест з ізоляцією roll-дат) реалізовані й покриті тестами.
+#
+#  Повна інженерна специфікація, аудит кодової бази й аналіз алгоритмів торгівлі
+#  золотом 2026 року — у docs/38-gold-trading-spec-2026.md.
+# =============================================================================
+kind: component
+name: gold-trading
+version: "1.2"
+status: active
+title: "Торгівля золотом (Binance PAXG/XAUT/XAUUSDT-PERP/XAGUSDT-PERP та COMEX GC/MGC/1OZ): дані, календар, витрати й стратегії"
+
+hypothesis: >
+  Золото (XAU / PAXG / XAUT / COMEX GC, MGC, 1OZ) має іншу мікроструктуру,
+  волатильність (~15–25% річних проти ~50–80% у крипти), сесійну сезонність
+  (Азія / Лондон / перетин Лондон–Нью-Йорк) і структуру витрат, ніж BTC/ETH.
+  Щоб чесно досліджувати й paper-тестувати алгоритми на золоті в nautilus-lab без
+  викривлення метрик і тихих збоїв, лабораторія потребує:
+  (1) Трек A (Binance-нативний, без нових вендорів): перевірені специфікації
+  інструментів PAXG/XAUT/XAUUSDT-PERP/XAGUSDT-PERP, маршрутизацію futures
+  WebSocket (`fstream`) для live paper, відокремлення металів від крипто-всесвіту
+  `xsmom`, золоті стрес-слайси, динамічну каденцію фандингу та часові сесії на
+  базі IANA `zoneinfo` (захист від DST-дрейфу);
+  (2) Трек B (біржовий COMEX через Databento): підтримку `FuturesContract` і
+  розрахункової валюти `USD`, календарно-свідомий QC (`TradingCalendar` 23×5 проти
+  24/7), чесну річну нормалізацію Sharpe (`PERIODS_PER_YEAR` за календарем) і
+  per-contract модель комісій.
+  Усі дослідницькі інваріанти (закриті бари, `Decimal`, walk-forward, PBO/DSR,
+  Promotion Gate v2 проти buy&hold золота та fail-closed `lab live`) зберігаються
+  без послаблень.
+
+invariants:
+  public_or_declared_data_only: true
+  closed_bars_only: true
+  decimals_not_floats: true
+  calendar_aware_qc_and_annualization: true
+  dst_aware_sessions_iana: true
+  fail_closed_live_mode: true
+  no_crypto_metal_universe_contamination: true
+
+invariants_enforced:
+  - statement: >
+      Інструменти Binance Gold/Silver (`PAXG/USDT.SIM`, `XAUT/USDT.SIM`,
+      `PAXGUSDT-PERP.SIM`, `XAUTUSDT-PERP.SIM`, `XAUUSDT-PERP.SIM`,
+      `XAGUSDT-PERP.SIM`) оголошені в `_SPOT_SPECS` / `_PERP_SPECS` із
+      перевіреними через `exchangeInfo` значеннями tickSize/stepSize (ціна 0.01,
+      крок обсягу 0.0001 на споті PAXG/XAUT і 0.001 на USD-M перпах);
+      `XAU/USDT.SIM` і `XAG/USDT.SIM` свідомо відсутні (існують на Binance лише
+      як TradFi-перпи) і падають fail closed.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/instrument.py
+    verified_by: tests/unit/test_gold_phase_g1.py::test_gold_binance_specs_and_xau_spot_fail_closed
+
+  - statement: >
+      Живий WebSocket-фід (`binance_ws.py`, `api/market_feed.py`, `api/paper_streamer.py`)
+      маршрутизує символи з суфіксом `-PERP` на `wss://fstream.binance.com/ws`
+      (зрізаючи `-PERP` у назві стріму й зберігаючи `instrument_id = <SYMBOL>.SIM`),
+      а спотові — на `wss://stream.binance.com:9443/ws`, зберігаючи інваріант
+      «лише закриті бари (`k.x == true`)».
+    enforced_by: src/nautilus_lab/infrastructure/binance_ws.py
+    verified_by: tests/unit/test_gold_phase_g1.py::test_perp_symbol_routes_to_fstream_ws
+
+  - statement: >
+      Токенізоване золото (`PAXG`, `XAUT`) і товарні тікери (`XAU`, `XAG`) не
+      змішуються мовчки з крипто-всесвітом `lab xsmom` (`domain/universe.py`):
+      винесені в `METAL_BASES` і виключені з дефолтного `is_tradeable_base` /
+      `candidate_symbols` (доступні через `include_metals=True` або `metal_symbols`).
+    enforced_by: src/nautilus_lab/domain/universe.py
+    verified_by: tests/unit/test_gold_phase_g1.py::test_metal_tokens_excluded_from_crypto_universe
+
+  - statement: >
+      Золоті історичні стрес-слайси (`gold_efp2020`, `gold_rates2022`,
+      `gold_blowoff2026`) зареєстровані в `StressSliceName` / `STRESS_SLICES`
+      із впорядкованими UTC-межами для стрес-тестування золотих стратегій.
+    enforced_by: src/nautilus_lab/domain/stress_slices.py
+    verified_by: tests/unit/test_gold_phase_g1.py::test_gold_stress_slices_resolve_and_have_valid_windows
+
+  - statement: >
+      Каденція виплат фандингу в `backtest_runner.py` виводиться з фактичних
+      міток часу серії (4h → `240`, 8h → `480`, фолбек `480`), а не хардкодиться
+      як `480` для всіх контрактів.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/backtest_runner.py
+    verified_by: tests/unit/test_gold_phase_g1.py::test_funding_cadence_infers_4h_and_8h_intervals
+
+  - statement: >
+      Класифікатор торгових сесій золота (`domain/sessions.py`) обчислює межі
+      `ASIA`, `LONDON`, `LONDON_NY_OVERLAP`, `NY_AFTERNOON`, `OFF_HOURS` та
+      `WEEKEND` через стандартний IANA `zoneinfo` (`Europe/London`,
+      `America/New_York`) і коректно відпрацьовує весняні й осінні перехідні тижні
+      DST між США та Великою Британією; наївні `datetime` відхиляються fail closed.
+    enforced_by: src/nautilus_lab/domain/sessions.py
+    verified_by: tests/unit/test_sessions.py::test_london_ny_overlap_handles_us_uk_dst_gap
+
+  - statement: >
+      Динамічний оцінювач хедж-коефіцієнта Калмана для `pairs`
+      (`domain/pairs/kalman.py`, `PAIRS_HEDGE_ESTIMATOR=kalman`) працює в чистому
+      `Decimal` причинним способом без look-ahead, зберігає `ols` типовим режимом
+      і зобов'язаний проходити fail-closed ворота ADF (`adf_pvalue <= 0.05`) на
+      інноваціях, відхиляючи непов'язані випадкові блукання.
+    enforced_by: src/nautilus_lab/domain/pairs/kalman.py
+    verified_by: tests/unit/test_pairs_kalman.py::test_kalman_independent_random_walks_fail_adf_gate
+
+  - statement: >
+      Розширення контексту `meta_label` (`META_LABEL_CONTEXT_FEATURES=true`,
+      `MetaContextExtractor` у `domain/meta_label_strategy.py`) причинним способом у
+      чистому `Decimal` додає 8 ознак (`premium_close`, `premium_zscore`,
+      `premium_delta`, `has_premium_index` та 4 one-hot IANA DST-сесії золота з
+      `domain/sessions.py`), розрізняє невідомий і нульовий базис через
+      `has_premium_index`, зберігає 13-ознаковий режим типовим (`false`) і падає
+      fail closed при невідповідності `classifier.num_features`.
+    enforced_by: src/nautilus_lab/domain/meta_label_strategy.py
+    verified_by: tests/unit/test_meta_label.py::test_meta_context_extractor_handles_unknown_negative_and_sessions
+
+  - statement: >
+      Перевірка якості даних (`domain/data_quality.py`) та річна нормалізація
+      Sharpe (`domain/metrics.py`) враховують торговий календар (`CRYPTO_24_7`,
+      `CME_GLOBEX_23_5`, `CME_1OZ_24_7`): вихідні та 1-годинна щоденна перерва
+      COMEX не вважаються дірками якості (`FAIL`), а річний Sharpe на 23×5
+      нормалізується за фактичними торговими барами (~5796 h/yr), а не 8760 h/yr.
+    enforced_by: src/nautilus_lab/domain/data_quality.py
+    verified_by: tests/unit/test_data_quality.py::test_cme_23x5_weekend_is_not_a_gap
+
+  - statement: >
+      `BacktestEngine` (`backtest_runner.py`) визначає базову валюту рахунку з
+      `instrument.quote_currency` (`USDT` для Binance, `USD` для COMEX
+      `FuturesContract`), а не хардкодить `Currency.from_str("USDT")`; для
+      біржових ф'ючерсів COMEX застосовується per-contract модель комісій і
+      масштабування позицій та PnL на `multiplier` контракту.
+    enforced_by: src/nautilus_lab/infrastructure/nautilus/backtest_runner.py
+    verified_by: tests/integration/test_gold_futures_backtest.py::test_comex_mgc_usd_account_and_per_contract_fees
+
+  - statement: >
+      Інгест Databento (`infrastructure/databento_feed.py`, CLI `lab ingest-databento`)
+      обов'язково передає `bars_timestamp_on_close=True` у `DatabentoDataLoader`
+      (захист від look-ahead bias; `False` блокується fail closed), нормалізує ID
+      інструментів (`GCZ26.XCEC`, `MGCZ26.XCEC`, `MGC.v.0.GLBX`), фіксує таблицю
+      roll-дат у `roll_dates.json` (`JsonRollStore`), ізолює роловери в `check_bars`
+      та ніколи не логує `DATABENTO_API_KEY`.
+    enforced_by: src/nautilus_lab/infrastructure/databento_feed.py
+    verified_by: tests/unit/test_databento_feed.py::test_ingest_databento_detects_and_isolates_contract_rolls
+
+  - statement: >
+      `lab live` лишається fail closed (код 1) для всіх золотих інструментів —
+      як для Binance, так і для COMEX/IBKR. Додавання золота розширює контури
+      research і paper, але не вмикає реального виконання ордерів.
+    enforced_by: src/nautilus_lab/application/risk.py
+    verified_by: tests/unit/test_risk.py::test_require_simulated_mode_blocks_live
+
+notes: >
+  Статус `active` (Фази G1 + G2 + G3 реалізовані й покриті тестами):
+    - Фаза G1 (Трек A — Binance Gold/Silver): РЕАЛІЗОВАНО й перевірено тестами
+      (`tests/unit/test_gold_phase_g1.py`, `test_component_invariants.py`).
+      Додано `PAXG/USDT.SIM`, `XAUT/USDT.SIM`, `PAXGUSDT-PERP.SIM`,
+      `XAUTUSDT-PERP.SIM`, `XAUUSDT-PERP.SIM`, `XAGUSDT-PERP.SIM`; маршрутизацію
+      `-PERP` на `wss://fstream.binance.com/ws` у `binance_ws.py`, `market_feed.py`,
+      `paper_streamer.py`; `METAL_BASES` і `metal_symbols` у `domain/universe.py`;
+      золоті стрес-слайси у `domain/stress_slices.py`; динамічне визначення
+      каденції фандингу в `backtest_runner.py`.
+    - Фаза G2 (РЕАЛІЗОВАНО повністю — сесії DST, ORB, Kalman pairs, meta_label контекст):
+      - Чистий доменний модуль `domain/sessions.py` (IANA `zoneinfo` `Europe/London` /
+        `America/New_York`, `tests/unit/test_sessions.py`).
+      - Робот `gold_session_orb` (`specs/strategies/gold_session_orb.yaml`,
+        `domain/gold_session_orb.py`, `tests/unit/test_gold_session_orb.py`,
+        `tests/integration/test_gold_session_orb_backtest.py`), підключений до
+        `research`, walk-forward, `param_grid`, Optuna, `paper` та live paper.
+      - Апгрейд `pairs` з причинним 2-становим фільтром Калмана (`domain/pairs/kalman.py`,
+        `PAIRS_HEDGE_ESTIMATOR=ols|kalman`, `PAIRS_KALMAN_DELTA`,
+        `tests/unit/test_pairs_kalman.py`, `tests/integration/test_pairs_kalman_backtest.py`).
+      - Контекстні ознаки `premium_index` та IANA DST-сесій у `meta_label`
+        (`MetaContextExtractor` у `domain/meta_label_strategy.py`, `OhlcvBar.premium_index_close`,
+        `ResearchBarFeed` join, `META_LABEL_CONTEXT_FEATURES=false|true`, `--context-features` у
+        `lab ml train` / `scripts/train_meta_label.py`, `tests/unit/test_meta_label.py`,
+        `tests/integration/test_meta_label_context_backtest.py`).
+    - Фаза G3 (Трек B — COMEX `GC`/`MGC`/`1OZ` через Databento): РЕАЛІЗОВАНО повністю:
+      - `domain/calendar.py` (`TradingCalendar`: `CRYPTO_24_7`, `CME_GLOBEX_23_5`, `CME_1OZ_24_7`)
+        та календарно-свідомі `domain/data_quality.py` (`check_bars` + `roll_timestamps`) і
+        `domain/metrics.py` (`periods_per_year`, ~5796 1h/yr для 23×5), `tests/unit/test_data_quality.py`.
+      - `FuturesContract` (`GC`/`MGC`/`1OZ` `.XCEC` та `.v.0.GLBX`), `USD`-рахунок, `multiplier`-свідомі
+        `size_position`/`size_spread`/`OpenLot` і `PerContractFeeModel` (`COMEX_MGC_IBKR`,
+        `COMEX_GC_IBKR`, `COMEX_1OZ_IBKR`, `COMEX_STRESS_X2`) у `fees.py`, `marking.py`, `risk.py`,
+        `instrument.py`, `signal_strategy.py`, `spread_strategy.py`, `backtest_runner.py`,
+        `settings.py`, `settings_schema.py`, `tests/integration/test_gold_futures_backtest.py`.
+      - `infrastructure/databento_feed.py` (`DatabentoDataLoader` із `bars_timestamp_on_close=True`,
+        `JsonRollStore`, `download_databento_dbn`), `composition.ingest_databento`, CLI `lab ingest-databento`,
+        опційна екстра `databento` у `pyproject.toml`, `tests/unit/test_databento_feed.py`.
+
+  Пріоритетні алгоритми для тестування на золоті (деталі й джерела 2025–2026 у
+  docs/38-gold-trading-spec-2026.md §4):
+    1. Forecast-to-Fill Trend + Volatility-Targeted Momentum (база: існуючий
+       `regime` + `use_vol_scaling` + `use_chandelier_stop` + `GlobalTrendGate` +
+       `REGIME_RANGE_ALLOW_SHORT=false` на `PAXGUSDT-PERP` 1h/4h і потім COMEX `MGC`).
+    2. Regime-Filtered Session Breakout (`gold_session_orb`, реалізовано у Фазі G2).
+    3. Gold–Silver Dynamic StatArb (`pairs` на `XAUUSDT-PERP`–`XAGUSDT-PERP` або
+       COMEX `GC`/`SI` з апгрейдом OLS → Kalman Filter hedge ratio).
+    4. Cross-Asset Meta-Labeling (`meta_label` із ознаками базису/преміуму та
+       крос-активів `XAG`, `BTC`, `VIX`/`DXY`).
+    5. Spot–Perp Basis / Carry (`funding` на `PAXG/USDT` ↔ `PAXGUSDT-PERP`
+       після закриття прогалин (a)–(b) у `specs/components/derivatives-data.yaml`).
+
+  Невідпрацьовані гіпотези, які свідомо відхилено ще до коду:
+    - Наївний інтрадей OHLCV mean-reversion/скальпінг 1m–15m ($H ≈ 0.5$, не
+      переживає комісії/спред).
+    - Нефільтровані London / NY ORB (від'ємне нетто-очікування −0.04R за 2021–2026).
+    - Фіксовані доларові/піпсові стопи (ламаються при зміні ціни золота з $2000
+      до $5600 і $3600).
+    - LLM на гарячому шляху виконання.
+
+references:
+  - docs/38-gold-trading-spec-2026.md
+  - specs/components/data-catalog.yaml
+  - specs/components/derivatives-data.yaml
+  - specs/components/backtest-engine.yaml
+  - specs/components/risk-layer.yaml
+  - specs/strategies/gold_session_orb.yaml
+  - specs/strategies/regime.yaml
+  - specs/strategies/pairs.yaml
+  - specs/strategies/funding.yaml
+  - specs/strategies/meta_label.yaml

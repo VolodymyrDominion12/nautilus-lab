@@ -14,8 +14,9 @@
 |---|---|---|---|---|---|---|---|---|---|
 | [`formulaic_lgbm`](../specs/strategies/formulaic_lgbm.yaml) | candidate | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Formulaic LGBM: напрямок бару з 12 формульних ознак OHLCV + пороговий класифікатор |
 | [`funding`](../specs/strategies/funding.yaml) | candidate | так | `funding_strategy` | — | — | так | — | виміряно: не обганяє buy&hold | Funding cash-and-carry: спот лонг + перпетуал шорт, вхід за нетто-APY |
+| [`gold_session_orb`](../specs/strategies/gold_session_orb.yaml) | candidate | так | `signal_strategy` | — | — | так | так | виміряно: не обганяє buy&hold | Gold Session ORB: тренд-фільтрований пробій азійського боксу з IANA DST-сесіями |
 | [`meta_label`](../specs/strategies/meta_label.yaml) | candidate | так | `signal_strategy` | так | так | так | — | виміряно: не обганяє buy&hold | Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни |
-| [`pairs`](../specs/strategies/pairs.yaml) | candidate | так | `spread_strategy` | — | — | так | — | виміряно: не обганяє buy&hold | Pairs trading: коінтеграція ETH/BTC і повернення до середнього за z-score |
+| [`pairs`](../specs/strategies/pairs.yaml) | candidate | так | `spread_strategy` | — | — | так | — | виміряно: не обганяє buy&hold | Pairs trading: коінтеграція (OLS/Kalman) і повернення до середнього за z-score |
 | [`regime`](../specs/strategies/regime.yaml) | candidate | так | `signal_strategy` | так | так | так | так | виміряно: не обганяє buy&hold | Regime router: Donchian у тренді, Bollinger mean reversion у флеті |
 | [`glft`](../specs/strategies/glft.yaml) | blocked | — | `none` | — | — | — | — | не виміряно | (1) Немає споживача `QuoteIntent`. |
 | [`ml_obi`](../specs/strategies/ml_obi.yaml) | blocked | так | `signal_strategy` | — | — | так | — | не виміряно | Виміру немає, і причина тепер одна — обсяг даних книги, а не код. |
@@ -65,6 +66,7 @@
 | [`deflated-sharpe`](../specs/components/deflated-sharpe.yaml) | partial | DSR: чи переможець сітки кращий за найкращого з N випадкових прогонів |
 | [`derivatives-data`](../specs/components/derivatives-data.yaml) | partial | Похідні Binance USD-M: бари перпів, серія фандингу, premium index і те, чого вони не доходять |
 | [`execution-modes`](../specs/components/execution-modes.yaml) | active | Режими виконання: research, paper, live — і fail-closed запобіжники |
+| [`gold-trading`](../specs/components/gold-trading.yaml) | active | Торгівля золотом (Binance PAXG/XAUT/XAUUSDT-PERP/XAGUSDT-PERP та COMEX GC/MGC/1OZ): дані, календар, витрати й стратегії |
 | [`overfitting-audit`](../specs/components/overfitting-audit.yaml) | active | PBO/CSCV: чи переживає вибір параметрів дані, яких вона не бачила |
 | [`purged-k-fold`](../specs/components/purged-k-fold.yaml) | active | Purged K-fold: embargo в одиницях часу мітки, не в кількості рядків |
 | [`risk-layer`](../specs/components/risk-layer.yaml) | partial | Розмір позиції від стопу, ліміти й circuit breakers — поза стратегією |

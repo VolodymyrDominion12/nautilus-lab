@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
+
+
+class HedgeEstimator(StrEnum):
+    OLS = "ols"
+    KALMAN = "kalman"
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,9 +27,13 @@ class PairsParams:
     # deliberately mutually exclusive rather than layered, so that enabling one
     # cannot quietly change the meaning of the other.
     z_entry_quantile: Decimal | None = None
+    hedge_estimator: HedgeEstimator = HedgeEstimator.OLS
+    kalman_delta: Decimal = Decimal("0.005")
 
     def __post_init__(self) -> None:
         if self.z_entry_quantile is not None and not (
             Decimal("0") < self.z_entry_quantile < Decimal("0.5")
         ):
             raise ValueError("z_entry_quantile must be in (0, 0.5) or None")
+        if not (Decimal("0") < self.kalman_delta < Decimal("1")):
+            raise ValueError("kalman_delta must be in (0, 1)")

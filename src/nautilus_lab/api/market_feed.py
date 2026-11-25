@@ -23,7 +23,8 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
-from nautilus_lab.api.paper_streamer import BINANCE_WS_STREAM_URL, parse_kline_message
+from nautilus_lab.api.paper_streamer import parse_kline_message
+from nautilus_lab.infrastructure.binance_ws import binance_stream_url
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class MarketFeed:
     @property
     def url(self) -> str:
         symbol, interval = self.key
-        return f"{BINANCE_WS_STREAM_URL}/{symbol.lower()}@kline_{interval}"
+        return binance_stream_url(symbol, interval)
 
     def start(self) -> None:
         if self._task is None or self._task.done():

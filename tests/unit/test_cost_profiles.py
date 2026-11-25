@@ -119,3 +119,56 @@ def test_a_variant_that_only_names_a_cost_scenario_is_still_a_variant() -> None:
 
     with pytest.raises(ValueError, match="overrides nothing"):
         BatchVariant("EMPTY")
+
+
+def test_futures_cost_profiles_registry_and_settings() -> None:
+    """COMEX futures profiles validate fail-closed and resolve per-contract fee schedules."""
+    from nautilus_lab.domain.fees import (
+        COMEX_GC_IBKR,
+        COMEX_MGC_IBKR,
+        COMEX_STRESS_X2,
+        FUTURES_COST_PROFILES,
+        default_futures_fee_schedule,
+        futures_cost_profile,
+    )
+
+    assert set(FUTURES_COST_PROFILES) >= {
+        "comex_mgc_ibkr",
+        "comex_gc_ibkr",
+        "comex_1oz_ibkr",
+        "comex_stress_x2",
+    }
+    assert futures_cost_profile("comex_stress_x2") == COMEX_STRESS_X2
+    assert COMEX_STRESS_X2.per_contract == COMEX_MGC_IBKR.per_contract * Decimal("2")
+    assert default_futures_fee_schedule("MGCZ26.XCEC") == COMEX_MGC_IBKR
+    assert default_futures_fee_schedule("GCZ26.XCEC") == COMEX_GC_IBKR
+    assert default_futures_fee_schedule("1OZZ26.XCEC").name == "comex_1oz_ibkr"
+
+    with pytest.raises(InvalidRiskError, match="unknown futures cost profile"):
+        futures_cost_profile("comex_typo")
+
+    with pytest.raises(ValidationError, match="unknown futures cost profile"):
+        Settings(_env_file=None, futures_cost_profile="comex_typo")  # type: ignore[call-arg]
+
+    # Empty string in .env maps to None cleanly.
+    default_settings = Settings.model_validate({"futures_per_contract_fee": ""})
+    assert default_settings.futures_per_contract_fee is None
+
+    # Profile sets fee; explicit override wins when requested.
+    stressed = Settings(_env_file=None, futures_cost_profile="comex_stress_x2")  # type: ignore[call-arg]
+    assert stressed.futures_fee_schedule("MGCZ26.XCEC") == COMEX_STRESS_X2
+
+    # Profile wins over explicit fee field (consistent with cost_profile).
+    profile_wins = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        futures_cost_profile="comex_mgc_ibkr",
+        futures_per_contract_fee=Decimal("1.25"),
+    )
+    assert profile_wins.futures_fee_schedule("MGCZ26.XCEC").per_contract == Decimal("0.85")
+
+    # Without a profile, explicit custom per-contract fee is used.
+    custom = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        futures_per_contract_fee=Decimal("1.25"),
+    )
+    assert custom.futures_fee_schedule("MGCZ26.XCEC").per_contract == Decimal("1.25")

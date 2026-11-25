@@ -39,6 +39,9 @@ api = [
     "uvicorn>=0.53.0",
     "websockets>=17.1",
 ]
+databento = [
+    "databento>=0.40",
+]
 
 # Dev tools are not a feature of the package, so they are a dependency group, not an
 # extra (docs/27 E-2.9): `uv sync` installs `dev` by default, `uv sync --no-dev` (the

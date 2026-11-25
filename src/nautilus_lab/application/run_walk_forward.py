@@ -600,7 +600,7 @@ def _ref_leg(request: BacktestRequest) -> str:
 
 
 def _require_warmup(robot: RobotName, bar_count: int, fold: str) -> None:
-    if robot is RobotName.PAIRS:
+    if robot in (RobotName.PAIRS, RobotName.GOLD_SESSION_ORB):
         minimum = 200
     elif robot in (
         RobotName.REGIME,

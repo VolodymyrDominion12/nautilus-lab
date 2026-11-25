@@ -11,7 +11,13 @@ from nautilus_lab.application.train_classifier import (
 )
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.formulaic_alphas import MIN_HISTORY, FormulaicAlphaEngine
-from nautilus_lab.domain.meta_label_strategy import PrimaryRobot, encode_meta_features
+from nautilus_lab.domain.meta_label_strategy import (
+    META_FEATURE_NAMES,
+    META_FEATURE_NAMES_WITH_CONTEXT,
+    MetaContextExtractor,
+    PrimaryRobot,
+    encode_meta_features,
+)
 from nautilus_lab.domain.regime import RegimeParams
 from nautilus_lab.domain.regime_router import RegimeRouter
 from nautilus_lab.domain.signals import SignalSide
@@ -31,6 +37,7 @@ class MetaLabelDataset:
     outcomes: list[TripleBarrierOutcome]
     sample_times: tuple[int, ...]
     label_ends: tuple[int, ...]
+    feature_names: tuple[str, ...] = META_FEATURE_NAMES
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +62,7 @@ def build_meta_label_dataset(
     regime: RegimeParams | None = None,
     barrier: TripleBarrierConfig | None = None,
     volatility_window: int = 20,
+    include_context: bool = False,
 ) -> MetaLabelDataset:
     robot = (
         primary
@@ -66,6 +74,7 @@ def build_meta_label_dataset(
     )
     params = barrier or TripleBarrierConfig()
     engine = FormulaicAlphaEngine(history=max(MIN_HISTORY, 30))
+    context_extractor = MetaContextExtractor() if include_context else None
     features: list[tuple[Decimal, ...]] = []
     labels: list[int] = []
     outcomes: list[TripleBarrierOutcome] = []
@@ -74,6 +83,7 @@ def build_meta_label_dataset(
     awaiting_entry = True
     for index, bar in enumerate(bars):
         row = engine.update(bar)
+        context = context_extractor.update(bar) if context_extractor is not None else None
         signal = robot.on_bar(bar)
         if signal is not None and signal.side is SignalSide.FLAT:
             awaiting_entry = True
@@ -96,7 +106,7 @@ def build_meta_label_dataset(
         )
         if outcome is None:
             continue
-        features.append(encode_meta_features(row, signal.side))
+        features.append(encode_meta_features(row, signal.side, context=context))
         labels.append(1 if outcome.touch is BarrierTouch.PROFIT else 0)
         outcomes.append(outcome)
         sample_times.append(index)
@@ -108,6 +118,7 @@ def build_meta_label_dataset(
         outcomes=outcomes,
         sample_times=tuple(sample_times),
         label_ends=tuple(label_ends),
+        feature_names=META_FEATURE_NAMES_WITH_CONTEXT if include_context else META_FEATURE_NAMES,
     )
 
 

@@ -31,6 +31,8 @@ _FIELD_ENV: dict[str, str | None] = {
     "funding_min_net_apy": "FUNDING_MIN_NET_APY",
     "funding_holding_periods": "FUNDING_HOLDING_PERIODS",
     "ema_min_spread_pct": "EMA_MIN_SPREAD_PCT",
+    "gold_orb_max_box_atr": "GOLD_ORB_MAX_BOX_ATR",
+    "gold_orb_buffer_atr": "GOLD_ORB_BUFFER_ATR",
 }
 
 #: The value `gridded_env_names` probes the grid with. No grid point equals it, so a field
@@ -169,6 +171,22 @@ def iter_grid(
                     adaptive_selectivity=selectivity,
                 )
         return
+    if robot is RobotName.GOLD_SESSION_ORB:
+        # Small 3x3 grid (9 trials) to keep DSR deflation low; buffer=0 is the no-buffer control.
+        for max_box_atr in (Decimal("2.5"), Decimal("3.5"), Decimal("4.5")):
+            for buffer_atr in (Decimal("0.0"), Decimal("0.15"), Decimal("0.30")):
+                yield SelectedParams(
+                    fast_ema=base.fast_ema,
+                    slow_ema=base.slow_ema,
+                    donchian_period=base.donchian_period,
+                    bb_period=base.bb_period,
+                    bb_k=base.bb_k,
+                    enter_trend_er=base.enter_trend_er,
+                    exit_trend_er=base.exit_trend_er,
+                    gold_orb_max_box_atr=max_box_atr,
+                    gold_orb_buffer_atr=buffer_atr,
+                )
+        return
     if robot is RobotName.EMA:
         for fast, slow in ((5, 20), (10, 20), (10, 40), (12, 26)):
             yield SelectedParams(
@@ -233,6 +251,8 @@ def _probe_params() -> SelectedParams:
         funding_min_net_apy=probe,
         funding_holding_periods=_PROBE,
         ema_min_spread_pct=probe,
+        gold_orb_max_box_atr=probe,
+        gold_orb_buffer_atr=probe,
     )
 
 

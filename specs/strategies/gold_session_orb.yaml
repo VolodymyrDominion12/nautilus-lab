@@ -1,0 +1,181 @@
+# =============================================================================
+#  gold_session_orb — сесійний пробій азійського боксу на золоті (IANA DST)
+# =============================================================================
+#  Специфікація написана ДО коду (SDD, docs/38-gold-trading-spec-2026.md §4.2).
+#  Емпірична основа (2025–2026): нефільтровані London/NY ORB на золоті мають
+#  від'ємне нетто-очікування (−0.04R), а 19% днів пробивають обидва краї
+#  азійського діапазону. Додавання трендового фільтра (EMA 200), фільтра ширини
+#  азійського боксу відносно ATR, ліміту «не більше 1 входу на торговий день» і
+#  виходу за часом (max_hold_bars) перетворює пробій на перевірювану гіпотезу.
+# =============================================================================
+kind: strategy
+name: gold_session_orb
+version: "1.0"
+status: candidate
+title: "Gold Session ORB: тренд-фільтрований пробій азійського боксу з IANA DST-сесіями"
+
+hypothesis: >
+  Азійська сесія на золоті (00:00–07:00 Europe/London) формує нічний діапазон
+  консолідації, а відкриття Лондона й перетин Лондон–Нью-Йорк приносять основний
+  інституційний потік ордерів. Якщо торгувати лише перший закритий пробій межі
+  азійського боксу в напрямку старшого тренду (EMA 200), відсікати виснажені або
+  мертві дні за відношенням `box_width / ATR`, обмежуватися максимум 1 входом на
+  лондонський торговий день і закривати позицію по тайм-стопу або перед вихідними,
+  то OOS-доходність на `PAXGUSDT-PERP` / `XAUUSDT-PERP` (`1h`) і COMEX `MGC`
+  може обігнати buy&hold золота або суттєво зменшити максимальну просадку при
+  прийнятному PBO (<= 0.30). Гіпотеза фальсифікується, якщо після реальних комісій
+  і стресу `stress_x1_5` стратегія програє buy&hold золота на 6+ rolling-фолдах.
+
+edge_conditions:
+  - name: trend_and_box_filter_beats_unfiltered_orb
+    description: >
+      Поєднання фільтра старшого тренду (`GOLD_ORB_TREND_EMA_PERIOD=200`) і фільтра
+      ширини азійського боксу (`min_box_atr <= box_width/ATR <= max_box_atr`) дає
+      вищий OOS profit factor і нижчу просадку, ніж нефільтрований пробій боксу.
+  - name: max_one_entry_per_london_day
+    description: >
+      Не більше одного входу на лондонський торговий день, щоб не потрапляти в
+      двосторонні свіпи ліквідності (19% торгових днів на золоті).
+  - name: oos_beats_gold_buy_and_hold_net_of_costs
+    description: >
+      OOS-агрегат (`--folds >= 4`) на `PAXGUSDT-PERP` / `MGC` витримує реальні
+      комісії та `stress_x1_5` (breakeven > paid_cost_bps) і показує перевагу
+      проти buy&hold золота за той самий період.
+
+known_failure_modes:
+  - id: FM-GOLD-01-DOUBLE-SWEEP
+    symptom: Повторні стопи в один день при пробої обох меж азійського боксу.
+    cause: 19% торгових днів золота пробивають і верхню, і нижню межу Азії.
+    fix: Ліміт max 1 вхід на лондонський день + буфер `GOLD_ORB_BUFFER_ATR` + фільтр EMA 200.
+  - id: FM-GOLD-02-DST-SHIFT
+    symptom: Зсув вікна боксу й перетину Лондон–Нью-Йорк на 1 годину навесні й восени.
+    cause: США та Велика Британія переводять годинники в різні тижні; фіксований UTC ламається.
+    fix: Класифікація сесій у `domain/sessions.py` через IANA `zoneinfo` (`Europe/London`, `America/New_York`).
+  - id: FM-GOLD-03-EXHAUSTED-ASIA-BOX
+    symptom: Вхід на піку після того, як денний рух уже відбувся в Азії.
+    cause: Великі геополітичні новини в азійську сесію розтягують бокс понад денний ATR.
+    fix: Пропуск дня, якщо `box_width / ATR > GOLD_ORB_MAX_BOX_ATR` або `< GOLD_ORB_MIN_BOX_ATR`.
+  - id: FM-GOLD-04-WEEKEND-GAP
+    symptom: Широкі тіні (wicks) і проковзування на тонкій вікенд-ліквідності Binance перпів.
+    cause: COMEX і TradFi-оракули закриті з пт 17:00 ET до нд 18:00 ET.
+    fix: Заборона нових входів і автоматичне закриття відкритої позиції при переході в `GoldSession.WEEKEND`.
+
+implementation:
+  domain_module: src/nautilus_lab/domain/gold_session_orb.py
+  strategy_class: GoldSessionOrb
+  backtest_adapter: signal_strategy
+  wired_in_backtest: true
+  minimum_bars: 200
+  grid_source: explicit
+  signal_kind: breakout
+
+params:
+  - env: GOLD_ORB_MAX_BOX_ATR
+    default: 3.5
+    grid: [2.5, 3.5, 4.5]
+    description: >
+      Максимальна допустима ширина 7-годинного азійського боксу у частках `ATR(14)`
+      базового таймфрейму (`1h`). Діапазон `[2.5, 3.5, 4.5]` відповідає ~0.5–0.9×
+      денного ATR (`sqrt(24) ≈ 4.9` переведення з 1h ATR; попередній запуск `H-GOLD-02`
+      `ba70eef22316` із денними значеннями `[0.6, 0.8, 1.0]` на 1h ATR відсіяв >99% днів
+      і дав `fills=0`).
+  - env: GOLD_ORB_BUFFER_ATR
+    default: 0.15
+    grid: [0.0, 0.15, 0.30]
+    description: >
+      Буфер пробою поза межею азійського боксу в частках ATR (`close > box_high + buffer * ATR`).
+      Зменшує хибні пробої на тонкому рівні ліквідності; `0.0` слугує контрольною точкою без буфера.
+  - env: GOLD_ORB_MIN_BOX_ATR
+    default: 0.5
+    tuned: false
+    description: >
+      Мінімальна ширина азійського боксу у частках `ATR(14)` базового таймфрейму (~0.1× денного ATR).
+    note: >
+      Відсікає мертві / святкові ночі з нульовим діапазоном; не підбирається в сітці,
+      щоб тримати кількість випробувань у DSR мінімальною (3×3 = 9 точок).
+  - env: GOLD_ORB_ATR_PERIOD
+    default: 14
+    tuned: false
+    description: >
+      Період ATR для нормування ширини боксу й буфера пробою.
+    note: >
+      Стандартне вікно ATR(14) на закритих барах; не є віссю оптимізації.
+  - env: GOLD_ORB_TREND_EMA_PERIOD
+    default: 200
+    tuned: false
+    description: >
+      Період трендової EMA (фільтр напрямку пробою: лонг лише вище EMA, шорт лише нижче EMA).
+    note: >
+      Зафіксований за емпіричною літературою (1H 200 EMA) для уникнення перенавчання.
+  - env: GOLD_ORB_MAX_HOLD_BARS
+    default: 24
+    tuned: false
+    description: >
+      Максимальна тривалість утримання позиції у барах (тайм-стоп).
+    note: >
+      24 бари на 1h (~1 торгова доба) дозволяють руху покрити комісії й спред,
+      на відміну від 4-годинного скальп-виходу.
+  - env: GOLD_ORB_ALLOW_SHORT
+    default: false
+    tuned: false
+    description: >
+      Чи дозволяти пробої вниз (шорт нижче азійського боксу й нижче EMA 200).
+    note: >
+      Типово `false` з огляду на довгостроковий висхідний дрейф золота та кращу
+      стійкість long-only COMEX ORB; вмикається окремою пререєстрованою гіпотезою.
+  - env: GOLD_ORB_MIN_ASIA_BARS
+    default: 3
+    tuned: false
+    description: >
+      Мінімальна кількість закритих барів в азійській сесії для валідного боксу.
+    note: >
+      Захист від торгівлі за неповним боксом після пропусків або на старті вікна.
+
+invariants:
+  no_lookahead: true
+  closed_bars_only: true
+  decimal_not_float: true
+  fail_closed_without_adapter: false
+
+evidence:
+  measured: true
+  beats_buy_hold: false
+  reproduce: >
+    GOLD_ORB_MIN_BOX_ATR=0.5 GOLD_ORB_MAX_BOX_ATR=3.5
+    uv run lab research --robot gold_session_orb --instrument PAXGUSDT-PERP.SIM --catalog catalog_gold_1h --interval 1h --folds 6 --cost-profile binance_vip0_bnb
+    (та --pbo, --cost-profile stress_x1_5, --instrument PAXG/USDT.SIM --folds 3).
+  notes: >
+    Виміряно на реальному 1h каталозі Binance (`catalog_gold_1h`):
+    1) Діагностика одиниць виміру (`H-GOLD-02`, ba70eef22316): початкова сітка
+    денних значень `[0.6, 0.8, 1.0]` на годинному `ATR(14)` відсіяла >99.3% днів
+    (медіана `box_width / 1h_ATR = 2.96`) і дала `oos_fills = 0`, `0.00%`.
+    2) Після калібрування на годинний ATR (`[2.5, 3.5, 4.5]`, `min=0.5`,
+    `H-GOLD-02B`, d945052f1f75, `PAXGUSDT-PERP.SIM`, 6 rolling-фолдів OOS
+    2026-05-27..2026-11-25): `profitable = 1/6`, `mean_gross = -0.12%`,
+    `mean_oos = -0.31%`, `worst = -2.69%`, `oos_fills = 32`, `breakeven = -11.88 bps`,
+    програв `vol_matched_buy_hold (+0.10%)` → `promotion_gate = REJECT`.
+    Під `stress_x1_5`: `mean_oos = -0.40%` (`1/6`, `worst = -2.92%`).
+    PBO/CSCV (8 блоків × 9 конфігів, 70 сплітів): `PBO = 0.5714`, `DSR = 0.0555` → `REJECT`.
+    3) Стрес-слайси: `gold_rates2022` (`PAXG/USDT.SIM`, 4 фолди) `mean_oos = -0.35%`
+    (`2/4`, `breakeven = 1.57 bps`, vs buy&hold `+0.32%`); `gold_blowoff2026`
+    (`PAXGUSDT-PERP.SIM`, 3 фолди) `mean_oos = -0.48%` (`0/3`, `oos_fills = 6`).
+    4) Багаторічний `PAXG/USDT.SIM` (`2020-08-28..2026-11-25`, 54 697 барів,
+    3 фолди, OOS 2025-01..2026-11): `profitable = 0/3`, `mean_gross = +2.43%`,
+    `mean_oos = -2.29%`, `oos_fills = 250`, `breakeven = 3.46 bps` < 7.5 bps спот-комісії,
+    vs `buy&hold = +13.48%` (`vol_matched = +3.57%`) → `REJECT`.
+    5) TradFi-перп `XAUUSDT-PERP.SIM` (`1h`, 8 377 барів, 6 фолдів):
+    `profitable = 1/6`, `mean_gross = -0.02%`, `mean_oos = -0.14%`, `oos_fills = 20`,
+    `breakeven = -18.49 bps` vs `vol_matched = -0.12%` → `REJECT`.
+    Статус лишається `candidate`: на Binance `1h` слабкий грос-edge (`3.46 bps`)
+    з'їдається комісіями; перевірка на COMEX `MGC` (нижчі інституційні витрати)
+    потребує Track B даних Databento.
+
+notes: >
+  Створено в межах Фази G2 (`docs/38-gold-trading-spec-2026.md`). Використовує
+  чистий доменний модуль `src/nautilus_lab/domain/sessions.py` (IANA `zoneinfo`).
+  Сітка свідомо мала (3×3 = 9 точок), щоб не роздувати DSR і зберігати прозорий
+  контроль (`GOLD_ORB_BUFFER_ATR=0.0`).
+
+references:
+  - docs/38-gold-trading-spec-2026.md
+  - specs/components/gold-trading.yaml

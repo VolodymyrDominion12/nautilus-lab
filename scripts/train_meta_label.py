@@ -18,7 +18,10 @@ from nautilus_lab.application.train_meta_label import (
 )
 from nautilus_lab.domain.fees import FeeSchedule
 from nautilus_lab.domain.triple_barrier import TripleBarrierConfig
+from nautilus_lab.infrastructure.nautilus.bar_feed import attach_premium_index
+from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
+from nautilus_lab.infrastructure.premium_index_catalog import ParquetPremiumIndexCatalog
 from nautilus_lab.infrastructure.timeframe import nautilus_bar_type
 
 
@@ -46,6 +49,11 @@ def main() -> None:
         default="0.55",
         help="Operating threshold for OOF precision (same as META_LABEL_THRESHOLD)",
     )
+    parser.add_argument(
+        "--context-features",
+        action="store_true",
+        help="Include 8 causal premium_index and gold-session features (21 total)",
+    )
     parser.add_argument("--start", default=None, help="Inclusive UTC start (YYYY-MM-DD)")
     parser.add_argument(
         "--end",
@@ -59,9 +67,20 @@ def main() -> None:
     require_exclusive_window(start, end)
     window = describe_train_window(start=start, end=end)
 
-    store = NautilusParquetCatalog(Path(args.catalog), fees=FeeSchedule.binance_spot_vip0())
+    catalog_root = Path(args.catalog)
+    store = NautilusParquetCatalog(catalog_root, fees=FeeSchedule.binance_spot_vip0())
     bar_type = nautilus_bar_type(args.instrument, args.interval)
     bars = store.load(bar_type=bar_type, start=start, end=end)
+    if args.context_features:
+        symbol = binance_symbol_for_instrument(args.instrument)
+        if symbol is not None:
+            prem_series = ParquetPremiumIndexCatalog(catalog_root).load(
+                symbol=symbol,
+                interval=args.interval,
+                start=start,
+                end=end,
+            )
+            bars = attach_premium_index(bars, prem_series)
     barrier = TripleBarrierConfig(
         profit_multiple=Decimal(args.profit_multiple),
         stop_multiple=Decimal(args.stop_multiple),
@@ -72,6 +91,7 @@ def main() -> None:
         instrument_id=args.instrument,
         barrier=barrier,
         volatility_window=args.vol_window,
+        include_context=args.context_features,
     )
     report = train_meta_label_lightgbm(
         dataset,

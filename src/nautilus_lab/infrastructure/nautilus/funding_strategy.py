@@ -431,6 +431,17 @@ class FundingRobot(Strategy):  # type: ignore[misc]
         )
         return holding_from_signed_qty(signed)
 
+    def _holding_perp(self) -> Holding:
+        signed = sum(
+            (
+                lot.signed_qty
+                for lot in self._open_lots()
+                if lot.instrument_id == str(self.config.leg_perp_id)
+            ),
+            Decimal("0"),
+        )
+        return holding_from_signed_qty(signed)
+
     def _open_lots(self) -> list[OpenLot]:
         return [
             OpenLot(

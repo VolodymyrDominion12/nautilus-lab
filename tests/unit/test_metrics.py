@@ -111,3 +111,41 @@ def test_vol_matched_buy_and_hold_leverage_capped() -> None:
     assert bnh is not None
     assert vol_bnh is not None
     assert vol_bnh == Decimal("2.0") * bnh
+
+
+def test_annualized_sharpe_uses_calendar_periods() -> None:
+    from math import sqrt
+
+    from nautilus_lab.domain.calendar import TradingCalendar
+    from nautilus_lab.domain.metrics import compute_metrics, periods_per_year
+
+    crypto_1h = periods_per_year("1h", TradingCalendar.CRYPTO_24_7)
+    cme_1h = periods_per_year("1h", TradingCalendar.CME_GLOBEX_23_5)
+    cme_1d = periods_per_year("1d", TradingCalendar.CME_GLOBEX_23_5)
+    one_oz_1h = periods_per_year("1h", TradingCalendar.CME_1OZ_24_7)
+
+    assert crypto_1h == 8_760
+    assert cme_1h == 5_796
+    assert cme_1d == 252
+    assert one_oz_1h == 8_708
+
+    equity = (Decimal("10000"), Decimal("10100"), Decimal("10050"), Decimal("10200"))
+    m_crypto = compute_metrics(
+        starting_equity=Decimal("10000"),
+        equity_curve=equity,
+        fees_paid=Decimal("0"),
+        turnover=Decimal("1000"),
+        periods_per_year=crypto_1h,
+    )
+    m_cme = compute_metrics(
+        starting_equity=Decimal("10000"),
+        equity_curve=equity,
+        fees_paid=Decimal("0"),
+        turnover=Decimal("1000"),
+        periods_per_year=cme_1h,
+    )
+    assert m_crypto.sharpe_like == m_cme.sharpe_like
+    assert m_crypto.sharpe_annualized is not None
+    assert m_cme.sharpe_annualized is not None
+    ratio = float(m_cme.sharpe_annualized / m_crypto.sharpe_annualized)
+    assert abs(ratio - sqrt(5_796 / 8_760)) < 1e-9

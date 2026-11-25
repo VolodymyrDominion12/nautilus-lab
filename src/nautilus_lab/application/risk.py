@@ -25,8 +25,9 @@ def size_position(
     stop_distance: Decimal,
     risk_fraction: Decimal,
     qty_step: Decimal,
+    multiplier: Decimal = Decimal("1"),
 ) -> Decimal:
-    """Risk a fraction of equity across `stop_distance`, capped at 1x notional."""
+    """Risk a fraction of equity across `stop_distance * multiplier`, capped at 1x notional."""
     if equity <= 0:
         raise InvalidRiskError("equity must be > 0")
     if price <= 0:
@@ -37,10 +38,12 @@ def size_position(
         raise InvalidRiskError("risk_fraction must be in (0, 1]")
     if qty_step <= 0:
         raise InvalidRiskError("qty_step must be > 0")
+    if multiplier <= 0:
+        raise InvalidRiskError("multiplier must be > 0")
 
     risk_cash = equity * risk_fraction
-    raw_qty = risk_cash / stop_distance
-    max_qty = equity / price
+    raw_qty = risk_cash / (stop_distance * multiplier)
+    max_qty = equity / (price * multiplier)
     qty = min(raw_qty, max_qty)
     steps = (qty / qty_step).to_integral_value(rounding=ROUND_DOWN)
     return steps * qty_step
@@ -56,8 +59,10 @@ def size_spread(
     hedge_ratio: Decimal,
     qty_step_a: Decimal,
     qty_step_b: Decimal,
+    multiplier_a: Decimal = Decimal("1"),
+    multiplier_b: Decimal = Decimal("1"),
 ) -> tuple[Decimal, Decimal]:
-    """Quantities for a hedged spread: leg A is risk-sized, leg B = |hedge_ratio| x qty_A.
+    """Quantities for a hedged spread: leg A is risk-sized, leg B = |hedge_ratio| x units_A.
 
     Audit B1: the hedge ratio is a *quantity* ratio (spread = A - beta*B), but it used to
     be applied as a risk multiplier, and each leg was then divided by its own stop
@@ -72,18 +77,23 @@ def size_spread(
         raise InvalidRiskError("price must be > 0")
     if qty_step_b <= 0:
         raise InvalidRiskError("qty_step must be > 0")
+    if multiplier_a <= 0 or multiplier_b <= 0:
+        raise InvalidRiskError("multiplier must be > 0")
     qty_a = size_position(
         equity=equity,
         price=price_a,
         stop_distance=stop_distance_a,
         risk_fraction=risk_fraction,
         qty_step=qty_step_a,
+        multiplier=multiplier_a,
     )
-    notional_b = qty_a * hedge * price_b
+    notional_b = qty_a * multiplier_a * hedge * price_b
     if notional_b > equity:
         scaled = qty_a * equity / notional_b
         qty_a = (scaled / qty_step_a).to_integral_value(rounding=ROUND_DOWN) * qty_step_a
-    qty_b = (qty_a * hedge / qty_step_b).to_integral_value(rounding=ROUND_DOWN) * qty_step_b
+    qty_b = ((qty_a * multiplier_a * hedge / multiplier_b) / qty_step_b).to_integral_value(
+        rounding=ROUND_DOWN
+    ) * qty_step_b
     if qty_a <= 0 or qty_b <= 0:
         return Decimal("0"), Decimal("0")
     return qty_a, qty_b

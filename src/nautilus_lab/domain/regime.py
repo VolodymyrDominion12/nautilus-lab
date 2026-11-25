@@ -23,6 +23,7 @@ class RobotName(StrEnum):
     FORMULAIC_LGBM = "formulaic_lgbm"
     META_LABEL = "meta_label"
     ADAPTIVE_EMA = "adaptive_ema"
+    GOLD_SESSION_ORB = "gold_session_orb"
     FUNDING = "funding"
     ML_OBI = "ml_obi"
     GLFT = "glft"
@@ -41,6 +42,7 @@ BACKTEST_WIRED_ROBOTS: frozenset[RobotName] = frozenset(
         RobotName.FORMULAIC_LGBM,
         RobotName.META_LABEL,
         RobotName.ADAPTIVE_EMA,
+        RobotName.GOLD_SESSION_ORB,
         RobotName.ML_OBI,
         RobotName.FUNDING,
     }

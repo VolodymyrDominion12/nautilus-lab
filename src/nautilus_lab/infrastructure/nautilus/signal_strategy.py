@@ -60,6 +60,7 @@ from nautilus_lab.domain.global_trend import (
     MaKind,
     WarmupPolicy,
 )
+from nautilus_lab.domain.gold_session_orb import GoldSessionOrb, GoldSessionOrbParams
 from nautilus_lab.domain.marking import OpenLot, marked_equity
 from nautilus_lab.domain.meta_label_strategy import MetaLabelStrategy
 from nautilus_lab.domain.ml_obi_strategy import MlObiStrategy
@@ -143,6 +144,7 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     max_var_99: Decimal = Decimal("0.05")
     quote_currency: str = "USDT"
     qty_step: Decimal = Decimal("0.001")
+    qty_multiplier: Decimal = Decimal("1")
     use_bar_vpin: bool = False
     use_tick_vpin: bool = False
     use_quantile_vpin: bool = False
@@ -163,6 +165,7 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     formulaic_min_hold_bars: int = 0
     meta_label_model_path: str | None = None
     meta_label_threshold: Decimal = Decimal("0.55")
+    meta_label_context_features: bool = False
     adaptive_period: int = 40
     adaptive_er_period: int = 20
     adaptive_selectivity: Decimal = Decimal("0.5")
@@ -171,6 +174,14 @@ class SignalRobotConfig(StrategyConfig, frozen=True):
     adaptive_range_exit_at_mean: bool = False
     adaptive_min_bb_width_pct: Decimal = Decimal("0")
     adaptive_hold_trend_in_range: bool = True
+    gold_orb_atr_period: int = 14
+    gold_orb_trend_ema_period: int = 200
+    gold_orb_min_box_atr: Decimal = Decimal("0.5")
+    gold_orb_max_box_atr: Decimal = Decimal("3.5")
+    gold_orb_buffer_atr: Decimal = Decimal("0.15")
+    gold_orb_max_hold_bars: int = 24
+    gold_orb_allow_short: bool = False
+    gold_orb_min_asia_bars: int = 3
     use_vol_scaling: bool = False
     vol_scaling_target: Decimal = Decimal("0.02")
     vol_model: VolModel = VolModel.HAR
@@ -218,6 +229,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         config: SignalRobotConfig,
         *,
         taker_buy_base_volume_by_ns: Mapping[int, Decimal] | None = None,
+        premium_index_by_ns: Mapping[int, Decimal] | None = None,
         decision_log: DecisionLogPort | None = None,
         session_id: str | None = None,
     ) -> None:
@@ -337,6 +349,9 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._taker_buy_by_ns = (
             None if taker_buy_base_volume_by_ns is None else dict(taker_buy_base_volume_by_ns)
         )
+        self._premium_index_by_ns = (
+            None if premium_index_by_ns is None else dict(premium_index_by_ns)
+        )
         self._last_tick_ts: datetime | None = None
         self._last_vol_forecast: Decimal | None = None
 
@@ -374,6 +389,10 @@ class SignalRobot(Strategy):  # type: ignore[misc]
                 # Enrich before validating so the `taker <= volume` invariant covers the
                 # join too: a stale flow series must fail here, not skew the feature.
                 domain_bar = replace(domain_bar, taker_buy_base_volume=taker_buy)
+        if self._premium_index_by_ns is not None:
+            premium = self._premium_index_by_ns.get(int(bar.ts_event))
+            if premium is not None:
+                domain_bar = replace(domain_bar, premium_index_close=premium)
         validate_bar(domain_bar, previous_ts=self._previous_ts, now=domain_bar.ts_utc)
         self._previous_ts = domain_bar.ts_utc
         self._atr.update(domain_bar)
@@ -883,7 +902,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         self._entry_decision_ts = self._current_bar_ts
         self._entry_fee = Decimal("0")
         self.submit_order(order)
-        self._turnover += current_price * qty
+        self._turnover += current_price * qty * self.config.qty_multiplier
         self._arm_ratchet(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
         self._arm_chandelier(current_price, SignalSide.BUY if desired_buy else SignalSide.SELL)
         steps.append(
@@ -1048,6 +1067,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
             stop_distance=distance,
             risk_fraction=risk_fraction,
             qty_step=self.config.qty_step,
+            multiplier=self.config.qty_multiplier,
         )
         sizing = self._sizing_step(
             equity=equity,
@@ -1086,9 +1106,14 @@ class SignalRobot(Strategy):  # type: ignore[misc]
         equity misses that (flooring to `qty_step` always leaves it a hair below), so the
         comparison uses the unrounded risk-based quantity.
         """
-        risk_based_qty = (equity * risk_fraction / distance) if distance > 0 else Decimal("0")
-        cap_binds = risk_based_qty > (equity / price) if price > 0 else False
-        notional = price * qty
+        mult = self.config.qty_multiplier
+        risk_based_qty = (
+            (equity * risk_fraction / (distance * mult))
+            if distance > 0 and mult > 0
+            else Decimal("0")
+        )
+        cap_binds = risk_based_qty > (equity / (price * mult)) if price > 0 and mult > 0 else False
+        notional = price * qty * mult
         if qty <= 0:
             result = "sized quantity is 0"
         elif cap_binds:
@@ -1470,6 +1495,7 @@ class SignalRobot(Strategy):  # type: ignore[misc]
                 instrument_id=instrument_id,
                 signed_qty=_as_decimal(position.signed_qty),
                 avg_price=_as_decimal(position.avg_px_open),
+                multiplier=self.config.qty_multiplier,
             )
             for position in self.cache.positions_open(instrument_id=self.config.instrument_id)
         ]
@@ -1634,6 +1660,20 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             ),
             legs=parse_legs(config.regime_legs),
         )
+    if robot is RobotName.GOLD_SESSION_ORB:
+        return GoldSessionOrb(
+            instrument_id=instrument_id,
+            params=GoldSessionOrbParams(
+                atr_period=config.gold_orb_atr_period,
+                trend_ema_period=config.gold_orb_trend_ema_period,
+                min_box_atr=config.gold_orb_min_box_atr,
+                max_box_atr=config.gold_orb_max_box_atr,
+                buffer_atr=config.gold_orb_buffer_atr,
+                max_hold_bars=config.gold_orb_max_hold_bars,
+                allow_short=config.gold_orb_allow_short,
+                min_asia_bars=config.gold_orb_min_asia_bars,
+            ),
+        )
     if robot is RobotName.META_LABEL:
         model_path = require_model_path(config.meta_label_model_path, robot="meta_label")
         return MetaLabelStrategy(
@@ -1641,6 +1681,7 @@ def _build_robot(config: SignalRobotConfig) -> SingleLegRobot:
             primary=_regime_primary(config, instrument_id),
             classifier=LightGBMSuccessClassifier(model_path=model_path),
             threshold=config.meta_label_threshold,
+            include_context=config.meta_label_context_features,
         )
     if robot is RobotName.ML_OBI:
         classifier = _build_classifier(config.ml_obi_model_path, robot="ml_obi")

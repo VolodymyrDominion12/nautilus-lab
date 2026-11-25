@@ -48,6 +48,8 @@ STABLE_OR_FIAT_BASES = frozenset(
         "BKRW",
     }
 )
+#: Tokenised and TradFi precious-metal bases: distinct macro asset class from altcoins.
+METAL_BASES = frozenset({"PAXG", "XAUT", "XAU", "XAG"})
 #: Binance leveraged tokens: rebalancing products, not the underlying.
 _LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
 #: Real coins whose ticker happens to end like a leveraged token.
@@ -62,10 +64,12 @@ def base_of(symbol: str, quote: str = "USDT") -> str | None:
     return clean[: -len(quote)]
 
 
-def is_tradeable_base(base: str) -> bool:
-    """True for a crypto asset; False for stablecoins, fiat and leveraged tokens."""
+def is_tradeable_base(base: str, *, include_metals: bool = False) -> bool:
+    """True for a crypto base; False for stables, fiat, leveraged tokens, and default metals."""
     upper = base.upper()
     if upper in STABLE_OR_FIAT_BASES:
+        return False
+    if not include_metals and upper in METAL_BASES:
         return False
     if upper in _LEVERAGED_FALSE_POSITIVES:
         return True
@@ -74,12 +78,27 @@ def is_tradeable_base(base: str) -> bool:
     )
 
 
-def candidate_symbols(symbols: Sequence[str], quote: str = "USDT") -> list[str]:
-    """Archive symbols worth ingesting: `*USDT`, crypto bases only, sorted."""
+def candidate_symbols(
+    symbols: Sequence[str],
+    quote: str = "USDT",
+    *,
+    include_metals: bool = False,
+) -> list[str]:
+    """Archive symbols worth ingesting: `*USDT`, crypto bases only unless `include_metals=True`."""
     out: list[str] = []
     for symbol in symbols:
         base = base_of(symbol, quote)
-        if base is not None and is_tradeable_base(base):
+        if base is not None and is_tradeable_base(base, include_metals=include_metals):
+            out.append(symbol.upper())
+    return sorted(set(out))
+
+
+def metal_symbols(symbols: Sequence[str], quote: str = "USDT") -> list[str]:
+    """Select precious-metal symbols (`PAXG`, `XAUT`, `XAU`, `XAG`) quoted in `quote`, sorted."""
+    out: list[str] = []
+    for symbol in symbols:
+        base = base_of(symbol, quote)
+        if base is not None and base in METAL_BASES:
             out.append(symbol.upper())
     return sorted(set(out))
 

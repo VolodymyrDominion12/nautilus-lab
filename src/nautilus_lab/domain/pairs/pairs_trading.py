@@ -14,9 +14,16 @@ from nautilus_lab.domain.decision_trace import (
     step,
     warmup_step,
 )
-from nautilus_lab.domain.pairs.cointegration import CointegrationResult, fit_cointegration
+from nautilus_lab.domain.pairs.cointegration import (
+    _MIN_OBSERVATIONS,
+    CointegrationResult,
+    _adf_test,
+    _std,
+    fit_cointegration,
+)
+from nautilus_lab.domain.pairs.kalman import KalmanHedgeFilter, KalmanStep
 from nautilus_lab.domain.pairs.ou import OuFit, fit_ou_half_life, z_score
-from nautilus_lab.domain.pairs.params import PairsParams
+from nautilus_lab.domain.pairs.params import HedgeEstimator, PairsParams
 from nautilus_lab.domain.quantiles import empirical_quantile
 from nautilus_lab.domain.signals import LegIntent, SignalSide, SpreadSignal
 from nautilus_lab.domain.windows import RollingWindow
@@ -41,6 +48,13 @@ class PairsTrading:
         self._params = params
         self._closes_a = RollingWindow(params.lookback)
         self._closes_b = RollingWindow(params.lookback)
+        self._kalman = (
+            KalmanHedgeFilter(delta=params.kalman_delta)
+            if params.hedge_estimator is HedgeEstimator.KALMAN
+            else None
+        )
+        self._kalman_innovations = RollingWindow(params.lookback)
+        self._last_kalman_step: KalmanStep | None = None
         self._state: _PairState | None = None
         self._bars_since_refit = 0
         self._bars_until_retry = 0
@@ -66,6 +80,10 @@ class PairsTrading:
     def _decide(self, bar_a: OhlcvBar, bar_b: OhlcvBar) -> SpreadSignal | None:
         self._closes_a.push(bar_a.close)
         self._closes_b.push(bar_b.close)
+        if self._kalman is not None:
+            kalman_step = self._kalman.update(bar_a.close, bar_b.close)
+            self._last_kalman_step = kalman_step
+            self._kalman_innovations.push(kalman_step.innovation)
         if not self._closes_a.full:
             self._trace = (
                 warmup_step("PairsTrading", seen=self._seen, required=self._params.lookback),
@@ -329,16 +347,36 @@ class PairsTrading:
         return None
 
     def _fit_state(self) -> _PairState | None:
-        y = self._closes_a.values()
-        x = self._closes_b.values()
-        coint = fit_cointegration(y, x)
+        if self._params.hedge_estimator is HedgeEstimator.KALMAN:
+            step_now = self._last_kalman_step
+            if step_now is None:
+                return None
+            raw_innovations = self._kalman_innovations.values()
+            spread = (
+                raw_innovations[1:]
+                if self._seen == len(raw_innovations) and len(raw_innovations) > _MIN_OBSERVATIONS
+                else raw_innovations
+            )
+            adf_stat, adf_p, lags = _adf_test(spread)
+            coint = CointegrationResult(
+                hedge_ratio=step_now.beta,
+                intercept=step_now.intercept,
+                adf_statistic=adf_stat,
+                adf_pvalue=adf_p,
+                residual_std=_std(spread),
+                adf_lags=lags,
+            )
+        else:
+            y = self._closes_a.values()
+            x = self._closes_b.values()
+            coint = fit_cointegration(y, x)
+            spread = tuple(
+                item_y - coint.intercept - coint.hedge_ratio * item_x
+                for item_y, item_x in zip(y, x, strict=True)
+            )
         self._last_fit = {"adf_pvalue": coint.adf_pvalue, "hedge_ratio": coint.hedge_ratio}
         if coint.adf_pvalue > self._params.adf_pvalue_max:
             return None
-        spread = tuple(
-            item_y - coint.intercept - coint.hedge_ratio * item_x
-            for item_y, item_x in zip(y, x, strict=True)
-        )
         ou = fit_ou_half_life(spread)
         self._last_fit["half_life_bars"] = ou.half_life_bars
         if ou.half_life_bars > Decimal(self._params.max_half_life_bars):

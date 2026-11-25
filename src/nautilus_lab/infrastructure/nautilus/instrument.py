@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from collections.abc import Iterable
 from decimal import Decimal
 from pathlib import Path
 
+from nautilus_trader.model.enums import AssetClass
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
-from nautilus_trader.model.instruments import CryptoPerpetual, CurrencyPair
+from nautilus_trader.model.instruments import (
+    CryptoPerpetual,
+    CurrencyPair,
+    FuturesContract,
+    Instrument,
+)
 from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from nautilus_lab.domain.fees import FeeSchedule
@@ -40,6 +47,11 @@ _SPOT_SPECS: dict[str, tuple[str, str, int, str, str]] = {
     "DOT/USDT.SIM": ("DOT", "USDT", 3, "0.001", "0.01"),
     "MATIC/USDT.SIM": ("MATIC", "USDT", 4, "0.0001", "0.1"),
     "LINK/USDT.SIM": ("LINK", "USDT", 3, "0.001", "0.01"),
+    # Tokenized gold on Binance spot (verified against api/v3/exchangeInfo).
+    # XAU/USDT and XAG/USDT are intentionally omitted: Binance lists them only as
+    # USD-M TradFi perpetuals, so spot requests must fail closed.
+    "PAXG/USDT.SIM": ("PAXG", "USDT", 2, "0.01", "0.0001"),
+    "XAUT/USDT.SIM": ("XAUT", "USDT", 2, "0.01", "0.0001"),
 }
 
 _PERP_SPECS: dict[str, tuple[str, str, int, str, str]] = {
@@ -54,7 +66,31 @@ _PERP_SPECS: dict[str, tuple[str, str, int, str, str]] = {
     "DOTUSDT-PERP.SIM": ("DOT", "USDT", 3, "0.001", "0.1"),
     "MATICUSDT-PERP.SIM": ("MATIC", "USDT", 4, "0.0001", "1"),
     "LINKUSDT-PERP.SIM": ("LINK", "USDT", 3, "0.001", "0.01"),
+    # Metals on Binance USD-M Futures (verified against fapi/v1/exchangeInfo):
+    # PAXG/XAUT are PERPETUAL; XAU/XAG are TRADIFI_PERPETUAL.
+    "PAXGUSDT-PERP.SIM": ("PAXG", "USDT", 2, "0.01", "0.001"),
+    "XAUTUSDT-PERP.SIM": ("XAUT", "USDT", 2, "0.01", "0.001"),
+    "XAUUSDT-PERP.SIM": ("XAU", "USDT", 2, "0.01", "0.001"),
+    "XAGUSDT-PERP.SIM": ("XAG", "USDT", 2, "0.01", "0.001"),
 }
+
+# (underlying, quote, price_precision, price_increment, multiplier)
+_FUTURES_SPECS: dict[str, tuple[str, str, int, str, str]] = {
+    "GCZ26.XCEC": ("GC", "USD", 2, "0.10", "100"),
+    "MGCZ26.XCEC": ("MGC", "USD", 2, "0.10", "10"),
+    "1OZZ26.XCEC": ("1OZ", "USD", 2, "0.25", "1"),
+    "GC.v.0.GLBX": ("GC", "USD", 2, "0.10", "100"),
+    "MGC.v.0.GLBX": ("MGC", "USD", 2, "0.10", "10"),
+    "1OZ.v.0.GLBX": ("1OZ", "USD", 2, "0.25", "1"),
+}
+
+_COMEX_UNDERLYING_SPECS: dict[str, tuple[str, int, str, str]] = {
+    "GC": ("USD", 2, "0.10", "100"),
+    "MGC": ("USD", 2, "0.10", "10"),
+    "1OZ": ("USD", 2, "0.25", "1"),
+}
+
+_COMEX_FUTURES_RE = re.compile(r"^(MGC|GC|1OZ)(?:[FGHJKMNQUVXZ]\d{1,2}|\.[vcn]\.\d+)\.(XCEC|GLBX)$")
 
 
 # --- instrument registry -----------------------------------------------------------
@@ -130,7 +166,11 @@ def register_instrument(
     Precision only ever grows: a later ingest that sees a finer tick widens the spec,
     a coarser sample never narrows it (narrowing would round prices already stored).
     """
-    if instrument_id in _SPOT_SPECS or instrument_id in _PERP_SPECS:
+    if (
+        instrument_id in _SPOT_SPECS
+        or instrument_id in _PERP_SPECS
+        or _match_comex_futures_spec(instrument_id) is not None
+    ):
         return False
     base, quote = _split_instrument_id(instrument_id)
     target = path or registry_path()
@@ -189,6 +229,29 @@ def _registered_spec(
     return (str(entry["base"]), str(entry["quote"]), price, _increment(price), _increment(size))
 
 
+def _match_comex_futures_spec(instrument_id: str) -> tuple[str, str, int, str, str] | None:
+    if instrument_id in _FUTURES_SPECS:
+        return _FUTURES_SPECS[instrument_id]
+    match = _COMEX_FUTURES_RE.match(instrument_id)
+    if match is None:
+        return None
+    underlying = match.group(1)
+    quote, price_precision, price_inc, multiplier = _COMEX_UNDERLYING_SPECS[underlying]
+    return (underlying, quote, price_precision, price_inc, multiplier)
+
+
+def instrument_multiplier(instrument: Instrument) -> Decimal:
+    """Contract multiplier (`1` for spot/perp, `10` for MGC, `100` for GC)."""
+    mult = getattr(instrument, "multiplier", None)
+    if mult is None:
+        return Decimal("1")
+    as_dec = getattr(mult, "as_decimal", None)
+    if callable(as_dec):
+        resolved = as_dec()
+        return resolved if isinstance(resolved, Decimal) else Decimal(str(resolved))
+    return Decimal(str(mult))
+
+
 def supported_instrument_ids() -> tuple[str, ...]:
     """Every instrument id `resolve_instrument` accepts, sorted.
 
@@ -196,7 +259,7 @@ def supported_instrument_ids() -> tuple[str, ...]:
     and a second copy of it would be the thing that goes stale. These are the
     hand-checked ids; `registered_instrument_ids` lists the ones derived from data.
     """
-    return tuple(sorted((*_SPOT_SPECS, *_PERP_SPECS)))
+    return tuple(sorted((*_SPOT_SPECS, *_PERP_SPECS, *_FUTURES_SPECS)))
 
 
 def registered_instrument_ids(path: Path | None = None) -> tuple[str, ...]:
@@ -209,11 +272,14 @@ def resolve_instrument(
     *,
     spot_fees: FeeSchedule | None = None,
     usdm_fees: FeeSchedule | None = None,
-) -> CurrencyPair | CryptoPerpetual:
+) -> CurrencyPair | CryptoPerpetual | FuturesContract:
     if instrument_id in _PERP_SPECS:
         return _crypto_perpetual(instrument_id, fees=usdm_fees or FeeSchedule.binance_usdm_vip0())
     if instrument_id in _SPOT_SPECS:
         return _currency_pair(instrument_id, fees=spot_fees or FeeSchedule.binance_spot_vip0())
+    comex_spec = _match_comex_futures_spec(instrument_id)
+    if comex_spec is not None:
+        return _futures_contract(instrument_id, spec=comex_spec)
     registered = _registered_spec(instrument_id)
     if registered is not None:
         if instrument_id.endswith("-PERP.SIM"):
@@ -337,4 +403,32 @@ def _crypto_perpetual(
         taker_fee=fees.taker,
         ts_event=0,
         ts_init=0,
+    )
+
+
+def _futures_contract(
+    instrument_id: str,
+    *,
+    spec: tuple[str, str, int, str, str],
+) -> FuturesContract:
+    underlying, quote_code, price_precision, price_inc, multiplier = spec
+    raw_symbol, exchange = instrument_id.rsplit(".", 1)
+    quote = Currency.from_str(quote_code)
+    return FuturesContract(
+        instrument_id=InstrumentId.from_str(instrument_id),
+        raw_symbol=Symbol(raw_symbol),
+        asset_class=AssetClass.COMMODITY,
+        currency=quote,
+        price_precision=price_precision,
+        price_increment=Price.from_str(price_inc),
+        multiplier=Quantity.from_str(multiplier),
+        lot_size=Quantity.from_str("1"),
+        underlying=underlying,
+        activation_ns=0,
+        expiration_ns=4_102_444_800_000_000_000,
+        ts_event=0,
+        ts_init=0,
+        margin_init=Decimal("0.05"),
+        margin_maint=Decimal("0.04"),
+        exchange=exchange,
     )

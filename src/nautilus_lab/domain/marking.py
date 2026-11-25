@@ -7,9 +7,9 @@ drawdown breakers, the out-of-sample return — then ignores open losses. Equity
 balance plus what the open positions are worth at the current mark; this module is
 the one place that sum is defined.
 
-Only linear, multiplier-1 instruments are handled (the spot pairs and USDT perpetuals
-in `infrastructure/nautilus/instrument.py`). An inverse contract needs its own formula
-and must not reuse this one silently.
+Only linear instruments are handled (spot/perp multiplier 1 and futures such as COMEX
+`MGC` multiplier 10 or `GC` multiplier 100). An inverse contract needs its own
+formula and must not reuse this one silently.
 """
 
 from __future__ import annotations
@@ -26,10 +26,11 @@ class OpenLot:
     instrument_id: str
     signed_qty: Decimal
     avg_price: Decimal
+    multiplier: Decimal = Decimal("1")
 
 
 def lot_unrealized_pnl(lot: OpenLot, mark: Decimal) -> Decimal:
-    return (mark - lot.avg_price) * lot.signed_qty
+    return (mark - lot.avg_price) * lot.signed_qty * lot.multiplier
 
 
 def unrealized_pnl(lots: Iterable[OpenLot], marks: Mapping[str, Decimal]) -> Decimal:

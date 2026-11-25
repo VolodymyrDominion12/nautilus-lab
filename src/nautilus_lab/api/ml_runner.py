@@ -55,6 +55,7 @@ class MLTrainConfig:
     start: str | None = None
     end: str | None = None
     threshold: str = "0.55"
+    context_features: bool = False
 
 
 class _Tee(io.TextIOBase):
@@ -168,16 +169,36 @@ def _train_single(
         }
 
     if model_type == "meta_label":
+        train_bars = bars
+        if job.context_features:
+            from nautilus_lab.infrastructure.nautilus.bar_feed import attach_premium_index
+            from nautilus_lab.infrastructure.nautilus.instrument import (
+                binance_symbol_for_instrument,
+            )
+            from nautilus_lab.infrastructure.premium_index_catalog import (
+                ParquetPremiumIndexCatalog,
+            )
+
+            symbol = binance_symbol_for_instrument(instrument)
+            if symbol is not None:
+                prem_series = ParquetPremiumIndexCatalog(catalog_path).load(
+                    symbol=symbol,
+                    interval=interval,
+                    start=start,
+                    end=end,
+                )
+                train_bars = attach_premium_index(bars, prem_series)
         barrier = TripleBarrierConfig(
             profit_multiple=Decimal(job.profit_multiple),
             stop_multiple=Decimal(job.stop_multiple),
             horizon=job.horizon,
         )
         meta_dataset = build_meta_label_dataset(
-            bars,
+            train_bars,
             instrument_id=instrument,
             barrier=barrier,
             volatility_window=job.vol_window,
+            include_context=job.context_features,
         )
         meta_report = train_meta_label_lightgbm(
             meta_dataset,

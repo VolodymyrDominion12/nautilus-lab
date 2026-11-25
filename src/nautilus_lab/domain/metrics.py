@@ -7,6 +7,7 @@ from enum import StrEnum
 from math import sqrt
 
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.calendar import TradingCalendar
 
 
 class SelectionMetric(StrEnum):
@@ -26,6 +27,35 @@ PERIODS_PER_YEAR: dict[str, int] = {
     "4h": 2_190,
     "1d": 365,
 }
+
+#: Calendar-specific bars per year for annualized Sharpe across 24/7 and 23x5 markets.
+PERIODS_PER_YEAR_BY_CALENDAR: dict[TradingCalendar, dict[str, int]] = {
+    TradingCalendar.CRYPTO_24_7: PERIODS_PER_YEAR,
+    TradingCalendar.CME_GLOBEX_23_5: {
+        "1m": 347_760,
+        "5m": 69_552,
+        "15m": 23_184,
+        "1h": 5_796,
+        "4h": 1_449,
+        "1d": 252,
+    },
+    TradingCalendar.CME_1OZ_24_7: {
+        "1m": 520_140,
+        "5m": 104_028,
+        "15m": 34_676,
+        "1h": 8_708,
+        "4h": 2_190,
+        "1d": 365,
+    },
+}
+
+
+def periods_per_year(
+    interval: str,
+    calendar: TradingCalendar = TradingCalendar.CRYPTO_24_7,
+) -> int | None:
+    """Return annual bar count for `interval` under `calendar`, or None if unsupported."""
+    return PERIODS_PER_YEAR_BY_CALENDAR.get(calendar, PERIODS_PER_YEAR).get(interval)
 
 
 @dataclass(frozen=True, slots=True)

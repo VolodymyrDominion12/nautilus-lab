@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -9,10 +9,14 @@ from nautilus_lab.application.dtos import BacktestRequest
 from nautilus_lab.domain.align import align_bars_inner_join
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar, validate_bar
 from nautilus_lab.domain.errors import CatalogEmptyError
-from nautilus_lab.domain.ports import BarCatalog, TakerFlowCatalog
+from nautilus_lab.domain.ports import BarCatalog, PremiumIndexCatalog, TakerFlowCatalog
+from nautilus_lab.domain.premium_index import PremiumIndexBar
 from nautilus_lab.domain.regime import RobotName
 from nautilus_lab.domain.stress_slices import resolve_stress_slice
-from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_for_instrument
+from nautilus_lab.infrastructure.nautilus.instrument import (
+    binance_symbol_for_instrument,
+    resolve_instrument,
+)
 from nautilus_lab.infrastructure.nautilus.synthetic_bars import (
     synthetic_ohlcv,
     synthetic_regime_ohlcv,
@@ -24,13 +28,35 @@ from nautilus_lab.infrastructure.nautilus.synthetic_pairs import (
 from nautilus_lab.infrastructure.timeframe import interval_from_bar_type, nautilus_bar_type
 
 
+def attach_premium_index(
+    bars: Sequence[OhlcvBar], series: Sequence[PremiumIndexBar]
+) -> list[OhlcvBar]:
+    """Attach matching `PremiumIndexBar.close` onto `OhlcvBar.premium_index_close` by `ts_utc`."""
+    if not bars or not series:
+        return list(bars)
+    by_ts = {item.ts_utc: item.close for item in series}
+    return [
+        bar if (value := by_ts.get(bar.ts_utc)) is None else replace(bar, premium_index_close=value)
+        for bar in bars
+    ]
+
+
+def _size_rounding_tolerance(instrument_id: str) -> Decimal:
+    """Half the instrument's size increment, or 0 for unknown instruments."""
+    try:
+        instrument = resolve_instrument(instrument_id)
+    except ValueError:
+        return Decimal("0")
+    return Decimal(str(instrument.size_increment)) / Decimal("2")
+
+
 class ResearchBarFeed:
     """Catalog of real history, or deterministic synthetic bars for tests.
 
     The catalog itself stores only what Nautilus `Bar` can hold, so the taker split
-    (kline field 9) is re-attached here from its own series before any consumer sees a
-    bar. Without this join every order-flow feature would silently fall back to the
-    tick-rule proxy — the defect this path exists to close.
+    (kline field 9) and optional premium index basis are re-attached here from their own
+    series before any consumer sees a bar. Without this join every order-flow feature
+    would silently fall back to the tick-rule proxy — the defect this path exists to close.
     """
 
     def __init__(
@@ -38,10 +64,12 @@ class ResearchBarFeed:
         catalog: BarCatalog,
         *,
         taker_flow: TakerFlowCatalog | None = None,
+        premium_index: PremiumIndexCatalog | None = None,
         quality_gate: Callable[[str], str] | None = None,
     ) -> None:
         self._catalog = catalog
         self._taker_flow = taker_flow
+        self._premium_index = premium_index
         # Checked before a catalog series is read (infrastructure/quality_gate.py): a
         # series whose QC failed raises instead of being backtested. Synthetic bars
         # have no catalog and are never checked.
@@ -77,12 +105,20 @@ class ResearchBarFeed:
             end=end,
         )
         bars = self._slice_days(bars, request.days)
+        interval = interval_from_bar_type(request.bar_type)
         flow_start = bars[0].ts_utc if bars else start
         flow_end = bars[-1].ts_utc + timedelta(microseconds=1) if bars else end
-        return self._with_taker_flow(
+        enriched = self._with_taker_flow(
             bars,
             instrument_id=request.instrument_id,
-            interval=interval_from_bar_type(request.bar_type),
+            interval=interval,
+            start=flow_start,
+            end=flow_end,
+        )
+        return self._with_premium_index(
+            enriched,
+            instrument_id=request.instrument_id,
+            interval=interval,
             start=flow_start,
             end=flow_end,
         )
@@ -137,8 +173,15 @@ class ResearchBarFeed:
             series = raw[instrument_id]
             flow_start = series[0].ts_utc if series else start
             flow_end = series[-1].ts_utc + timedelta(microseconds=1) if series else end
-            raw[instrument_id] = self._with_taker_flow(
+            enriched = self._with_taker_flow(
                 series,
+                instrument_id=instrument_id,
+                interval=interval,
+                start=flow_start,
+                end=flow_end,
+            )
+            raw[instrument_id] = self._with_premium_index(
+                enriched,
                 instrument_id=instrument_id,
                 interval=interval,
                 start=flow_start,
@@ -166,10 +209,16 @@ class ResearchBarFeed:
         )
         if not series:
             return bars
+        half_step = _size_rounding_tolerance(instrument_id)
         enriched: list[OhlcvBar] = []
         previous_ts: datetime | None = None
         for bar in bars:
             value = series.get(bar.ts_utc)
+            if value is not None and bar.volume < value <= bar.volume + half_step:
+                # Nautilus Parquet Bar stores volume rounded to instrument.size_precision
+                # while taker_flow keeps the exact unrounded exchange string; clamp <= 0.5
+                # tick rounding drift so 100%-taker bars stay valid while real mismatches fail.
+                value = bar.volume
             joined = bar if value is None else replace(bar, taker_buy_base_volume=value)
             # Re-validate the join instead of trusting it: a flow series from another
             # interval would hand a bar more taker volume than the bar traded, and that
@@ -178,6 +227,23 @@ class ResearchBarFeed:
             enriched.append(joined)
             previous_ts = joined.ts_utc
         return enriched
+
+    def _with_premium_index(
+        self,
+        bars: list[OhlcvBar],
+        *,
+        instrument_id: str,
+        interval: str,
+        start: datetime | None,
+        end: datetime | None,
+    ) -> list[OhlcvBar]:
+        if self._premium_index is None or not bars:
+            return bars
+        symbol = binance_symbol_for_instrument(instrument_id)
+        if symbol is None:
+            return bars
+        series = self._premium_index.load(symbol=symbol, interval=interval, start=start, end=end)
+        return attach_premium_index(bars, series)
 
 
 def _synthetic(request: BacktestRequest) -> list[OhlcvBar]:

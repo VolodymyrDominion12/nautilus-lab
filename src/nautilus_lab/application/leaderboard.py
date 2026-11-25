@@ -400,6 +400,7 @@ _ROBOT_PARAM_NAMES: dict[str, tuple[str, ...]] = {
     "ema": ("fast_ema", "slow_ema", "ema_min_spread_pct"),
     "vpin_momentum": ("vpin_ema_period", "vpin_atr_multiple", "vpin_quantile"),
     "adaptive_ema": ("adaptive_period", "adaptive_selectivity"),
+    "gold_session_orb": ("gold_orb_max_box_atr", "gold_orb_buffer_atr"),
     "pairs": ("z_entry", "z_exit"),
     "formulaic_lgbm": ("formulaic_threshold",),
     "meta_label": ("meta_label_threshold",),

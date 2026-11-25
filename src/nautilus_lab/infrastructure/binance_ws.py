@@ -44,6 +44,7 @@ from nautilus_lab.domain.ticks import AggTrade
 from nautilus_lab.infrastructure.nautilus.instrument import binance_symbol_to_instrument_id
 
 BINANCE_WS_BASE_URL = "wss://stream.binance.com:9443/ws"
+BINANCE_FAPI_WS_BASE_URL = "wss://fstream.binance.com/ws"
 
 # Intervals Binance serves for klines. Validated up front so a typo fails in the
 # constructor with a named cause instead of opening a socket that Binance answers
@@ -161,16 +162,41 @@ class SocketLike(Protocol):
 ConnectFn = Callable[[str], SocketLike]
 
 
-def binance_stream_url(symbol: str, interval: str, *, base_url: str = BINANCE_WS_BASE_URL) -> str:
+def _ws_stream_symbol_and_base(symbol: str, base_url: str | None) -> tuple[str, str]:
+    """Resolve lowercase Binance stream symbol and WS base URL for spot or `-PERP`.
+
+    Binance USD-M perpetual streams live on `fstream.binance.com/ws` and use the bare
+    exchange symbol (`xauusdt@kline_1h`), without our `-PERP` suffix.
+    """
+    upper = symbol.strip().upper()
+    is_perp = upper.endswith("-PERP")
+    stream_symbol = upper.removesuffix("-PERP").lower()
+    resolved_base = (
+        base_url
+        if base_url is not None
+        else (BINANCE_FAPI_WS_BASE_URL if is_perp else BINANCE_WS_BASE_URL)
+    )
+    return stream_symbol, resolved_base.rstrip("/")
+
+
+def binance_stream_url(symbol: str, interval: str, *, base_url: str | None = None) -> str:
     """Single-stream URL for one symbol's klines, e.g. `.../ethusdt@kline_1m`.
 
+    Symbols ending with `-PERP` default to `BINANCE_FAPI_WS_BASE_URL` with the suffix
+    stripped in the stream name (`wss://fstream.binance.com/ws/xauusdt@kline_1h`).
     Binance stream names are lowercase; an uppercase name is accepted by the server
     as a subscription to *nothing*, which is a silent stall rather than an error.
     """
-    return f"{base_url.rstrip('/')}/{symbol.strip().lower()}@kline_{interval}"
+    stream_symbol, resolved_base = _ws_stream_symbol_and_base(symbol, base_url)
+    return f"{resolved_base}/{stream_symbol}@kline_{interval}"
 
 
-def parse_kline_message(payload: object, *, now: datetime | None = None) -> OhlcvBar | None:
+def parse_kline_message(
+    payload: object,
+    *,
+    now: datetime | None = None,
+    instrument_id: str | None = None,
+) -> OhlcvBar | None:
     """Map one raw stream message to a closed `OhlcvBar`, or `None` if there is none.
 
     `None` is returned for the two shapes that legitimately carry no closed bar:
@@ -190,6 +216,9 @@ def parse_kline_message(payload: object, *, now: datetime | None = None) -> Ohlc
 
     `now` is the clock `validate_bar` uses for its future-bar check; inject it to
     keep a test deterministic instead of implicitly depending on the wall clock.
+    `instrument_id`, when provided, overrides symbol-to-instrument inference — needed
+    for USD-M futures (`fstream`), where Binance sends `k.s = "XAUUSDT"` without the
+    `-PERP` suffix.
     """
     message = _as_message(payload)
     if message.get("e") != "kline":
@@ -210,12 +239,15 @@ def parse_kline_message(payload: object, *, now: datetime | None = None) -> Ohlc
     symbol = kline.get("s") if kline.get("s") is not None else message.get("s")
     if not isinstance(symbol, str) or not symbol:
         raise KlinePayloadError(f"kline payload carries no symbol: {_summarise(message)}")
-    try:
-        instrument_id = binance_symbol_to_instrument_id(symbol.upper())
-    except ValueError as exc:
-        raise KlinePayloadError(f"unsupported binance symbol {symbol!r}: {exc}") from exc
+    if instrument_id is not None:
+        resolved_instrument_id = instrument_id
+    else:
+        try:
+            resolved_instrument_id = binance_symbol_to_instrument_id(symbol.upper())
+        except ValueError as exc:
+            raise KlinePayloadError(f"unsupported binance symbol {symbol!r}: {exc}") from exc
 
-    # Binance kline field map (`@kline_<interval>`, spot stream):
+    # Binance kline field map (`@kline_<interval>`, spot & USD-M futures streams):
     #   t / T  open / close time in ms        o c h l  OHLC as decimal strings
     #   v      total base volume              q        total quote volume
     #   V      taker BUY base volume          Q        taker buy quote volume
@@ -230,7 +262,7 @@ def parse_kline_message(payload: object, *, now: datetime | None = None) -> Ohlc
     # `taker_buy_base_volume` never needs the tick-rule proxy.
     taker_raw = kline.get("V")
     bar = OhlcvBar(
-        instrument_id=instrument_id,
+        instrument_id=resolved_instrument_id,
         # Close time, not open time: see the docstring — the catalog series is keyed on
         # the close, and a one-interval offset would mis-join the taker-flow series.
         ts_utc=_ms_to_utc(_int_field(kline, "T")),
@@ -248,7 +280,7 @@ def parse_kline_message(payload: object, *, now: datetime | None = None) -> Ohlc
 
 
 class BinanceKlineStream:
-    """Yields closed klines from Binance's public spot WebSocket until stopped.
+    """Yields closed klines from Binance's public spot or USD-M futures WebSocket until stopped.
 
     Synchronous on purpose: paper mode runs it as one worker thread, and a plain
     generator is far easier to stop (`stop()`) and to fake than an asyncio task
@@ -261,7 +293,7 @@ class BinanceKlineStream:
         symbol: str,
         interval: str = "1m",
         *,
-        base_url: str = BINANCE_WS_BASE_URL,
+        base_url: str | None = None,
         policy: ReconnectPolicy | None = None,
         connect_fn: ConnectFn = connect,
         sleep: Callable[[float], None] = time.sleep,
@@ -406,7 +438,11 @@ class BinanceKlineStream:
             self._logger.warning("skipping non-JSON frame from %s: %s", self._url, exc)
             return None
         try:
-            return parse_kline_message(payload, now=self._now())
+            return parse_kline_message(
+                payload,
+                now=self._now(),
+                instrument_id=self._instrument_id,
+            )
         except (KlinePayloadError, InvalidBarError) as exc:
             self._logger.warning("skipping unusable kline frame from %s: %s", self._url, exc)
             return None
@@ -478,6 +514,7 @@ def _summarise(payload: object) -> str:
 
 
 __all__ = [
+    "BINANCE_FAPI_WS_BASE_URL",
     "BINANCE_WS_BASE_URL",
     "BinanceAggTradeStream",
     "BinanceKlineStream",
@@ -496,12 +533,20 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-def agg_trade_stream_url(symbol: str, *, base_url: str = BINANCE_WS_BASE_URL) -> str:
-    """Public aggTrade stream URL for one symbol, e.g. `.../ws/ethusdt@aggTrade`."""
-    return f"{base_url}/{symbol.strip().lower()}@aggTrade"
+def agg_trade_stream_url(symbol: str, *, base_url: str | None = None) -> str:
+    """Public aggTrade stream URL for one symbol, e.g. `.../ws/ethusdt@aggTrade`.
+
+    Symbols ending with `-PERP` default to `BINANCE_FAPI_WS_BASE_URL` with `-PERP` stripped.
+    """
+    stream_symbol, resolved_base = _ws_stream_symbol_and_base(symbol, base_url)
+    return f"{resolved_base}/{stream_symbol}@aggTrade"
 
 
-def parse_agg_trade_message(payload: object) -> AggTrade:
+def parse_agg_trade_message(
+    payload: object,
+    *,
+    instrument_id: str | None = None,
+) -> AggTrade:
     """Map one raw `@aggTrade` frame to a domain trade.
 
     Unlike klines there is no closure flag to honour: every aggTrade frame *is* a
@@ -523,10 +568,13 @@ def parse_agg_trade_message(payload: object) -> AggTrade:
     symbol = message.get("s")
     if not isinstance(symbol, str) or not symbol:
         raise KlinePayloadError(f"aggTrade payload carries no symbol: {_summarise(message)}")
-    try:
-        instrument_id = binance_symbol_to_instrument_id(symbol.upper())
-    except ValueError as exc:
-        raise KlinePayloadError(f"unsupported binance symbol {symbol!r}: {exc}") from exc
+    if instrument_id is not None:
+        resolved_instrument_id = instrument_id
+    else:
+        try:
+            resolved_instrument_id = binance_symbol_to_instrument_id(symbol.upper())
+        except ValueError as exc:
+            raise KlinePayloadError(f"unsupported binance symbol {symbol!r}: {exc}") from exc
 
     buyer_is_maker = message.get("m")
     if not isinstance(buyer_is_maker, bool):
@@ -534,7 +582,7 @@ def parse_agg_trade_message(payload: object) -> AggTrade:
         raise KlinePayloadError(f"aggTrade field 'm' must be a boolean, got {buyer_is_maker!r}")
 
     return AggTrade(
-        instrument_id=instrument_id,
+        instrument_id=resolved_instrument_id,
         ts_utc=_ms_to_utc(_int_field(message, "T")),
         agg_id=_int_field(message, "a"),
         price=_raw_text_field(message, "p"),
@@ -551,7 +599,7 @@ def _raw_text_field(message: Mapping[str, object], name: str) -> str:
 
 
 class BinanceAggTradeStream:
-    """Yields live aggregated trades from Binance's public spot WebSocket.
+    """Yields live aggregated trades from Binance's public spot or USD-M futures WebSocket.
 
     Same shape as `BinanceKlineStream` on purpose: one reconnect policy, one stop
     discipline, one injectable connector — so a collector can be tested without a
@@ -562,7 +610,7 @@ class BinanceAggTradeStream:
         self,
         symbol: str,
         *,
-        base_url: str = BINANCE_WS_BASE_URL,
+        base_url: str | None = None,
         policy: ReconnectPolicy | None = None,
         connect_fn: ConnectFn = connect,
         sleep: Callable[[float], None] = time.sleep,
@@ -673,7 +721,7 @@ class BinanceAggTradeStream:
             self._logger.warning("skipping non-JSON frame from %s: %s", self._url, exc)
             return None
         try:
-            return parse_agg_trade_message(payload)
+            return parse_agg_trade_message(payload, instrument_id=self._instrument_id)
         except KlinePayloadError as exc:
             self._logger.warning("skipping unusable aggTrade frame from %s: %s", self._url, exc)
             return None

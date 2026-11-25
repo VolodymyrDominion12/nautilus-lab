@@ -77,6 +77,10 @@ class LightGBMSuccessClassifier:
             raise RuntimeError("lightgbm extra not installed; train meta-label offline") from exc
         self._model = lgb.Booster(model_file=model_path)
 
+    @property
+    def num_features(self) -> int:
+        return int(self._model.num_feature())
+
     def predict_success(self, features: tuple[Decimal, ...]) -> Decimal:
         import numpy as np
 

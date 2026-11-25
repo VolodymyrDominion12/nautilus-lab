@@ -4,7 +4,7 @@
 # =============================================================================
 kind: strategy
 name: meta_label
-version: "1.1"
+version: "1.2"
 status: candidate
 title: "Meta-label: LightGBM вирішує, чи брати сигнал regime, а не напрямок ціни"
 
@@ -12,7 +12,8 @@ hypothesis: >
   Прямий прогноз напрямку наступного бару на 1h OHLCV дає точність біля монети
   і не покриває комісії (`formulaic_lgbm`). Мета-маркування розділяє задачі:
   первинна модель (`regime`) дає напрямок з високим recall, а вторинна модель
-  (бінарний LightGBM на 12 формульних ознаках + знак сторони) оцінює лише
+  (бінарний LightGBM на 12 формульних ознаках + знак сторони, або з опційними 8
+  ознаками контексту `premium_index` і торгової сесії) оцінює лише
   ймовірність, що цей вхід першим торкнеться take-profit бар'єра Triple Barrier,
   а не стопа чи вертикального горизонту. Якщо p(успіх) ≥ `meta_label_threshold`,
   сигнал пропускається далі в ризик-шар; інакше вхід ігнорується. Виходи
@@ -70,6 +71,17 @@ params:
       (`ModelArtifactMissingError`) — на відміну від `formulaic_lgbm`,
       тихий heuristic-фолбек тут заборонений, бо «гейтує» чужі сигнали
       випадковим класифікатором.
+  - env: META_LABEL_CONTEXT_FEATURES
+    default: false
+    tuned: false
+    note: >
+      Якщо `true`, до 13 базових ознак (`FEATURE_NAMES` + `signal_side`) додаються
+      8 причинних ознак контексту (`META_CONTEXT_FEATURE_NAMES`, разом 21):
+      базис `premium_index` (`premium_close`, `premium_zscore`, `premium_delta`,
+      `has_premium_index`) та IANA DST-сесії золота з `domain/sessions.py`
+      (`session_asia`, `session_london`, `session_overlap`, `session_ny_afternoon`).
+      Типово `false`, щоб існуючі 13-ознакові моделі лишались сумісними;
+      при невідповідності `classifier.num_features` робот падає fail closed.
 
 invariants:
   no_lookahead: true
@@ -105,7 +117,12 @@ notes: >
   і Bollinger: підбір первинної логіки на IS разом із порогом мета-моделі
   змішав би два шари й розмив, що саме вимірюється.
   Ознаки мета-моделі — `FEATURE_NAMES` (12) плюс `signal_side` (+1 buy, −1
-  sell), разом 13. Мітка = 1 лише коли шлях після входу (з наступного бару)
+  sell), разом 13; при `META_LABEL_CONTEXT_FEATURES=true` (і навчанні з
+  `--context-features`) додаються ще 8 ознак `META_CONTEXT_FEATURE_NAMES`
+  (базис `premium_index` з `OhlcvBar.premium_index_close` і IANA DST-сесії
+  `domain/sessions.py`), разом 21. Коли `premium_index_close` відсутній (`None`),
+  `has_premium_index = 0`, щоб невідоме не плуталося зі справжнім нульовим базисом.
+  Мітка = 1 лише коли шлях після входу (з наступного бару)
   першим торкається take-profit; стоп і вичерпання горизонту = 0. Якщо в
   одному барі зачіпаються обидва бар'єри, мітка STOP_LOSS (песимістично).
   Навчання — purged K-fold за часом події: `sample_times` = індекс бара
@@ -120,6 +137,8 @@ notes: >
 
 references:
   - specs/components/purged-k-fold.yaml
+  - specs/components/gold-trading.yaml
   - specs/strategies/regime.yaml
   - specs/strategies/formulaic_lgbm.yaml
   - docs/19-ml-steking-vidpovidnist.md
+  - docs/38-gold-trading-spec-2026.md

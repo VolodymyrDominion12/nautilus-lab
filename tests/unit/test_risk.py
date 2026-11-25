@@ -355,3 +355,45 @@ class _CountFeed:
 
     def load_multi(self, request: BacktestRequest) -> dict[str, list[OhlcvBar]]:
         return {request.instrument_id: self.load(request)}
+
+
+def test_size_position_and_marking_scale_by_contract_multiplier() -> None:
+    """COMEX futures multiplier (e.g. MGC = 10 oz/contract) scales risk and unrealized PnL."""
+    from nautilus_lab.application.risk import size_spread
+    from nautilus_lab.domain.marking import OpenLot, lot_unrealized_pnl
+
+    # With $100,000 equity, 0.1% risk = $100, stop_distance = $5/oz, multiplier = 10 oz/contract
+    # -> risk per contract is $5 * 10 = $50 -> 2 contracts (1x notional = $52,000 <= $100,000).
+    qty = size_position(
+        equity=Decimal("100000"),
+        price=Decimal("2600"),
+        stop_distance=Decimal("5"),
+        risk_fraction=Decimal("0.001"),
+        qty_step=Decimal("1"),
+        multiplier=Decimal("10"),
+    )
+    assert qty == Decimal("2")
+
+    # Spread sizing with multiplier also prevents 10x over-leveraging.
+    qty_a, qty_b = size_spread(
+        equity=Decimal("100000"),
+        price_a=Decimal("2600"),
+        price_b=Decimal("2600"),
+        stop_distance_a=Decimal("5"),
+        risk_fraction=Decimal("0.001"),
+        hedge_ratio=Decimal("1"),
+        qty_step_a=Decimal("1"),
+        qty_step_b=Decimal("1"),
+        multiplier_a=Decimal("10"),
+        multiplier_b=Decimal("10"),
+    )
+    assert qty_a == Decimal("2")
+    assert qty_b == Decimal("2")
+
+    lot = OpenLot(
+        instrument_id="MGCZ26.XCEC",
+        signed_qty=Decimal("2"),
+        avg_price=Decimal("2600"),
+        multiplier=Decimal("10"),
+    )
+    assert lot_unrealized_pnl(lot, Decimal("2620")) == Decimal("400")

@@ -7,11 +7,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.entry_filters import EntryFilterParams
-from nautilus_lab.domain.fees import FeeSchedule, cost_profile
+from nautilus_lab.domain.fees import (
+    FeeSchedule,
+    FuturesFeeSchedule,
+    cost_profile,
+    default_futures_fee_schedule,
+    futures_cost_profile,
+)
 from nautilus_lab.domain.funding import FundingParams
 from nautilus_lab.domain.global_trend import GlobalTrendParams, MaKind, WarmupPolicy
+from nautilus_lab.domain.gold_session_orb import GoldSessionOrbParams
 from nautilus_lab.domain.metrics import SelectionMetric
-from nautilus_lab.domain.pairs.params import PairsParams
+from nautilus_lab.domain.pairs.params import HedgeEstimator, PairsParams
 from nautilus_lab.domain.regime import RegimeParams, RobotName
 from nautilus_lab.domain.regime_router import parse_legs
 from nautilus_lab.domain.risk import RiskLimits
@@ -116,6 +123,8 @@ class Settings(BaseSettings):
     # Decimal with a sentinel is used instead of `Decimal | None` so that an unset
     # or empty env var cannot fail pydantic validation on the way in.
     pairs_z_entry_quantile: Decimal = Decimal("0")
+    pairs_hedge_estimator: HedgeEstimator = HedgeEstimator.OLS
+    pairs_kalman_delta: Decimal = Decimal("0.005")
     vpin_momentum_ema_period: int = 50
     vpin_momentum_atr_multiple: Decimal = Decimal("2")
     formulaic_model_path: str | None = None
@@ -123,6 +132,7 @@ class Settings(BaseSettings):
     formulaic_min_hold_bars: int = 0
     meta_label_model_path: str | None = None
     meta_label_threshold: Decimal = Decimal("0.55")
+    meta_label_context_features: bool = False
     ml_obi_model_path: str | None = None
     ml_obi_threshold: Decimal = Decimal("0.55")
     robot: RobotName = RobotName.REGIME
@@ -176,6 +186,15 @@ class Settings(BaseSettings):
     adaptive_range_exit_at_mean: bool = False
     adaptive_min_bb_width_pct: Decimal = Decimal("0")
     adaptive_hold_trend_in_range: bool = True
+    # gold_session_orb: DST-aware Asian range breakout (specs/strategies/gold_session_orb.yaml).
+    gold_orb_atr_period: int = 14
+    gold_orb_trend_ema_period: int = 200
+    gold_orb_min_box_atr: Decimal = Decimal("0.5")
+    gold_orb_max_box_atr: Decimal = Decimal("3.5")
+    gold_orb_buffer_atr: Decimal = Decimal("0.15")
+    gold_orb_max_hold_bars: int = 24
+    gold_orb_allow_short: bool = False
+    gold_orb_min_asia_bars: int = 3
     use_bar_vpin: bool = False
     use_tick_vpin: bool = False
     use_hawkes: bool = False
@@ -210,6 +229,9 @@ class Settings(BaseSettings):
     spot_taker_fee: Decimal = Decimal("0.00075")
     usdm_maker_fee: Decimal = Decimal("0.0002")
     usdm_taker_fee: Decimal = Decimal("0.0005")
+    futures_cost_profile: str = ""
+    futures_per_contract_fee: Decimal | None = None
+    databento_api_key: str | None = None
     funding_min_net_apy: Decimal = Decimal("0.10")
     funding_holding_periods: int = 60
     funding_basis_max: Decimal = Decimal("0.005")
@@ -280,6 +302,13 @@ class Settings(BaseSettings):
         parse_legs(value)  # fail at startup, not in the middle of a batch cell
         return value
 
+    @field_validator("futures_per_contract_fee", mode="before")
+    @classmethod
+    def _empty_fee_as_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def _apply_cost_profile(self) -> Settings:
         """A named profile wins over the individual fee fields, and an unknown name fails.
@@ -289,13 +318,15 @@ class Settings(BaseSettings):
         how a run says which one it measured — so a typo must stop the run rather than
         quietly pay base fees and report a different experiment (docs/33 §4).
         """
-        if not self.cost_profile:
-            return self
-        profile = cost_profile(self.cost_profile)
-        self.spot_maker_fee = profile.spot_maker
-        self.spot_taker_fee = profile.spot_taker
-        self.usdm_maker_fee = profile.usdm_maker
-        self.usdm_taker_fee = profile.usdm_taker
+        if self.cost_profile:
+            profile = cost_profile(self.cost_profile)
+            self.spot_maker_fee = profile.spot_maker
+            self.spot_taker_fee = profile.spot_taker
+            self.usdm_maker_fee = profile.usdm_maker
+            self.usdm_taker_fee = profile.usdm_taker
+        if self.futures_cost_profile:
+            futures_profile = futures_cost_profile(self.futures_cost_profile)
+            self.futures_per_contract_fee = futures_profile.per_contract
         return self
 
     def all_catalog_paths(self) -> list[str]:
@@ -326,6 +357,18 @@ class Settings(BaseSettings):
 
     def usdm_fee_schedule(self) -> FeeSchedule:
         return FeeSchedule(maker=self.usdm_maker_fee, taker=self.usdm_taker_fee)
+
+    def futures_fee_schedule(self, instrument_id: str | None = None) -> FuturesFeeSchedule:
+        if self.futures_cost_profile:
+            return futures_cost_profile(self.futures_cost_profile)
+        if self.futures_per_contract_fee is not None:
+            return FuturesFeeSchedule(
+                name="custom",
+                per_contract=self.futures_per_contract_fee,
+                slippage_ticks=1,
+                note=f"Custom per-contract fee (${self.futures_per_contract_fee}/side)",
+            )
+        return default_futures_fee_schedule(instrument_id or self.instrument_id)
 
     def regime_params(self) -> RegimeParams:
         return RegimeParams(
@@ -383,6 +426,19 @@ class Settings(BaseSettings):
             hold_trend_in_range=self.adaptive_hold_trend_in_range,
         )
 
+    def gold_session_orb_params(self) -> GoldSessionOrbParams:
+        """Parameters for `gold_session_orb` (DST-aware Asian range breakout on gold)."""
+        return GoldSessionOrbParams(
+            atr_period=self.gold_orb_atr_period,
+            trend_ema_period=self.gold_orb_trend_ema_period,
+            min_box_atr=self.gold_orb_min_box_atr,
+            max_box_atr=self.gold_orb_max_box_atr,
+            buffer_atr=self.gold_orb_buffer_atr,
+            max_hold_bars=self.gold_orb_max_hold_bars,
+            allow_short=self.gold_orb_allow_short,
+            min_asia_bars=self.gold_orb_min_asia_bars,
+        )
+
     def risk_overlay(self) -> RiskOverlay:
         cooldown = (
             self.research_drawdown_cooldown_days
@@ -415,6 +471,8 @@ class Settings(BaseSettings):
             leg_b=self.pairs_leg_b,
             refit_every_bars=self.pairs_refit_every,
             z_entry_quantile=quantile if quantile > 0 else None,
+            hedge_estimator=self.pairs_hedge_estimator,
+            kalman_delta=self.pairs_kalman_delta,
         )
 
     def funding_params(self) -> FundingParams:

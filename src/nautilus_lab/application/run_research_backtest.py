@@ -72,7 +72,7 @@ def minimum_bars(robot: RobotName) -> int:
         RobotName.ADAPTIVE_EMA,
     ):
         return 150
-    if robot is RobotName.PAIRS:
+    if robot in (RobotName.PAIRS, RobotName.GOLD_SESSION_ORB):
         return 200
     if robot is RobotName.FORMULAIC_LGBM:
         return 80

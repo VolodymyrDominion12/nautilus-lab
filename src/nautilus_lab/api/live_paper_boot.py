@@ -54,8 +54,9 @@ def live_config_from_settings(
     """Robot parameters, fees and breakers from the same Settings research runs use."""
     spot_fees = cfg.spot_fee_schedule()
     usdm_fees = cfg.usdm_fee_schedule()
+    upper_symbol = symbol.upper()
     return LivePaperConfig(
-        symbol=symbol.upper(),
+        symbol=upper_symbol,
         interval=interval,
         robot=robot,
         starting_equity=starting_equity,
@@ -64,13 +65,14 @@ def live_config_from_settings(
         take_profit_multiple=take_profit_multiple,
         mode=mode,
         auto_trade=auto_trade,
-        maker_fee=usdm_fees.maker if symbol.endswith("PERP") else spot_fees.maker,
-        taker_fee=usdm_fees.taker if symbol.endswith("PERP") else spot_fees.taker,
+        maker_fee=usdm_fees.maker if upper_symbol.endswith("PERP") else spot_fees.maker,
+        taker_fee=usdm_fees.taker if upper_symbol.endswith("PERP") else spot_fees.taker,
         fast_ema=cfg.fast_ema,
         slow_ema=cfg.slow_ema,
         ema_min_spread_pct=cfg.ema_min_spread_pct,
         regime=cfg.regime_params(),
         adaptive=cfg.adaptive_ema_params(),
+        gold_session_orb=cfg.gold_session_orb_params(),
         regime_legs=cfg.regime_legs,
         max_daily_loss=cfg.max_daily_loss,
         max_drawdown=cfg.max_drawdown,

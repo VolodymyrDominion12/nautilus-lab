@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -41,6 +41,7 @@ from nautilus_lab.infrastructure.binance_agg_trades import BinancePublicAggTrade
 from nautilus_lab.infrastructure.binance_funding import BinancePublicFunding
 from nautilus_lab.infrastructure.binance_klines import BinancePublicKlines
 from nautilus_lab.infrastructure.binance_ws import BinanceAggTradeStream, BinanceKlineStream
+from nautilus_lab.infrastructure.databento_feed import DatabentoIngestReport
 from nautilus_lab.infrastructure.decision_log_writer import JsonlDecisionLogWriter
 from nautilus_lab.infrastructure.funding_catalog import ParquetFundingCatalog
 from nautilus_lab.infrastructure.http_resilience import ResilientJsonClient
@@ -60,6 +61,7 @@ from nautilus_lab.infrastructure.nautilus.parallel_backtest import (
 from nautilus_lab.infrastructure.nautilus.parquet_catalog import NautilusParquetCatalog
 from nautilus_lab.infrastructure.nautilus.synthetic_pairs import synthetic_funding_pair
 from nautilus_lab.infrastructure.orderbook_catalog import ParquetOrderBookCatalog
+from nautilus_lab.infrastructure.premium_index_catalog import ParquetPremiumIndexCatalog
 from nautilus_lab.infrastructure.preregistration_store import JsonPreregistrationStore
 from nautilus_lab.infrastructure.provenance import collect_manifest
 from nautilus_lab.infrastructure.quality_gate import QualityGate, quality_status
@@ -86,6 +88,11 @@ def taker_flow_catalog(cfg: Settings, *, path: str | None = None) -> ParquetTake
     return ParquetTakerFlowCatalog(Path(path or cfg.catalog_path))
 
 
+def premium_index_catalog(cfg: Settings, *, path: str | None = None) -> ParquetPremiumIndexCatalog:
+    """Per-bar USD-M premium index series under the catalog root."""
+    return ParquetPremiumIndexCatalog(Path(path or cfg.catalog_path))
+
+
 def orderbook_catalog(cfg: Settings, *, path: str | None = None) -> ParquetOrderBookCatalog:
     """L2 Orderbook snapshots."""
     return ParquetOrderBookCatalog(Path(path or cfg.catalog_path))
@@ -102,10 +109,11 @@ def decision_log_writer(cfg: Settings) -> JsonlDecisionLogWriter:
 
 
 def research_feed(cfg: Settings, *, path: str | None = None) -> ResearchBarFeed:
-    """Bars plus the taker-flow join and the QC gate. One place, so no run skips either."""
+    """Bars plus taker-flow/premium-index joins and the QC gate."""
     return ResearchBarFeed(
         catalog(cfg, path=path),
         taker_flow=taker_flow_catalog(cfg, path=path),
+        premium_index=premium_index_catalog(cfg, path=path),
         quality_gate=QualityGate(
             Path(path or cfg.catalog_path), allow_failed=cfg.allow_failed_data
         ),
@@ -373,6 +381,17 @@ def research_request(
         instrument_ids = (pairs.leg_a, pairs.leg_b)
     elif resolved_robot is RobotName.FUNDING:
         instrument_ids = (cfg.funding_spot_id, cfg.funding_perp_id)
+    from nautilus_lab.domain.calendar import TradingCalendar, trading_calendar_for_instrument
+
+    futures_fees = (
+        cfg.futures_fee_schedule(cfg.instrument_id)
+        if (
+            cfg.futures_cost_profile
+            or cfg.futures_per_contract_fee is not None
+            or trading_calendar_for_instrument(cfg.instrument_id) is not TradingCalendar.CRYPTO_24_7
+        )
+        else None
+    )
     return BacktestRequest(
         mode=cfg.trading_mode,
         instrument_id=cfg.instrument_id,
@@ -400,6 +419,7 @@ def research_request(
         days=days,
         spot_fees=cfg.spot_fee_schedule(),
         usdm_fees=cfg.usdm_fee_schedule(),
+        futures_fees=futures_fees,
         embargo_bars=cfg.embargo_bars,
         stress_slice=stress_slice,
         use_bar_vpin=cfg.use_bar_vpin,
@@ -421,9 +441,11 @@ def research_request(
         formulaic_min_hold_bars=cfg.formulaic_min_hold_bars,
         meta_label_model_path=cfg.meta_label_model_path,
         meta_label_threshold=cfg.meta_label_threshold,
+        meta_label_context_features=cfg.meta_label_context_features,
         ml_obi_model_path=cfg.ml_obi_model_path,
         ml_obi_threshold=cfg.ml_obi_threshold,
         adaptive_params=cfg.adaptive_ema_params(),
+        gold_session_orb=cfg.gold_session_orb_params(),
         tearsheet_path=tearsheet_path,
         selection_metric=cfg.selection_metric,
         session_id=str(uuid.uuid4()),
@@ -666,4 +688,64 @@ def walk_forward_request(
         tearsheet_path=tearsheet_path,
         folds=folds,
         decision_log_scope=cfg.decision_log_scope,
+    )
+
+
+def ingest_databento(
+    cfg: Settings,
+    *,
+    dbn_file: str | None = None,
+    symbol: str | None = None,
+    instrument_id: str | None = None,
+    dataset: str = "GLBX.MDP3",
+    schema: str = "ohlcv-1h",
+    interval: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    catalog_path: str | None = None,
+    cache_dir: str = "data/raw/databento",
+    use_exchange_as_venue: bool = True,
+) -> DatabentoIngestReport:
+    """Import COMEX/CME futures history from local DBN or online Databento into catalog."""
+    from nautilus_lab.infrastructure.databento_feed import (
+        SCHEMA_TO_INTERVAL,
+        download_databento_dbn,
+        ingest_databento_dbn,
+    )
+
+    require_simulated_mode(cfg.trading_mode)
+    target_catalog = catalog_path or cfg.catalog_path
+    resolved_interval = interval or SCHEMA_TO_INTERVAL.get(schema)
+    if dbn_file is not None:
+        source_dbn = Path(dbn_file)
+    else:
+        if not symbol:
+            raise ValueError("--symbol or --dbn-file is required for ingest-databento")
+        if start is None:
+            raise ValueError("--start is required when downloading from Databento")
+        resolved_end = end or datetime.now(UTC)
+        safe_symbol = symbol.strip().replace("/", "_").replace(" ", "_")
+        date_span = f"{start.date().isoformat()}_{resolved_end.date().isoformat()}"
+        source_dbn = Path(cache_dir) / f"{dataset}_{safe_symbol}_{schema}_{date_span}.dbn.zst"
+        if not source_dbn.exists():
+            download_databento_dbn(
+                dataset=dataset,
+                symbols=symbol,
+                schema=schema,
+                start=start,
+                end=resolved_end,
+                output_path=source_dbn,
+                api_key=cfg.databento_api_key or "",
+            )
+
+    target_instrument = instrument_id or symbol
+    return ingest_databento_dbn(
+        dbn_path=source_dbn,
+        catalog_path=target_catalog,
+        mode=cfg.trading_mode,
+        instrument_id=target_instrument,
+        interval=resolved_interval,
+        start=start,
+        end=end,
+        use_exchange_as_venue=use_exchange_as_venue,
     )

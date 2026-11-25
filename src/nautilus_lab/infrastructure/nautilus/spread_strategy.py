@@ -60,6 +60,8 @@ class SpreadRobotConfig(StrategyConfig, frozen=True):
     quote_currency: str = "USDT"
     qty_step_a: Decimal = Decimal("0.001")
     qty_step_b: Decimal = Decimal("0.00001")
+    qty_multiplier_a: Decimal = Decimal("1")
+    qty_multiplier_b: Decimal = Decimal("1")
     use_vol_scaling: bool = False
     vol_scaling_target: Decimal = Decimal("0.02")
     use_fractional_kelly: bool = False
@@ -222,6 +224,8 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
             hedge_ratio=signal.leg_b.qty_weight,
             qty_step_a=self.config.qty_step_a,
             qty_step_b=self.config.qty_step_b,
+            multiplier_a=self.config.qty_multiplier_a,
+            multiplier_b=self.config.qty_multiplier_b,
         )
         if qty_a <= 0 or qty_b <= 0:
             # An unhedged half of a spread is a directional bet, not the robot.
@@ -355,11 +359,16 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         return holding_from_signed_qty(signed)
 
     def _open_lots(self) -> list[OpenLot]:
+        multipliers = {
+            self.config.leg_a_id: self.config.qty_multiplier_a,
+            self.config.leg_b_id: self.config.qty_multiplier_b,
+        }
         return [
             OpenLot(
                 instrument_id=str(leg),
                 signed_qty=_as_decimal(position.signed_qty),
                 avg_price=_as_decimal(position.avg_px_open),
+                multiplier=multipliers[leg],
             )
             for leg in (self.config.leg_a_id, self.config.leg_b_id)
             for position in self.cache.positions_open(instrument_id=leg)
@@ -394,10 +403,15 @@ class SpreadRobot(Strategy):  # type: ignore[misc]
         instrument = self.cache.instrument(instrument_id)
         if instrument is None:
             return
+        multiplier = (
+            self.config.qty_multiplier_a
+            if instrument_id == self.config.leg_a_id
+            else self.config.qty_multiplier_b
+        )
         order_side = OrderSide.BUY if side is SignalSide.BUY else OrderSide.SELL
         order = self.order_factory.market(instrument_id, order_side, instrument.make_qty(qty))
         self.submit_order(order)
-        self._turnover += price * qty
+        self._turnover += price * qty * multiplier
 
     def _flatten_both(self, equity: Decimal | None) -> None:
         if equity is not None and self._entry_equity is not None and self._open_legs() > 0:

@@ -69,7 +69,15 @@ class StrategyClass(StrEnum):
 
 
 def class_for_robot(robot: str) -> StrategyClass | None:
-    if robot in ("ema", "regime", "adaptive_ema", "xsmom", "vpin_momentum", "meta_label"):
+    if robot in (
+        "ema",
+        "regime",
+        "adaptive_ema",
+        "gold_session_orb",
+        "xsmom",
+        "vpin_momentum",
+        "meta_label",
+    ):
         return StrategyClass.TREND_FOLLOWING
     if robot in ("pairs", "ml_obi", "glft", "tri_scan", "formulaic_lgbm"):
         return StrategyClass.MEAN_REVERSION

@@ -346,6 +346,7 @@ export interface MLTrainRequest {
   start?: string | null;
   end?: string | null;
   threshold?: string;
+  context_features?: boolean;
 }
 
 export interface PaperRunRequest {

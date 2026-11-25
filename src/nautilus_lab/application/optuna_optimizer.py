@@ -157,6 +157,34 @@ class OptunaParamOptimizer:
                         )
                     ),
                 )
+            elif request.robot is RobotName.GOLD_SESSION_ORB:
+                params = SelectedParams(
+                    fast_ema=base.fast_ema,
+                    slow_ema=base.slow_ema,
+                    donchian_period=base.donchian_period,
+                    bb_period=base.bb_period,
+                    bb_k=base.bb_k,
+                    enter_trend_er=base.enter_trend_er,
+                    exit_trend_er=base.exit_trend_er,
+                    z_entry=base.z_entry,
+                    z_exit=base.z_exit,
+                    gold_orb_max_box_atr=Decimal(
+                        str(
+                            round(
+                                trial.suggest_float("gold_orb_max_box_atr", 2.0, 5.0, step=0.5),
+                                2,
+                            )
+                        )
+                    ),
+                    gold_orb_buffer_atr=Decimal(
+                        str(
+                            round(
+                                trial.suggest_float("gold_orb_buffer_atr", 0.0, 0.35, step=0.05),
+                                2,
+                            )
+                        )
+                    ),
+                )
             else:
                 donchian = trial.suggest_int("donchian_period", 10, 50, step=5)
                 bb_period = trial.suggest_int("bb_period", 10, 50, step=5)

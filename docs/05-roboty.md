@@ -1,12 +1,14 @@
 # 05. Роботи: хто що робить
 
-У проєкті **11 значень `--robot`**: **вісім підключені до рушія** (`regime`, `ema`, `pairs`,
-`vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ml_obi`) і **три — набори MFT-модулів**,
-які до CLI не підключені (`funding`, `glft`, `tri_scan`) і падають fail closed. Це різниця,
+У проєкті **12 значень `--robot`**: **десять підключені до рушія** (`regime`, `ema`, `pairs`,
+`vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `funding`, `ml_obi`,
+`gold_session_orb`) і **два — набори MFT-модулів**,
+які до CLI не підключені (`glft`, `tri_scan`) і падають fail closed. Це різниця,
 яку треба розуміти з першого дня.
 
 Детальні розділи нижче написані для `regime`, `ema` і `pairs` (§1–§3), решта підключених роботів
-описана в §6 (`vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ml_obi`), а
+описана в §6 (`vpin_momentum`, `formulaic_lgbm`, `meta_label`, `adaptive_ema`, `ml_obi`; для
+`gold_session_orb` див. `specs/strategies/gold_session_orb.yaml` та `docs/38-gold-trading-spec-2026.md`), а
 непідключені модулі — у §5. Джерело правди для кожного числа — специфікація робота
 `specs/strategies/*.yaml` (там же — гіпотеза, edge-умови й виміряний стан); у цьому документі
 числа зі спек позначені як **вимір зі спеки** і не переказуються з пам'яті.
@@ -30,6 +32,7 @@
 | `adaptive_ema` | `AdaptiveEmaRouter` | ✅ так | Режимний фільтр зі змінним кроком EMA (selectivity). **Гіпотезу відхилено виміром** (адаптивний α не кращий за сталий, обидва програють buy&hold) — [18](18-transformery-ssm-vidpovidnist.md) §3 P3 |
 | `funding` | `FundingCashAndCarry` + `FundingRobot` | ✅ так (дві ноги) | Дельта-нейтральний cash-and-carry спот лонг + перп шорт за нетто-APY |
 | `ml_obi` | `MlObiStrategy` | ✅ так | Напрямок за мікроструктурою книги (OBI, WOFI, Fade) |
+| `gold_session_orb` | `GoldSessionOrb` | ✅ так | Тренд-фільтрований пробій азійського боксу на золоті з IANA DST-сесіями (`domain/sessions.py`); див. `specs/strategies/gold_session_orb.yaml` |
 | `glft` | `GlftMarketMaker` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 | `tri_scan` | `find_negative_cycles` | ❌ ні | **Помилка з кодом виходу 1** (fail closed) |
 
@@ -47,6 +50,7 @@ BACKTEST_WIRED_ROBOTS = frozenset(
         RobotName.ADAPTIVE_EMA,
         RobotName.ML_OBI,
         RobotName.FUNDING,
+        RobotName.GOLD_SESSION_ORB,
     }
 )
 ```
@@ -55,8 +59,8 @@ BACKTEST_WIRED_ROBOTS = frozenset(
 `RunWalkForward.execute()` (двічі — до і всередині багатовіконного прогону), `select_params`,
 `RunOverfitAudit` і `RunPaper`, а також додатково в адаптері `_build_robot()`. Тобто робот без
 адаптера **не може** бути запущений випадково — ні через CLI, ні програмно. Той самий набір
-із восьми назв лежить у `PAPER_SUPPORTED_ROBOTS` (`application/run_paper.py`), тому `lab paper
---robot` приймає рівно тих самих роботів (див. [10](10-cli-dovidnyk.md)).
+одноногих роботів лежить у `PAPER_SUPPORTED_ROBOTS` (`application/run_paper.py`), тому `lab paper
+--robot` приймає їх напряму (див. [10](10-cli-dovidnyk.md)).
 
 Реальний вивід:
 
@@ -71,7 +75,7 @@ $ echo $?
 > тому `--robot ml_obi` **тихо** запускав `regime` і давав правдоподібний, але неправдивий звіт.
 > Тепер це явна помилка.
 
-**Що робити:** якщо вам потрібен `funding` або `glft` у бектесті — його треба підключити
+**Що робити:** якщо вам потрібен `glft` або `tri_scan` у бектесті — його треба підключити
 (див. [07-yak-stvoryty-strategiyu.md](07-yak-stvoryty-strategiyu.md)), а поки що використовувати модулі
 напряму з коду (див. [09-mft-moduli-pryklady.md](09-mft-moduli-pryklady.md)).
 
@@ -83,14 +87,14 @@ $ echo $?
 
 | Статус | Роботи | Що це означає |
 |--------|--------|---------------|
-| `candidate` | `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `ml_obi` | «Переваги не доведено». Або вимір зроблено і він негативний (тоді `beats_buy_hold: false`), або виміру ще немає (`measured: false`) — в обох випадках це зафіксований стан, а не «ще не дороблено» |
+| `candidate` | `regime`, `ema`, `pairs`, `vpin_momentum`, `formulaic_lgbm`, `meta_label`, `ml_obi`, `gold_session_orb` | «Переваги не доведено». Або вимір зроблено і він негативний (тоді `beats_buy_hold: false`), або виміру ще немає (`measured: false`) — в обох випадках це зафіксований стан, а не «ще не дороблено» |
 | `rejected` | `adaptive_ema` | «Доведено, що не працює»: гіпотезу закрито контрольним A/B, а код лишається підключеним, щоб вимір можна було повторити |
 | `blocked` | `funding`, `glft`, `tri_scan` | «Неможливо виміряти в поточному рушії»: немає адаптера (а для `funding` — ще й нарахування фандингу, для `glft` — моделі черги лімітного ордера) |
 
 `validated` (виміряна перевага над buy&hold) не має **жоден** робот — це задокументований
 результат досліджень, а не стан розробки. Специфікації звіряються з кодом машинно
 (`.venv/bin/python specs/_validator.py`), а таблиця §0 — з `BACKTEST_WIRED_ROBOTS`; тому
-розходження «в документі підключено три роботи, у коді вісім» більше не може виникнути тихо.
+розходження «в документі підключено три роботи, у коді десять» більше не може виникнути тихо.
 
 Понад каталог барів частині роботів потрібні додаткові дані або артефакти — без них прогін
 або падає, або тихо міряє не те (це різні речі, і друга небезпечніша):
@@ -101,7 +105,7 @@ $ echo $?
 | `ml_obi` | фід книги ордерів (`lab ingest --depth`, `ParquetOrderBookCatalog`) — без нього `RunResearchBacktest` кидає помилку «OrderBook feed must be provided to use ML_OBI» |
 | `formulaic_lgbm` | `FORMULAIC_MODEL_PATH` **не** обов'язковий: без нього `_build_classifier()` підставляє `HeuristicDirectionClassifier`, і звіт виходить правдоподібним, але про інший класифікатор (див. §6.2) |
 | `vpin_momentum` | серія справжнього потоку тейкерів (`catalog/data/taker_flow/...`); без неї працює tick-rule-проксі (див. §6.1) |
-| `regime`, `adaptive_ema`, `ema`, `pairs` | нічого понад бари |
+| `regime`, `adaptive_ema`, `ema`, `pairs`, `gold_session_orb` | нічого понад бари |
 
 ---
 
@@ -351,8 +355,10 @@ Time stop — прямо з MFT-документа (3.3): якщо спред н
 > `0` заморожує β, μ і σ після першого успіху; `N > 0` переоцінює раз на `N` барів і **закриває
 > позицію**, якщо пара перестала бути коінтегрованою. Той самий параметр задає каденцію і для
 > невдалих спроб: після закритих воріт робот чекає повний інтервал, а не пробує щобарно.
-> У MFT-документі (3.1) описано ще й динамічний β через фільтр Калмана — тут його немає
-> (див. [08](08-mft-2026-vidpovidnist.md), пункт 4).
+> У MFT-документі (3.1) описано ще й динамічний β через фільтр Калмана — тепер його можна
+> ввімкнути окремо через `PAIRS_HEDGE_ESTIMATOR=kalman` (`PAIRS_KALMAN_DELTA=0.005`,
+> `domain/pairs/kalman.py`); типово лишається `ols`, щоб задокументовані числа §4 не змінились
+> (див. [08](08-mft-2026-vidpovidnist.md), пункт 4, і [`specs/strategies/pairs.yaml`](../specs/strategies/pairs.yaml)).
 
 ### 3.5. Дві ноги: `SpreadRobot` (`infrastructure/nautilus/spread_strategy.py`)
 

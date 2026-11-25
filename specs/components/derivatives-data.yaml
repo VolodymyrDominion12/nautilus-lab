@@ -189,19 +189,16 @@ invariants_enforced:
       значення перезаписало б годинне.
 
   - statement: >
-      У premium index немає жодного споживача в бектесті. Серія інгеститься
-      (`lab ingest --premium-index`, `ingest-archive --dataset premium`),
-      зберігається й показується в здоров'ї даних, але жодна стратегія її не
-      читає: `grep -rln "premium_index" src/nautilus_lab/domain
-      src/nautilus_lab/application src/nautilus_lab/infrastructure/nautilus` дає
-      лише `domain/premium_index.py` (сам тип) і `application/ingest_archive.py`
-      (запис). Тому базис `|mark − index| / index` у бектесті фізично не може
-      прийти з premium index — див. прогалину (b).
+      У `FundingRobot` базис `|mark − index| / index` не береться з `premium_index`:
+      серія інгеститься (`lab ingest --premium-index`, `ingest-archive --dataset premium`),
+      зберігається й показується в здоров'ї даних (тепер її також може читати
+      `meta_label` як ознаку контексту через `ResearchBarFeed` / `OhlcvBar.premium_index_close`),
+      але `funding_strategy.py` лишається без споживача `premium_index` — див. прогалину (b).
     enforced_by: src/nautilus_lab/infrastructure/nautilus/funding_strategy.py
     test_missing_reason: >
-      Відсутність зв'язку тестом не покривається: tests/unit/test_premium_index.py
-      перевіряє fetch і round-trip каталогу, тобто «серія є там, де треба», і
-      нічого не каже про те, що її ніхто не читає. Це прогалина, а не гарантія.
+      Для `funding_strategy.py` відсутність зв'язку тестом не покривається
+      (tests/unit/test_premium_index.py перевіряє fetch і round-trip каталогу).
+      Споживання у `meta_label` покривається окремо в tests/unit/test_meta_label.py.
 
   - statement: >
       Обидві ноги funding читаються з ОДНОГО каталогу: `load_multi` ітерує id-и

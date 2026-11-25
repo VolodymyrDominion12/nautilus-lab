@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 from nautilus_lab.domain.bars import OhlcvBar
 from nautilus_lab.domain.funding import FundingSnapshot
 from nautilus_lab.domain.order_book import OrderBookSnapshot
+from nautilus_lab.domain.premium_index import PremiumIndexBar
 from nautilus_lab.domain.ticks import AggTrade
 
 
@@ -117,6 +118,21 @@ class TakerFlowCatalog(Protocol):
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> Mapping[datetime, Decimal]: ...
+
+
+class PremiumIndexCatalog(Protocol):
+    """Per-bar USD-M premium index closes, stored beside the bar series."""
+
+    def write(self, bars: Sequence[PremiumIndexBar], *, symbol: str, interval: str) -> int: ...
+
+    def load(
+        self,
+        *,
+        symbol: str,
+        interval: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[PremiumIndexBar]: ...
 
 
 class OrderBookSnapshotFeed(Protocol):

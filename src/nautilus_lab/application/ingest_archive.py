@@ -18,6 +18,7 @@ from typing import Protocol
 
 from nautilus_lab.application.risk import require_simulated_mode
 from nautilus_lab.domain.bars import OhlcvBar
+from nautilus_lab.domain.calendar import trading_calendar_for_instrument
 from nautilus_lab.domain.data_quality import QualityReport, QualityStatus, check_bars
 from nautilus_lab.domain.errors import CatalogEmptyError
 from nautilus_lab.domain.funding import FundingSnapshot
@@ -168,7 +169,12 @@ class IngestArchive:
             instrument_id=instrument_id,
         )
         bars = [bar for bar in bars if start <= bar.ts_utc < end]
-        report = check_bars(bars, interval=step, partial_dropped=fetched.partial_dropped)
+        report = check_bars(
+            bars,
+            interval=step,
+            partial_dropped=fetched.partial_dropped,
+            calendar=trading_calendar_for_instrument(instrument_id),
+        )
         if self._quality is not None:
             self._quality.write(bar_type, report)
         if not bars:

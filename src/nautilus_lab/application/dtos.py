@@ -10,9 +10,10 @@ from nautilus_lab.domain.adaptive_ema import AdaptiveEmaParams
 from nautilus_lab.domain.bars import BarOrigin, OhlcvBar
 from nautilus_lab.domain.deflated_sharpe import DeflatedSharpeResult
 from nautilus_lab.domain.entry_filters import EntryFilterParams
-from nautilus_lab.domain.fees import FeeSchedule
+from nautilus_lab.domain.fees import FeeSchedule, FuturesFeeSchedule
 from nautilus_lab.domain.funding import FundingParams, FundingSnapshot
 from nautilus_lab.domain.global_trend import GlobalTrendParams
+from nautilus_lab.domain.gold_session_orb import GoldSessionOrbParams
 from nautilus_lab.domain.metrics import BacktestMetrics, SelectionMetric
 from nautilus_lab.domain.order_book import OrderBookSnapshot
 from nautilus_lab.domain.pairs.params import PairsParams
@@ -48,6 +49,7 @@ class BacktestRequest:
     days: int | None = None
     spot_fees: FeeSchedule = field(default_factory=FeeSchedule.binance_spot_vip0)
     usdm_fees: FeeSchedule = field(default_factory=FeeSchedule.binance_usdm_vip0)
+    futures_fees: FuturesFeeSchedule | None = None
     embargo_bars: int = 0
     stress_slice: str | None = None
     use_bar_vpin: bool = False
@@ -69,9 +71,11 @@ class BacktestRequest:
     formulaic_min_hold_bars: int = 0
     meta_label_model_path: str | None = None
     meta_label_threshold: Decimal = Decimal("0.55")
+    meta_label_context_features: bool = False
     ml_obi_model_path: str | None = None
     ml_obi_threshold: Decimal = Decimal("0.55")
     adaptive_params: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
+    gold_session_orb: GoldSessionOrbParams = field(default_factory=GoldSessionOrbParams)
     funding: FundingParams = field(default_factory=FundingParams)
     funding_spot_id: str = "ETH/USDT.SIM"
     funding_perp_id: str = "ETHUSDT-PERP.SIM"
@@ -238,6 +242,8 @@ _LABEL_EXTRAS_DEFAULTS: tuple[tuple[str, object], ...] = (
     ("vpin_atr_multiple", Decimal("2")),
     ("vpin_quantile", Decimal("0.90")),
     ("ema_min_spread_pct", Decimal("0")),
+    ("gold_orb_max_box_atr", Decimal("3.5")),
+    ("gold_orb_buffer_atr", Decimal("0.15")),
 )
 
 
@@ -262,6 +268,8 @@ class SelectedParams:
     funding_min_net_apy: Decimal = Decimal("0")
     funding_holding_periods: int = 60
     ema_min_spread_pct: Decimal = Decimal("0")
+    gold_orb_max_box_atr: Decimal = Decimal("3.5")
+    gold_orb_buffer_atr: Decimal = Decimal("0.15")
 
     def label(self) -> str:
         """Trial identity: every field a grid can vary must change it (audit B5).
@@ -820,6 +828,8 @@ def selected_from_request(request: BacktestRequest) -> SelectedParams:
         funding_min_net_apy=request.funding.min_net_apy,
         funding_holding_periods=request.funding.holding_periods,
         ema_min_spread_pct=request.ema_min_spread_pct,
+        gold_orb_max_box_atr=request.gold_session_orb.max_box_atr,
+        gold_orb_buffer_atr=request.gold_session_orb.buffer_atr,
     )
 
 
@@ -851,6 +861,11 @@ def apply_selected(request: BacktestRequest, params: SelectedParams) -> Backtest
             request.adaptive_params,
             base_period=params.adaptive_period,
             selectivity=params.adaptive_selectivity,
+        ),
+        gold_session_orb=replace(
+            request.gold_session_orb,
+            max_box_atr=params.gold_orb_max_box_atr,
+            buffer_atr=params.gold_orb_buffer_atr,
         ),
         funding=replace(
             request.funding,

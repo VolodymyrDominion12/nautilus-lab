@@ -8,7 +8,7 @@ from decimal import Decimal
 from nautilus_trader.model.data import Bar, BarType, BookOrder, OrderBookDepth10, TradeTick
 from nautilus_trader.model.enums import AggressorSide, OrderSide
 from nautilus_trader.model.identifiers import TradeId
-from nautilus_trader.model.instruments import CurrencyPair
+from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Price, Quantity
 
 from nautilus_lab.domain.bars import OhlcvBar
@@ -30,7 +30,7 @@ def to_engine_bars(
     bars: list[OhlcvBar],
     *,
     bar_type: BarType,
-    instrument: CurrencyPair,
+    instrument: Instrument,
 ) -> list[Bar]:
     return [
         Bar(
@@ -70,7 +70,7 @@ def _as_decimal(value: object) -> Decimal:
 def to_engine_ticks(
     trades: list[AggTrade],
     *,
-    instrument: CurrencyPair,
+    instrument: Instrument,
 ) -> list[TradeTick]:
     """Convert domain trades into engine ticks, dropping sizes the venue cannot carry.
 
@@ -126,7 +126,7 @@ BOOK_DEPTH = 10
 def to_engine_books(
     snapshots: list[OrderBookSnapshot],
     *,
-    instrument: CurrencyPair,
+    instrument: Instrument,
 ) -> list[OrderBookDepth10]:
     """Convert domain snapshots into ten-level engine snapshots.
 

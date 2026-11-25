@@ -87,6 +87,7 @@ class MLTrainRequest(BaseModel):
     start: str | None = None
     end: str | None = None
     threshold: str = "0.55"
+    context_features: bool = False
 
 
 class PaperRunRequest(BaseModel):

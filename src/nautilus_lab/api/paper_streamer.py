@@ -63,6 +63,7 @@ from nautilus_lab.domain.decision_trace import (
 from nautilus_lab.domain.ema_crossover import EmaCrossover
 from nautilus_lab.domain.errors import InvalidBarError
 from nautilus_lab.domain.formulaic_lgbm_strategy import FormulaicLgbmStrategy
+from nautilus_lab.domain.gold_session_orb import GoldSessionOrb, GoldSessionOrbParams
 from nautilus_lab.domain.ports import DecisionLogPort
 from nautilus_lab.domain.position_plan import Holding, plan_for_signal
 from nautilus_lab.domain.regime import RegimeParams
@@ -93,7 +94,15 @@ BINANCE_WS_STREAM_URL = "wss://stream.binance.com:9443/ws"
 #: Robots the live terminal can build. Anything else is refused: the terminal used to
 #: fall back to `regime` for an unknown name while the UI kept showing the name asked for.
 LIVE_PAPER_ROBOTS: frozenset[str] = frozenset(
-    {"regime", "ema", "adaptive_ema", "vpin_momentum", "formulaic_lgbm", HOLD_ROBOT}
+    {
+        "regime",
+        "ema",
+        "adaptive_ema",
+        "gold_session_orb",
+        "vpin_momentum",
+        "formulaic_lgbm",
+        HOLD_ROBOT,
+    }
 )
 
 #: Closed candles replayed into the robot before a session may trade. Regime needs ~150
@@ -129,6 +138,7 @@ class LivePaperConfig:
     ema_min_spread_pct: Decimal = Decimal("0")
     regime: RegimeParams = field(default_factory=RegimeParams)
     adaptive: AdaptiveEmaParams = field(default_factory=AdaptiveEmaParams)
+    gold_session_orb: GoldSessionOrbParams = field(default_factory=GoldSessionOrbParams)
     # Which regime legs may open positions (settings `REGIME_LEGS`; "" = all). The batch
     # runs that produced these portfolios switched legs *off* (`uptrend,downtrend`), so a
     # live session that ignored the switch would trade range entries the backtest never
@@ -219,6 +229,10 @@ def config_from_dict(raw: dict[str, Any]) -> LivePaperConfig:
         values["regime"] = RegimeParams(**_field_values(RegimeParams, raw["regime"]))
     if "adaptive" in raw:
         values["adaptive"] = AdaptiveEmaParams(**_field_values(AdaptiveEmaParams, raw["adaptive"]))
+    if "gold_session_orb" in raw:
+        values["gold_session_orb"] = GoldSessionOrbParams(
+            **_field_values(GoldSessionOrbParams, raw["gold_session_orb"])
+        )
     return LivePaperConfig(**values)
 
 
@@ -368,6 +382,11 @@ class LivePaperSessionManager:
                 instrument_id=self.config.symbol,
                 params=self.config.adaptive,
                 legs=parse_legs(self.config.regime_legs),
+            )
+        elif name == "gold_session_orb":
+            self._robot_instance = GoldSessionOrb(
+                instrument_id=self.config.symbol,
+                params=self.config.gold_session_orb,
             )
         elif name == "vpin_momentum":
             vpin = BarVpin(
@@ -1586,9 +1605,11 @@ class LivePaperSessionManager:
         """Single-session mode: this session's own socket (no shared feed hub)."""
         import websockets
 
+        from nautilus_lab.infrastructure.binance_ws import binance_stream_url
+
         await self._announce_warm_up()
-        stream_name = f"{self.config.symbol.lower()}@kline_{self.config.interval}"
-        url = f"{BINANCE_WS_STREAM_URL}/{stream_name}"
+        url = binance_stream_url(self.config.symbol, self.config.interval)
+        stream_name = url.rsplit("/", 1)[-1]
         logger.info("Connecting to Binance WS: %s", url)
 
         backoff = 1

@@ -24,6 +24,11 @@ class OhlcvBar:
     not carry it (synthetic bars, catalogs ingested before phase 4 of
     docs/23-infrastruktura-danyh-plan.md), and `None` means *unknown*, never zero:
     a bar with no aggressive buying is a real, different observation.
+
+    `premium_index_close` is the USD-M futures premium index close for this bar's close
+    timestamp (`None` when unknown, e.g. spot-only instruments or catalogs without a
+    premium index series). Unlike volumes, basis can legitimately be negative when a
+    perpetual trades at a discount to its index.
     """
 
     instrument_id: str
@@ -34,6 +39,7 @@ class OhlcvBar:
     close: Decimal
     volume: Decimal
     taker_buy_base_volume: Decimal | None = None
+    premium_index_close: Decimal | None = None
 
     @property
     def taker_sell_base_volume(self) -> Decimal | None:
